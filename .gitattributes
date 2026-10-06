@@ -1,0 +1,3 @@
+# 别让 git 动行尾。这个项目在乎"两份逐字节一致"（deploy.ps1 后会 robocopy /L 比对），
+# 所以一律按原样存：不做 text/EOL 转换，也不报那一堆 LF/CRLF 警告。
+* -text

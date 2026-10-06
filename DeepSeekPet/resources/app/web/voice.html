@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Blue Fish Deskpet · 音色</title>
+<style>
+  :root {
+    --bg: #11151d; --panel: #1a202b; --panel2: #212836; --line: #2c3542;
+    --fg: #e6ebf2; --dim: #8b97a8; --accent: #4d9fff; --ok: #46c98b; --warn: #e8b64c; --bad: #ef6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.6 "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+    padding: 18px 20px 96px;
+  }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  .sub { color: var(--dim); font-size: 12.5px; margin-bottom: 16px; }
+  .banner {
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; font-size: 13px;
+    border: 1px solid var(--line); background: var(--panel);
+  }
+  .banner.bad { border-color: #5a2a2a; background: #2a1a1a; color: #ffc9c9; }
+  .banner .k { color: var(--dim); }
+
+  .card {
+    border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+    padding: 14px 16px; margin-bottom: 14px;
+  }
+  .card.current { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(77,159,255,.25); }
+  .card.broken { opacity: .55; }
+  .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .head .name { font-size: 15px; font-weight: 600; }
+  .head .folder { color: var(--dim); font-size: 12px; font-family: Consolas, monospace; }
+  .tag {
+    font-size: 11.5px; padding: 1px 7px; border-radius: 20px;
+    border: 1px solid var(--line); color: var(--dim);
+  }
+  .tag.on { border-color: var(--accent); color: #bcd9ff; background: rgba(77,159,255,.12); }
+  .tag.bad { border-color: #5a2a2a; color: #ffc9c9; }
+  .note { color: var(--dim); font-size: 12.5px; margin: 6px 0 10px; }
+
+  .row { display: grid; grid-template-columns: 88px 1fr 58px; gap: 10px; align-items: center; margin: 9px 0; }
+  .row label { color: var(--dim); font-size: 12.5px; }
+  .row output { font-family: Consolas, monospace; font-size: 12.5px; text-align: right; color: #cfd8e3; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=number], input[type=text] {
+    width: 100%; background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px;
+  }
+  .hint { color: var(--dim); font-size: 11.5px; margin-top: 2px; grid-column: 2 / 4; }
+
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  button {
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 7px; padding: 7px 14px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: #3d4a5c; background: #262e3d; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: #1d4b86; border-color: #2b6ab8; }
+  button.primary:hover:not(:disabled) { background: #235a9e; }
+  button.ghost { background: transparent; }
+  .status { color: var(--dim); font-size: 12.5px; margin-left: auto; }
+
+  .presets { display: flex; gap: 6px; margin: 2px 0 8px 98px; flex-wrap: wrap; }
+  .presets button { padding: 3px 10px; font-size: 12px; border-radius: 20px; }
+
+  /* 参数分组：音色类在最上面最显眼，sherpa 标准参数折叠起来别抢戏 */
+  .group { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
+  .group:first-of-type { border-top: 0; margin-top: 4px; }
+  .g-head {
+    display: block; width: 100%; text-align: left; background: none; border: 0;
+    color: var(--dim); font-size: 12px; font-weight: 600; letter-spacing: .02em;
+    padding: 2px 0 4px; cursor: default;
+  }
+  .group.collapsed > .g-head::before { content: '▸ '; }
+  .group.collapsed > .g-head { cursor: pointer; }
+  .group:not(.collapsed) > .g-head::before { content: '▾ '; }
+  .group.collapsed > .g-body { display: none; }
+
+  footer {
+    position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 20px;
+    background: rgba(17,21,29,.94); border-top: 1px solid var(--line);
+    display: flex; gap: 10px; align-items: center; backdrop-filter: blur(6px);
+  }
+  .spinner {
+    width: 13px; height: 13px; border: 2px solid var(--line); border-top-color: var(--accent);
+    border-radius: 50%; display: inline-block; vertical-align: -2px;
+    animation: spin .7s linear infinite; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <h1>大肥鱼的声音</h1>
+  <div class="sub">
+    拖动滑杆 → 点「保存并生效」→ 点「试听」。<b>音高稳定度</b>是重点：
+    觉得说话忽大忽小、不像人，就往「稳」拉；觉得平平的没灵气，就往「起伏」拉。
+  </div>
+
+  <div id="banner"></div>
+  <div id="list"></div>
+
+  <footer>
+    <button class="primary" id="save">保存并生效</button>
+    <button id="play">试听这句话</button>
+    <button class="ghost" id="reset">恢复这套的默认值</button>
+    <span class="status" id="status"></span>
+  </footer>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const listEl = $('#list'), bannerEl = $('#banner'), statusEl = $('#status');
+
+/**
+ * 界面上的旋钮。**分两组**，因为这组的实际影响差别极大：
+ *
+ *  · 「改变音色」= pitch / brightness（`tts.cjs` 里的后处理）。
+ *    官方 VITS 手册里**没有**音高参数（只有 lengthScale / noiseScale / noiseScaleW / sid），
+ *    这几套又都是单说话人模型、音色写在权重里，所以想让声音"换个人"只能靠刻意的后处理。
+ *  · 「说话方式」= speed / volume + 三个 VITS 标准参数。
+ *    实测噪声那几个对"像不像少女"影响很小（noiseScale 从 0.15 拉到 0.9 只差约 1dB），
+ *    出厂默认值（0.667 / 0.8）本来就是官方推荐的甜点，所以放在折叠区里，别抢眼。
+ */
+const KNOB_GROUPS = [
+  {
+    title: '改变音色（想让声音更像少女/更萌，主要调这两个）',
+    knobs: [
+      {
+        key: 'pitch', label: '音高', min: .6, max: 1.8, step: .01, fmt: (v) => v.toFixed(2) + '×',
+        hint: '1.0 原声。往右升调：1.2 明显更年轻，1.35 以上开始像童声；往左降调更成熟。'
+          + '这个不是模型参数，是合成之后的重采样（所以是这里最有效的一个）',
+      },
+      {
+        key: 'brightness', label: '亮度', min: .4, max: 2, step: .02, fmt: (v) => v.toFixed(2) + '×',
+        hint: '高频多少。往右更亮更脆，往左更闷更柔。辅助项，影响没有音高大',
+      },
+    ],
+  },
+  {
+    title: '说话方式',
+    knobs: [
+      {
+        key: 'speed', label: '语速', min: .6, max: 1.6, step: .01, fmt: (v) => v.toFixed(2) + '×',
+        hint: '1.0 是原速。调音高不会连带改语速（已经补偿好了）',
+      },
+      {
+        key: 'volume', label: '音量', min: .3, max: 3, step: .05, fmt: (v) => v.toFixed(2) + '×',
+        hint: '各套音色天生响度差很多，已经自动拉齐；这里再微调',
+      },
+    ],
+  },
+  {
+    title: '高级：sherpa 的标准参数（VITS 手册里就这几个，对音色影响小）',
+    collapsed: true,
+    knobs: [
+      {
+        key: 'noiseScale', label: '音高稳定度', invert: true, min: 0, max: 1.2, step: .005,
+        fmt: (v) => (v >= .67 ? '稳 ' : v >= .35 ? '偏稳 ' : v >= .15 ? '自然 ' : '活泼 ') + v.toFixed(3),
+        hint: '实测对"忽大忽小"只有约 1dB 的影响，默认 0.667 就是官方甜点，一般不用动',
+      },
+      {
+        key: 'noiseScaleW', label: '音调起伏', invert: true, min: 0, max: 1.2, step: .01,
+        fmt: (v) => v.toFixed(3),
+        hint: '同上，管语调的抑扬，默认 0.8',
+      },
+      {
+        key: 'lengthScale', label: '吐字长短', min: .6, max: 1.6, step: .01, fmt: (v) => v.toFixed(2),
+        hint: '音素时长。和语速配合，1.0 最自然',
+      },
+      {
+        key: 'silenceScale', label: '句间停顿', min: 0, max: 1, step: .01, fmt: (v) => v.toFixed(2),
+        hint: '句子之间静音的长短',
+      },
+    ],
+  },
+];
+
+/** 兼容老代码：一张卡里要遍历的全部旋钮。 */
+const KNOBS = KNOB_GROUPS.flatMap((g) => g.knobs);
+
+/** 一键预设：音高是主角，所以预设主要动它。 */
+const PRESETS = [
+  { label: '原声', knobs: { pitch: 1.0, brightness: 1.0, speed: 1.05 } },
+  { label: '少女', knobs: { pitch: 1.18, brightness: 1.1, speed: 1.05 } },
+  { label: '很萌（童声）', knobs: { pitch: 1.38, brightness: 1.15, speed: 1.0 } },
+  { label: '软糯', knobs: { pitch: 1.12, brightness: 0.85, speed: 0.95 } },
+  { label: '成熟', knobs: { pitch: 0.88, brightness: 0.95, speed: 1.0 } },
+];
+
+/**
+ * 说话人的起步建议 —— 这是**实测**出来的，不是猜的。
+ *
+ * 结论（重要）：**"忽大忽小"主要是说话人本身决定的，不是 noiseScale 那几个旋钮。**
+ * 实测同一句话的响度动态范围：fanchen-c 的 8 号 23.5dB（最稳）> 60 号 27.2dB >
+ * theresa 的 0 号 30.5dB / 88 号 34.9dB / 300 号 36.8dB。
+ * 而把 noiseScale 从 0.15 拉到 0.9，同一个说话人只差 1dB 左右。
+ * 所以"听着不像人"时**先换说话人**，再微调滑杆。
+ */
+const SPEAKER_PRESETS = [
+  { label: '偏高·较稳（推荐 8）', sid: 8 },
+  { label: '中高（20）', sid: 20 },
+  { label: '更自然（30）', sid: 30 },
+  { label: '偏低女声（100）', sid: 100 },
+];
+
+/** 当前选中的那一套（保存/试听都作用于它）。 */
+let selected = null;
+/** 服务端给的原始数据。 */
+let data = null;
+/** 每套音色界面上的当前值（`folder -> {knob: 值}`）。 */
+const drafts = new Map();
+
+function setStatus(text, busy) {
+  statusEl.innerHTML = (busy ? '<span class="spinner"></span>' : '') + (text || '');
+}
+
+/** 数值 → 滑杆位置（处理"反着显示"的那两个）。 */
+function toSlider(knob, v) {
+  return knob.invert ? knob.max + knob.min - v : v;
+}
+function fromSlider(knob, pos) {
+  return knob.invert ? knob.max + knob.min - pos : pos;
+}
+
+function render() {
+  if (!data) return;
+  bannerEl.className = 'banner' + (data.available ? '' : ' bad');
+  bannerEl.innerHTML = data.available
+    ? `<span class="k">正在使用：</span><b>${data.playing || '—'}</b>` +
+      `<span class="k"> ｜ 参数存在各自的 voice.json 里，选中的那套点「保存并生效」即时换声</span>`
+    : `<b>语音当前不可用</b>：${data.why || '未知原因'}`;
+
+  listEl.innerHTML = '';
+  for (const v of data.voices) {
+    if (!drafts.has(v.folder)) drafts.set(v.folder, { ...v.knobs });
+
+    const card = document.createElement('div');
+    card.className = 'card' + (v.folder === data.current ? ' current' : '') + (v.usable ? '' : ' broken');
+    card.dataset.folder = v.folder;
+
+    const head = document.createElement('div');
+    head.className = 'head';
+    head.innerHTML =
+      `<span class="name">${v.name}</span>` +
+      `<span class="folder">${v.folder}</span>` +
+      (v.folder === data.current ? '<span class="tag on">正在用</span>' : '') +
+      (v.usable ? '' : `<span class="tag bad">缺 ${v.gaps.join('、')}</span>`);
+    card.appendChild(head);
+
+    if (v.note) {
+      const n = document.createElement('div');
+      n.className = 'note';
+      n.textContent = v.note;
+      card.appendChild(n);
+    }
+
+    const presets = document.createElement('div');
+    presets.className = 'presets';
+    for (const p of PRESETS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = p.label;
+      b.addEventListener('click', () => {
+        const d = drafts.get(v.folder);
+        Object.assign(d, p.knobs);
+        syncCard(card, v);
+        select(v);
+      });
+      presets.appendChild(b);
+    }
+    card.appendChild(presets);
+
+    // 多说话人：先给几个"起步说话人"，免得从 0 号开始瞎试（0 号往往是最尖最飘的那个）
+    if (v.multiSpeaker) {
+      const spkRow = document.createElement('div');
+      spkRow.className = 'presets';
+      const tip = document.createElement('span');
+      tip.style.cssText = 'color:var(--dim);font-size:12px;align-self:center;margin-right:2px';
+      tip.textContent = '说话人起步建议：';
+      spkRow.appendChild(tip);
+      for (const p of SPEAKER_PRESETS) {
+        if (p.sid > (v.speakers || 1) - 1) continue;
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = p.label;
+        b.addEventListener('click', () => {
+          drafts.get(v.folder).sid = p.sid;
+          syncCard(card, v);
+          select(v);
+        });
+        spkRow.appendChild(b);
+      }
+      card.appendChild(spkRow);
+    }
+
+    /** 画一根滑杆（连带它下面那行说明）。 */
+    const addKnob = (parent, knob) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.dataset.knob = knob.key;
+      const lab = document.createElement('label');
+      lab.textContent = knob.label;
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = knob.min; input.max = knob.max; input.step = knob.step;
+      input.value = toSlider(knob, drafts.get(v.folder)[knob.key] ?? 0);
+      const out = document.createElement('output');
+      // 显示的是**滑杆位置**换算回去的值（两个"反着显示"的旋钮靠这个还原）
+      const refresh = () => { out.textContent = knob.fmt(fromSlider(knob, Number(input.value))); };
+      input.addEventListener('input', () => {
+        drafts.get(v.folder)[knob.key] = knob.step >= 1
+          ? Math.round(fromSlider(knob, Number(input.value)))
+          : fromSlider(knob, Number(input.value));
+        refresh();
+        select(v);
+      });
+      refresh();
+      row.append(lab, input, out);
+      parent.appendChild(row);
+      if (knob.hint) {
+        const h = document.createElement('div');
+        h.className = 'hint';
+        h.textContent = knob.hint;
+        parent.appendChild(h);
+      }
+    };
+
+    // 按组画：音色类（音高/亮度）在前，说话方式其次，sherpa 标准参数折叠起来
+    for (const group of KNOB_GROUPS) {
+      const box = document.createElement('div');
+      box.className = 'group' + (group.collapsed ? ' collapsed' : '');
+
+      const head = document.createElement('button');
+      head.type = 'button';
+      head.className = 'g-head';
+      head.textContent = group.title;
+      box.appendChild(head);
+
+      const body = document.createElement('div');
+      body.className = 'g-body';
+      if (group.collapsed) head.addEventListener('click', () => box.classList.toggle('collapsed'));
+      box.appendChild(body);
+      card.appendChild(box);
+      for (const knob of group.knobs) addKnob(body, knob);
+    }
+
+    // 多说话人的模型才给"说话人"这一项（上限按这套音色实际有多少人）
+    if (v.multiSpeaker) {
+      const box = document.createElement('div');
+      box.className = 'group';
+      const head = document.createElement('div');
+      head.className = 'g-head';
+      head.textContent = '换一个人（这套有 ' + v.speakers + ' 个说话人）';
+      box.appendChild(head);
+      const body = document.createElement('div');
+      body.className = 'g-body';
+      box.appendChild(body);
+      addKnob(body, {
+        key: 'sid', label: '说话人', min: 0, max: Math.max(1, (v.speakers || 1) - 1), step: 1,
+        fmt: (x) => `${x} / ${(v.speakers || 1) - 1}`,
+        hint: '换编号就是换一个人。音高滑杆只在这一个人的音色上变调，换人能拿到完全不同的底子',
+      });
+      card.appendChild(box);
+    }
+
+    const btns = document.createElement('div');
+    btns.className = 'btns';
+    const useBtn = document.createElement('button');
+    useBtn.type = 'button';
+    useBtn.textContent = v.folder === data.current ? '重新载入这套' : '用这套（保存并生效）';
+    useBtn.className = 'primary';
+    useBtn.disabled = !v.usable;
+    useBtn.addEventListener('click', async () => {
+      select(v);
+      setStatus('正在保存并重建语音引擎…', true);
+      const r = await window.voice.apply(v.folder, drafts.get(v.folder));
+      if (!r.ok) { setStatus(`失败：${r.error || '未知'}`, false); return; }
+      setStatus(`已换到「${v.name}」`, false);
+      await reloadData();
+    });
+    btns.appendChild(useBtn);
+
+    const prevBtn = document.createElement('button');
+    prevBtn.type = 'button';
+    prevBtn.textContent = '试听这套';
+    prevBtn.disabled = !v.usable;
+    prevBtn.addEventListener('click', () => { select(v); preview(v); });
+    btns.appendChild(prevBtn);
+
+    card.appendChild(btns);
+    listEl.appendChild(card);
+  }
+}
+
+/** 只把一张卡片上的滑杆同步成 draft 的值（用了预设之后要刷新显示）。 */
+function syncCard(card, v) {
+  const d = drafts.get(v.folder);
+  // 按下标对着 KNOBS 找是不可靠的（卡片里还有分组的"说话人"那一行），
+  // 所以每根滑杆在 addKnob 里都写了 `data-knob`，直接按名字找。
+  for (const row of card.querySelectorAll('.row[data-knob]')) {
+    const key = row.dataset.knob;
+    const input = row.querySelector('input');
+    if (!input) continue;
+    const def = ALL_KNOBS[key];
+    if (!def) continue;
+    input.value = toSlider(def, d[key] ?? def.def ?? 0);
+    input.dispatchEvent(new Event('input'));
+  }
+}
+
+/** 所有旋钮的定义（含范围与显示方式），按 key 索引。 */
+const ALL_KNOBS = Object.fromEntries(
+  KNOB_GROUPS.flatMap((g) => g.knobs)
+    .concat([{ key: 'sid', min: 0, max: 1000, step: 1, def: 0 }])
+    .map((k) => [k.key, k]),
+);
+
+function select(v) {
+  selected = v;
+  for (const c of listEl.querySelectorAll('.card')) {
+    c.classList.toggle('current', c.dataset.folder === v.folder);
+  }
+}
+
+/** 让服务端按**当前已生效**的参数合成一句，然后放出来。 */
+async function preview(v) {
+  const text = '你好呀，我是大肥鱼，今天也一起玩吧。';
+  setStatus('正在合成…', true);
+  try {
+    const res = await fetch('/api/voice/preview', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) { setStatus(`试听失败：${await res.text()}`, false); return; }
+    const buf = await res.arrayBuffer();
+    const url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    const a = new Audio(url);
+    a.addEventListener('ended', () => { URL.revokeObjectURL(url); setStatus('试听完毕', false); });
+    await a.play();
+    setStatus('正在播放…', false);
+  } catch (err) {
+    setStatus(`试听失败：${err.message}`, false);
+  }
+}
+
+async function reloadData() {
+  data = await window.voice.load();
+  render();
+}
+
+$('#save').addEventListener('click', async () => {
+  if (!selected) { setStatus('先选一套音色', false); return; }
+  setStatus('正在保存并重建语音引擎…（约 2~4 秒）', true);
+  const r = await window.voice.apply(selected.folder, drafts.get(selected.folder));
+  setStatus(r.ok ? `已生效：${r.name || selected.name}` : `失败：${r.error || '未知'}`, false);
+  await reloadData();
+});
+
+$('#play').addEventListener('click', () => {
+  if (!selected) { setStatus('先选一套音色', false); return; }
+  preview(selected);
+});
+
+$('#reset').addEventListener('click', () => {
+  if (!selected) return;
+  drafts.set(selected.folder, { ...selected.defaults });
+  const card = listEl.querySelector(`.card[data-folder="${CSS.escape(selected.folder)}"]`);
+  if (card) syncCard(card, selected);
+  setStatus('已恢复默认值（还没保存）', false);
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') window.voice.close();
+});
+
+reloadData().catch((err) => { setStatus(`读不到音色：${err.message}`, false); });
+</script>
+</body>
+</html>
