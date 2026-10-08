@@ -1100,8 +1100,12 @@ export function createPet(els, opts) {
       // 心情：`accMood` 给 figure.js 调呼吸的深浅与节奏（`null` = 没有这一层，行为同上游）。
       // **单独一个字段**，不塞进 `skin`：`skin` 是"她穿什么"，心情是"她此刻什么状态"。
       accMood: mood.energy === null ? null : { energy: mood.energy },
-      microTilt: microState.kind === 'tilt' ? 8.5 * microK : 0,
-      microStep: microState.kind === 'step' ? microK : 0,
+      // ⚠️ **必须用 `microState.k`，不能写 `microK`**：后者是 `step()` 里的局部变量，
+      // 在 `render()` 里根本不存在 —— 写成 microK 会让 render 每一帧抛 ReferenceError，
+      // 而 render 是在帧循环里调的，**一抛就把整条帧循环打死**：她停在最后一帧、
+      // 不再动、也不再接鼠标（实测踩过：坐着一动不动、点也没反应）。
+      microTilt: microState.kind === 'tilt' ? 8.5 * microState.k : 0,
+      microStep: microState.kind === 'step' ? microState.k : 0,
     };
     if (custom) {
       /**
