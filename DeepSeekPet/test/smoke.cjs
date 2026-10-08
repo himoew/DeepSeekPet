@@ -356,7 +356,35 @@ function stubModel() {
     delete require.cache[dressFile];
     require(dressFile);                               // 让后面的用例拿到干净的那份
 
-    /* ---------- 2g. 页面代码里的"跨函数引用"（纯 Node 也能盯住的致命笔误） ---------- */
+    /* ---------- 2g. 玩具球（静态部分：台词桶 + 页面接线） ---------- */
+    /**
+     * 球最怕的不是"不好玩"，而是**把她弄坏**（本会话已经在她的绘制/帧循环上栽过两次）。
+     * 所以这里除了台词，还盯两件结构性的事：
+     *   ① 球的物理/绘制在**自己的文件**里（`web/ball.js`），不往 `pet-core` / `figure.js` 塞；
+     *   ② 开关是 World 记着的（配置里 `ball`），并且**关掉时一定有话可说**（用户要的"闹脾气"）。
+     */
+    for (const k of ['ballOn', 'ballKick', 'ballOffSad', 'ballOffAngry']) {
+      ok(`玩具球：${k} 这一桶在台词库里`, Array.isArray(lines[k]) && lines[k].length > 0);
+    }
+    ok('玩具球：收走时"委屈"和"生气"两套都有（随机挑，用户要的）',
+      lines.ballOffSad.length > 0 && lines.ballOffAngry.length > 0);
+    ok('玩具球：表情写在台词里（委屈用 sad、生气用 angry）',
+      lines.ballOffSad.some((l) => (l.actions || []).includes('sad'))
+      && lines.ballOffAngry.some((l) => (l.actions || []).includes('angry')));
+    ok('玩具球：物理与绘制在自己的文件里（没往 pet-core / figure.js 里塞）',
+      fs.existsSync(path.join(app, 'web', 'ball.js'))
+      && !fs.readFileSync(path.join(app, 'web', 'pet-core.js'), 'utf8').includes('toy-ball')
+      && !fs.readFileSync(path.join(app, 'web', 'whale', 'figure.js'), 'utf8').includes('toy-ball'));
+    const appSrc = fs.readFileSync(path.join(app, 'web', 'pet-app.js'), 'utf8');
+    ok('玩具球：页面把它接进帧循环（step + draw 各一处）',
+      /ball\.step\(dt\)/.test(appSrc) && /ball\.draw\(\)/.test(appSrc));
+    ok('玩具球：页面会把"踢到了"报给 World',
+      /t: 'ballKick'/.test(appSrc) && /case 'ballKick'/.test(fs.readFileSync(path.join(app, 'pet.cjs'), 'utf8')));
+    ok('玩具球：开关存进配置（重启后还在）',
+      fs.readFileSync(path.join(app, 'llm.cjs'), 'utf8').includes('ball: false')
+      && fs.readFileSync(path.join(app, 'pet.cjs'), 'utf8').includes('llm.save({ ball: on })'));
+
+    /* ---------- 2h. 页面代码里的"跨函数引用"（纯 Node 也能盯住的致命笔误） ---------- */
     /**
      * **这条是为一次真实翻车加的**：`microK` 在 `step()` 里声明，却被 `render()` 用了 ——
      * 而 `render()` 是在**帧循环**里被调的，所以它每一帧抛 `ReferenceError`，
@@ -407,7 +435,7 @@ function stubModel() {
       /addEventListener\('error'/.test(fs.readFileSync(path.join(app, 'web', 'diag.js'), 'utf8'))
       && /addEventListener\('unhandledrejection'/.test(fs.readFileSync(path.join(app, 'web', 'diag.js'), 'utf8')));
 
-    /* ---------- 2h. 图标与名字（顺带盯住"补丁有没有落到位"） ---------- */
+    /* ---------- 2i. 图标与名字（顺带盯住"补丁有没有落到位"） ---------- */
     const root = path.join(__dirname, '..');
     for (const f of ['app-icon.png', 'tray-icon.png', 'avatar.png', 'icon-source.png']) {
       ok(`图标文件在（web\\${f}）`, fs.existsSync(path.join(app, 'web', f)));
@@ -668,9 +696,12 @@ function stubModel() {
 
     const init = await waitFor('init', () => fromPet.find((m) => m.t === 'init'));
     ok('init 带的是大肥鱼', init.skin.figure === 'whale' && init.skin.scheme === 'deepseek');
-    ok('init 只给这一版能兑现的悬停按钮', init.hoverButtons.every((b) => ['chat', 'auto', 'roam', 'theme', 'sound', 'hide'].includes(b)));
-    // 悬停和右键菜单原来摆的是同一批动作，重复；现在悬停只留「对话」，其余全在菜单里。
-    ok('悬停只留一个「对话」按钮（其余动作收进右键菜单）', init.hoverButtons.length === 1 && init.hoverButtons[0] === 'chat');
+    ok('init 只给这一版能兑现的悬停按钮', init.hoverButtons.every((b) => ['chat', 'ball', 'auto', 'roam', 'theme', 'sound', 'hide'].includes(b)));
+    // 悬停和右键菜单原来摆的是同一批动作，重复；现在悬停只留要紧的几个。
+    // 「对话」+「球」（用户要的：球的开关放在对话图标旁边）——其余全在右键菜单里。
+    ok('悬停只有「对话」和「球」两个按钮',
+      init.hoverButtons.length === 2 && init.hoverButtons[0] === 'chat' && init.hoverButtons[1] === 'ball');
+    ok('球是默认关着的（要你自己点开）', init.ball === false);
     ok('init 带上了右键菜单（controls + 设置按钮）', init.bot?.controls === true && init.bot.buttons.settings === true);
     // 「换装…」现在是**真的有窗口**的（第 2f 节那一套：接口先占住，贴图以后再加），
     // 所以这里从"去掉了装扮"改成"装扮按钮在、而且服务里真的有 /dress 那一页"。
@@ -715,7 +746,32 @@ function stubModel() {
       warmed.catch(() => {});
     }
 
-    /* ---------- 4c. 念出来：只有大模型的回答会出声 ---------- */
+    /* ---------- 4c. 玩具球：真开一次、真踢一次、真收走（走的是完整往返） ---------- */
+    /**
+     * 静态守卫（2g）只能证明"代码在"，证明不了"这条链通"。这里连上真 World 走一遍：
+     *   开 → 她说一句 ballOn；踢到 → 她说一句 ballKick；收走 → 她说一句委屈或生气。
+     */
+    fromPet.length = 0;
+    ws.send(JSON.stringify({ t: 'ball', on: true }));
+    const onSay = await nextReply('ballOn');
+    ok('玩具球：打开时她会说一句（ballOn）', !!onSay);
+
+    fromPet.length = 0;
+    ws.send(JSON.stringify({ t: 'ballKick', at: 0.42 }));
+    const kickSay = await nextReply('ballKick');
+    ok('玩具球：踢到球她会说一句（ballKick）', !!kickSay);
+
+    fromPet.length = 0;
+    ws.send(JSON.stringify({ t: 'ball', on: false }));
+    const offSay = await nextReply('ballOff');
+    // 收走时是"委屈 / 生气"随机一套，两句都要能在台词库里找到出处
+    const offPool = [...textsOf(lines.ballOffSad), ...textsOf(lines.ballOffAngry)];
+    ok('玩具球：收走时她会闹脾气（委屈或生气，随机）',
+      !!offSay && offSay.beats.some((b) => offPool.includes(b.text)));
+    ok('玩具球：收走那一下带了表情（sad 或 angry）',
+      !!offSay && offSay.beats.some((b) => ['sad', 'angry', 'turn'].some((a) => (b.actions || []).includes(a))));
+
+    /* ---------- 4d. 念出来：只有大模型的回答会出声 ---------- */
     // 语音文件（vendor\tts）在就测，不在就跳过——自检不该因为没装语音而红
     ok(`init 报告了语音开关（voice=${init.voice}）`, typeof init.voice === 'boolean');
     if (!tts.available()) {

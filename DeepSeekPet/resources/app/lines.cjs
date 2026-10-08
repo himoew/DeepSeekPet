@@ -416,6 +416,37 @@ module.exports = {
     { text: '你、你故意的吧。', actions: ['angry'] },
   ],
 
+  /**
+   * **玩具球**（悬停那个球按钮切换；物理在 `web/ball.js`，什么时机说哪句在 `pet.cjs`）。
+   *
+   *   ballOn     球出现时她说一句
+   *   ballKick   她踢到球（页面判碰撞后报上来），所以**每踢一次都能说一句**
+   *   ballOffSad / ballOffAngry   把球收走时她会闹脾气——**这两个桶随机挑一个**
+   *              （用户要的：「球收时她会出现不开心或者哭泣又或是生气的随机表情和对话」），
+   *              表情写在 `actions` 里：`sad` 那桶是委屈/哭腔，`angry` 那桶是生气。
+   */
+  ballOn: [
+    { text: '诶,这是什么?', actions: ['surprised'] },
+    { text: '给、给我的吗?', actions: ['love'] },
+    { text: '（滚过来了）', actions: ['look'] },
+  ],
+  ballKick: [
+    { text: '嘿!', actions: ['happy'] },
+    { text: '（踢了一脚）', actions: ['hop'] },
+    { text: '看我的。', actions: ['run'] },
+    { text: '唔,踢歪了。', actions: ['shy'] },
+  ],
+  ballOffSad: [
+    { text: '球……没有了。', actions: ['sad'] },
+    { text: '（眼眶有点湿）', actions: ['sad'] },
+    { text: '你把它拿走了……', actions: ['sad'] },
+  ],
+  ballOffAngry: [
+    { text: '哼!小气鬼。', actions: ['angry'] },
+    { text: '还我球啦!', actions: ['angry'] },
+    { text: '不理你了。', actions: ['turn'] },
+  ],
+
   /** 没事干的时候偶尔冒一句。 */
   idle: [
     { text: '……', actions: ['look'] },

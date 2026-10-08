@@ -187,6 +187,15 @@ body.desk .floor{display:none}
 .trail i:nth-child(3){animation-delay:.3s}
 @keyframes trail-bob{50%{transform:translateY(-3px)}}
 
+/* ---------- 玩具球（web/ball.js 画进 #fx 那一层） ---------- */
+/* 颜色跟着她的配色走（--skin-ink / --skin-eye 由 skinCss 写在 :root 上），
+   所以换主题/换配色时球自己会跟着协调，不用另配一套色。 */
+.toy-ball{pointer-events:none}
+.toy-ball-shadow{fill:rgba(0,0,0,.35)}
+.toy-ball-body{fill:var(--skin-ink, #4D6BFE); stroke:rgba(0,0,0,.22); stroke-width:1.2}
+.toy-ball-seam{fill:none; stroke:var(--skin-eye, #cfe0ff); stroke-width:1.6; opacity:.75}
+.toy-ball-dot{fill:rgba(255,255,255,.85)}
+
 /* context menu: the bot and its run controls on top, the actions as icon tiles below */
 .menu{
   position:fixed; z-index:5; width:max-content; padding:6px; border-radius:16px;

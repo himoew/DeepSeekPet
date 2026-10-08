@@ -9,6 +9,7 @@
  * Colors follow the World's `theme` through `data-theme` on the root element.
  */
 import { boot, report } from './diag.js';
+import { createBall } from './ball.js';
 import { applyTheme, createPet, createSfx, clamp, f, mini, normalizeSkin, skinCss, EXPRESSIONS, HEAD_TOP, ICONS } from './pet-core.js';
 
 const $ = (s) => document.querySelector(s);
@@ -48,6 +49,8 @@ const prefs = {
    * a different thing; this one is called `sayVoice` to stay out of its way.)
    */
   ttsOn: false, sayVoice: false,
+  /** 玩具球开着吗（悬停那个球按钮切换；World 记在配置里，重启后还在）。 */
+  ball: false, ballKnown: false,
 };
 const sfx = createSfx();
 if (host) sfx.unlock();
@@ -152,6 +155,24 @@ addEventListener('resize', () => {
   send({ t: 'hello', screen: { w: innerWidth, h: innerHeight } });
 });
 
+/* ---------- 玩具球（实现在 web/ball.js，页面这边只负责接线） ---------- */
+/**
+ * 球画进 `#fx`（跟影子、爱心、灰尘同一层），**不碰 `#pet` 那一层**——
+ * 那里是她的身体，本会话已经在上面栽过两次，所以新玩法一律不往那儿塞东西。
+ *
+ * 她踢到球时报给 World：`ballKick`（选一句踢球的台词）、`ballOn` / `ballOff`（开关）。
+ */
+const ball = createBall({
+  fxG: $('#fx'),
+  sfx,
+  stage: { bounds: () => ctl.bounds, pet: () => ctl.where },
+  onEvent: (kind, d) => {
+    // 踢到球 → 告诉 World 选一句台词。**报的是横向比例（0..1）**，World 不用知道窗口多大；
+    // 它拿这个数决定"下次走过去找球"时的目标位置。
+    if (kind === 'ballKick') send({ t: 'ballKick', at: +(ball.x / Math.max(1, innerWidth)).toFixed(4), x: d?.x ?? 0 });
+  },
+});
+
 /* ---------- connection ---------- */
 let ws = null, backoff = 500, watching = false;
 function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); }
@@ -229,6 +250,13 @@ function applyPrefs(p) {
   if (Array.isArray(p.hoverButtons)) prefs.hoverButtons = p.hoverButtons.filter((id) => typeof id === 'string' && id in ACTIONS);
   if (p.bot) { prefs.bot = p.bot; if (!menu.hidden && !menu.querySelector('.m-head.confirm')) renderMenuHead(); }
   if (typeof p.thinking === 'boolean') ctl.setThinking(p.thinking);
+  // 玩具球：World 记着这个开关，所以第一次 `init` / 重连之后都由它说了算
+  if (typeof p.ball === 'boolean' && (p.ball !== prefs.ball || !prefs.ballKnown)) {
+    const first = !prefs.ballKnown;
+    prefs.ball = p.ball;
+    prefs.ballKnown = true;
+    ball.setOn(p.ball, { fromLeft: first ? false : Math.random() < .5 });
+  }
   /**
    * 心情（World 每换一档才发一次）：只影响"黏着你"的远近和走路的快慢，不影响任何判定。
    *
@@ -1157,6 +1185,24 @@ const ACTIONS = {
     state: () => '打字和我说话',
     run: () => openInput(),
   },
+  /**
+   * 玩具球开关（悬停时它旁边那一列里的第二个按钮）。
+   *
+   * **页面自己立刻切**（不然点一下要等一个来回才看到球），同时报给 World：World 记住这个开关
+   * （`config\settings.json` 的 `ball` + `data\ball.json`），重启后还在，并且**关掉时它会闹脾气**
+   * ——由 World 挑一句台词、配一个随机的委屈/生气表情。
+   */
+  ball: {
+    keep: true,
+    icon: () => ICONS.ball,
+    on: () => prefs.ball,
+    state: () => (prefs.ball ? '收走球（她会不高兴）' : '给她一个球玩'),
+    run: () => {
+      prefs.ball = !prefs.ball;
+      ball.setOn(prefs.ball, { fromLeft: Math.random() < .5 });
+      send({ t: 'ball', on: prefs.ball });
+    },
+  },
   voice: {
     keep: true,
     icon: () => (prefs.voice.enabled ? ICONS.mic : ICONS.micOff),
@@ -1489,6 +1535,8 @@ function writePointer(now) {
 
 const UI_SELECTOR = '.bubble:not([hidden]), .menu:not([hidden]), .tools:not([hidden])';
 const overUi = (e) => e.target.closest && e.target.closest(UI_SELECTOR);
+/** 拖着球走的状态（球不是她，所以不碰 pet-core 那套拖拽）。 */
+const ballDrag = { on: false };
 document.addEventListener('pointermove', (e) => {
   pointerSeen = true;
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
@@ -1504,7 +1552,12 @@ document.addEventListener('pointermove', (e) => {
     stage.style.cursor = cur === 'grab' && !ctl.pressing ? 'pointer' : cur;
   }
   strokeMove(p);            // 抚摸判定与连续反馈（见上面 STROKE 那一大段）
-  const hit = ctl.hitPet(p), ui = !!overUi(e);
+  // 鼠标停在球上：手型给 grab（"可以拨它"），并且让窗口接鼠标
+  const onBall = ball.hitTest(p.x, p.y);
+  if (onBall && !ctl.pressing) stage.style.cursor = 'grab';
+  // 拖着球走：球跟手（速度也从手的位移算出来，松手就飞出去）。dt 由球自己算（这里拿不到帧的 dt）
+  if (ballDrag.on) ball.drag(p.x, p.y);
+  const hit = ctl.hitPet(p) || onBall, ui = !!overUi(e);
   diag.move = { at: performance.now(), type: e.pointerType, x: Math.round(p.x), y: Math.round(p.y), hit, ui };
   diag.types.add(e.pointerType);
   if (e.pointerType !== diag.type) {
@@ -1530,13 +1583,20 @@ host?.onCursor?.((p) => {
     return;
   }
   const el = document.elementFromPoint(p.x, p.y);
-  const hit = ctl.hitPet(p), ui = !!el?.closest?.(UI_SELECTOR);
+  const hit = ctl.hitPet(p) || ball.hitTest(p.x, p.y), ui = !!el?.closest?.(UI_SELECTOR);
   diag.poll = { at: performance.now(), x: p.x, y: p.y, hit, ui };
   setInteractive(ctl.pressing || hit || ui, 'poll');
 });
 stage.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
   closeMenu();
+  // **球优先**：点在球上就是拨球，不惊动她（她自己碰到球才算踢）
+  if (ball.hitTest(e.clientX, e.clientY)) {
+    ballDrag.on = true;
+    stage.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    return;
+  }
   // 戳的部位以按下这一刻为准：拖起来（超过 6px）就不算戳了，那时位置也已经偏了
   touchAt.x = e.clientX; touchAt.y = e.clientY; touchAt.ok = true;
   // **抓哪儿就从哪儿拎**：把"局部抓点 + 那个部位的悬挂角"一起交给 pet-core（见 GRAB_STYLE）。
@@ -1551,7 +1611,7 @@ stage.addEventListener('pointerdown', (e) => {
   } : null;
   if (ctl.pointerDown({ x: e.clientX, y: e.clientY }, { grab })) { stage.setPointerCapture(e.pointerId); e.preventDefault(); }
 });
-const up = () => { ctl.pointerUp(); stage.style.cursor = ''; };
+const up = () => { ballDrag.on = false; ctl.pointerUp(); stage.style.cursor = ''; };
 /**
  * Most milliseconds a drop on another display waits for the page to take the window's new size
  * (within a pixel: fractional scales round it). The size normally arrives a frame or two after
@@ -1795,7 +1855,9 @@ function frame(now) {
     stepDrag();            // 拎起来：拎久了吭一声
     stepStroke();          // 抚摸的连续反馈：爬"舒服程度"、续呼噜/爱心、判"够了"
     ctl.step(dt);
+    ball.step(dt);         // 玩具球：物理 + 碰到她就踢（球在 #fx 那一层，不碰她的身体）
     ctl.render();
+    ball.draw();
     stepBackdrop(dt);
     stepTools();
     layout();

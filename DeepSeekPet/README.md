@@ -213,6 +213,26 @@ powershell -ExecutionPolicy Bypass -File tools\setup-tts.ps1       # 下载本�
 > 手感旋钮：`pet.cjs` 的 `MICRO_MIN_MS` / `MICRO_MAX_MS` / `MICRO` 三个名字；
 > 姿态幅度在 `pet-core.js` 的 `micro()`（时长）和 `figure.js` 那两行（角度/位移）。
 
+### 玩具球（悬停时「对话」旁边那个球按钮）
+
+把鼠标移上去，旁边会出现两个按钮：**「对话」和「球」**。点球就是给它一个球玩，再点一下收走。
+
+- **球会自己滚、会弹、会撞墙回弹**，你还能**用鼠标拨它、抓着它甩**（甩松了它就飞出去）；
+- **她碰到球就会踢**（方向按球在她哪一侧算，踢出去还带一点上抛）；
+- **她会自己过去找球踢**：球停稳几秒后，她有一半几率颠颠地走过去再来一脚；
+- **把球收走她会闹脾气**：随机是**委屈（半哭）或者生气**，台词和表情都不一样。
+
+开关**记在配置里**（`config\settings.json` 的 `ball`），重启后还在。
+
+> **实现上刻意做的一件事**：球的物理、绘制、碰撞全在**独立文件 `web/ball.js`** 里，
+> 画进 `#fx` 那一层（跟影子、爱心同一层），**一行都没往 `pet-core.js` / `figure.js` 里塞** ——
+> 那两处是她的身体和帧循环，这个项目已经在那里栽过两次（见 `HANDOVER.md` 第 1.23 节），
+> 所以新玩法一律放在自己的模块里：**球出问题最多是球不对，不会让她不见或不动。**
+>
+> 手感旋钮都在 `ball.js` 顶部：`GRAVITY`（重力）、`BOUNCE`（弹性）、`GROUND_FRICTION`（摩擦）、
+> `KICK_MIN/MAX`（踢的力度）、`HIT`（她的碰撞盒，正面/背面宽度不同）。
+> 想让她更爱玩球就调 `pet.cjs` 的 `fidget()` 里那个 `roll < 0.30`。
+
 ### 它听得懂你话里的情绪（本地关键词，不花 token）
 
 你打的字**先过一遍本地关键词表**（`pet.cjs` 的 `TONE`，纯正则、零延迟、不花 token），
@@ -449,6 +469,7 @@ Ollama 的加速名单里，而它和 CPU 抢的是同一份内存带宽，这�
 | **心情的两条轴 / 五档 / 动作倍率 / 黏人多近** | `resources\app\mood.cjs`（`EVENT` 每种互动加多少、`PULL` 回归多快、`AWAY_PULL` 你不在时掉多快、`compute()` 分界线）；各档台词在 `lines.cjs` 的 `mood.<档>`。**删掉 `data\pet-mood.json` 就等于回到中位** |
 | **小动作多久来一次 / 幅度** | `pet.cjs` 的 `MICRO_MIN_MS`/`MICRO_MAX_MS`/`MICRO`；姿态在 `pet-core.js` 的 `micro()` 与 `figure.js` 的 `microTilt`/`microStep` 两行；呼吸深浅节奏是 `figure.js` 的 `bDepth`/`bRate` |
 | **情绪识别认哪些词 / 优先级** | `pet.cjs` 的 `TONE`（正则表，**数组顺序就是优先级**）与 `TONE_HINT`；各桶台词在 `lines.cjs` 的 `emotion.<桶>`（键必须和 `TONE` 一致，自检盯着）。**加一种情绪 = 加一行 + 一个桶** |
+| **玩具球的手感 / 她多爱玩球** | `web\ball.js` 顶部的 `GRAVITY`（重力）/`BOUNCE`（弹性）/`GROUND_FRICTION`（摩擦）/`KICK_MIN,MAX`（踢的力度）/`HIT`（她的碰撞盒）；"她多爱去追球"在 `pet.cjs` 的 `fidget()`（`roll < 0.30`）。开关存 `config\settings.json` 的 `ball` |
 | **服装清单 / 以后加新衣服** | `resources\app\dress.cjs` 的 `OUTFITS`（`ready:false` = 还没贴图）；窗口是 `web\dress.html`，换装记录 `data\dress.json`。上游那 8 套配色**故意没带** |
 | **给模型的"此刻"** | `pet.cjs` 的 `contextLine()`（拼那几十个字）+ `llm.cjs` 的 `chat(…, context)`（并进 system） |
 | **它多久问一次 / 问什么** | **触发是"抚摸"不是点击**；摸够几下：`pet.cjs` 的 `ASK_AFTER_PETS`（默认 3，摸头算两下）· 间隔：`ASK_COOLDOWN_MS`（默认 3 分钟）· 卡片举多久：`ASK_TTL_MS`（默认 20 秒，这段时间它闭嘴）· 问题和选项：`lines.cjs` 的 `ask` |
@@ -500,6 +521,7 @@ DeepSeekPet/
 │  └─ web/                   页面（Coopanion 搬来，只打了补丁）
 │     ├─ pet.html pet.css pet-core.js
 │     ├─ diag.js             页面全局错误捕获（最先加载；把异常送回主进程写文件）
+│     ├─ ball.js             玩具球（物理、绘制、碰撞都在这一个文件里）
 │     ├─ pet-app.js          改动：诊断日志默认关掉、部位判定、抚摸、按部位拖拽…（后几处还没进补丁脚本）
 │     ├─ dress.html          服装页
 │     ├─ settings.html       设置界面（自带样式和脚本，单文件）
@@ -510,7 +532,7 @@ DeepSeekPet/
 │        ├─ model.json       骨架/枢轴/部件/表情定义（只留 deepseek 配色）
 │        ├─ tex/             25 张部件贴图（头发、裙、鳍、尾、脸…）
 │        └─ feat/            25 张五官贴图（眼、嘴、腮红…）
-├─ test/smoke.cjs            自检 219 项：文件、台词库、设置、模型链路、记忆、心情、图标、连点合并…
+├─ test/smoke.cjs            自检 234 项：文件、台词库、设置、模型链路、记忆、心情、玩具球、图标、连点合并…
 └─ tools/                    重建与部署脚本（纯 ASCII，避免 PS 5.1 读成乱码）
    ├─ setup-runtime.ps1      装配 Electron 运行时（默认下载官方 Electron；-Source 复用本机 Coopanion）
    │                         最后会自动调 patch-exe.ps1
@@ -578,7 +600,7 @@ gemini / qwen / kimi / minimax）。
 ## 自检与重建
 
 ```powershell
-# 自检 219 项：页面文件、贴图、302 条台词、设置读写、模型链路（用假端点）、记忆、心情、图标、
+# 自检 234 项：页面文件、贴图、315 条台词、设置读写、模型链路（用假端点）、记忆、心情、玩具球、图标、
 #              补丁 marker、连点合并与过期、自动说话、连击升级、睡着状态、暂停恢复、目录穿越防护、
 node test\smoke.cjs
 

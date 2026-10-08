@@ -360,6 +360,8 @@ export const ICONS = {
   eye: icon('<path d="M3 12s3.2-6 9-6 9 6 9 6-3.2 6-9 6-9-6-9-6z"/><circle cx="12" cy="12" r="3"/>'),
   // a page that opens in the browser
   external: icon('<path d="M14 4h6v6M20 4l-8.5 8.5M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>'),
+  // a ball with a seam: the toy toggle
+  ball: icon('<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5v17M6 6.2c3.2 2.2 3.2 9.4 0 11.6M18 6.2c-3.2 2.2-3.2 9.4 0 11.6"/>'),
   eyeOff: icon('<path d="M3 12s3.2-6 9-6c1.6 0 3 .4 4.2 1M21 12s-3.2 6-9 6c-1.6 0-3-.4-4.2-1"/><path d="M9.9 14.1a3 3 0 0 1 4.2-4.2M4 4l16 16"/>'),
   // how much the pet walks on its own, as a gauge: low, middle, high
   roam_off: icon('<path d="M4 16a8 8 0 0 1 16 0"/><path d="M12 16 7 13.2"/><circle cx="12" cy="16" r="1.2" fill="currentColor"/>'),
@@ -481,6 +483,18 @@ export function createSfx({ storageKey = 'cortico-pet.sound.v1', volume = .55 } 
       noise({ type: 'lowpass', f0: 250, f1: 700, dur: .7, vol: .09, attack: .35 });
     },
     purr() { tone({ type: 'sawtooth', f0: 62, f1: 58, dur: .9, vol: .08, vib: 6, vibRate: 24, filter: 320, attack: .1 }); },
+    /** 踢到玩具球：一声闷响 + 一点"皮球"的弹响。`k` 是力度 0~1。 */
+    kick(k = 1) {
+      const p = Math.max(.3, Math.min(1, k));
+      tone({ f0: 150 + 60 * p, f1: 62, dur: .1 + .05 * p, vol: .2 + .12 * p });
+      noise({ type: 'lowpass', f0: 900, f1: 200, dur: .07, vol: .1 + .08 * p });
+      tone({ type: 'triangle', f0: 520 + 220 * p, f1: 300, dur: .07, vol: .07 * p, at: .02, filter: 2000 });
+    },
+    /** 球弹地的声音：`k` 是撞击强度 0~1。 */
+    ballBounce(k = .5) {
+      const p = Math.max(.15, Math.min(1, k));
+      tone({ f0: 220 + 120 * p, f1: 90, dur: .07, vol: .05 + .1 * p });
+    },
     /** `n` = 连戳第几下：音高一级级往上走（1 = 普通一下；世界那边的连击最多 5 档）。 */
     poke(n = 1) { const k = Math.min(n, 6) - 1; tone({ f0: 320 + k * 55, f1: 200 + k * 40, dur: .09, vol: .16 }); },
     nod() { tone({ type: 'triangle', f0: 520, f1: 440, dur: .07, vol: .08 }); tone({ type: 'triangle', f0: 520, f1: 440, dur: .07, vol: .08, at: .2 }); },
@@ -1275,6 +1289,12 @@ export function createPet(els, opts) {
     },
     get time() { return T; },
     get bounds() { return { W, H, floorY, S, minX: minX(), maxX: maxX() }; },
+    /**
+     * 她此刻站在哪、朝哪边（**只读**）。
+     * 玩具球（`web/ball.js`）用它算碰撞：球砸到她身上就被踢出去。
+     * 只暴露位置和朝向，**不暴露可写句柄**，免得外面的模块把她搬走。
+     */
+    get where() { return { x: pet.x, faceVis: pet.faceVis }; },
     setSkin(s) { skin = s; },
     /** Swaps the body's drawing: a custom figure (see `opts.figure`) or null for the built-in Coo. */
     setFigure(fig) {

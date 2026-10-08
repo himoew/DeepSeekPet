@@ -44,7 +44,8 @@
 ## 我们自己新增的文件（不基于上游）
 
 - 行为与配置：`pet.cjs` · `lines.cjs` · `llm.cjs` · `memory.cjs` · **`mood.cjs`** · `log.cjs` · `server.cjs` · `main.cjs` · **`store.cjs`**（小 JSON 的原子读写）
-- 服装：**`dress.cjs`** · **`dress-preload.cjs`** · **`web/dress.html`**
+- 玩具：**web/ball.js**（球的物理、绘制、碰撞）
+- 服装：**dress.cjs** · **dress-preload.cjs** · **web/dress.html**
 - 语音：`tts.cjs` · `tts-voice.cjs` · `tts-worker.cjs` · `voice-config.cjs`
 - 窗口：`settings.cjs` · `settings-preload.cjs` · `voice-preload.cjs` · `preload.cjs`
 - 页面：`web/settings.html` · `web/voice.html` · **`web/diag.js`**（页面全局错误捕获）· 图标（`web/app-icon.png` 等，见 `tools/make-icons.py`）
@@ -98,7 +99,8 @@
 - **不说话的小动作**：歪头 / 换重心 / 瞟一眼鼠标（纯姿态、不出声），呼吸深浅与节奏跟心情走
 - **本地情绪识别**：打字先过本地关键词表（累/难过/生气/谢谢/夸它/关心/开心），
   先接住情绪再放大模型的回答，并给模型一句情绪提示（**不花 token**）
-- **服装**：`dress.cjs` + 服装页。**只有"原版"能穿**，预留格看得见；
+- **玩具球**：悬停「对话」旁边的球按钮开关；球会滚/弹/撞墙，能用鼠标拨它，**她碰到就踢、还会自己过去追**；实现在独立文件 web/ball.js（不碰她的身体与帧循环）
+- **服装**：dress.cjs + 服装页。**只有"原版"能穿**，预留格看得见；
   上游那 8 套配色**故意没带**（作者要的是"更多服装"而不是换色，贴图以后再补）
 - **模型与语音**：接本地或云端大模型，每轮附一段「此刻」的处境；**本地语音合成**（sherpa-onnx），
   可换音色、可调语速/音高/响度
