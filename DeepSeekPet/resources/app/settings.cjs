@@ -11,12 +11,15 @@ const llm = require('./llm.cjs');
 const tts = require('./tts.cjs');
 const memory = require('./memory.cjs');
 const mood = require('./mood.cjs');
+const dress = require('./dress.cjs');
 const voiceConfig = require('./voice-config.cjs');
 
 let win = null;
 let voiceWin = null;
+let dressWin = null;
 let url = '';
 let voiceUrl = '';
+let dressUrl = '';
 let wired = false;
 
 function wire() {
@@ -38,9 +41,20 @@ function wire() {
   /* ---------- 它的记忆（只读 + 清空） ---------- */
 
   ipcMain.handle('settings:memory', () => memory.snapshot());
-  ipcMain.handle('settings:forget', () => { mood.forget(); return memory.forget(); });
+  ipcMain.handle('settings:forget', () => { mood.forget(); dress.forget(); return memory.forget(); });
   /** 它现在的心情（只读）：看得到"为什么它今天话少了"这种事的来由。 */
   ipcMain.handle('settings:mood', () => mood.snapshot());
+
+  /* ---------- 服装（桌宠右键「换装…」） ---------- */
+
+  ipcMain.handle('dress:load', () => dress.list());
+  /**
+   * 换上一套。**说明白"为什么现在只这一套"**：清单里 `ready:false` 的那几格
+   * 是留给以后的新衣服的，点了会得到一句人话，而不是没反应。
+   */
+  ipcMain.handle('dress:wear', (_e, { id } = {}) => dress.wear(id));
+  ipcMain.handle('dress:reveal', () => shell.showItemInFolder(dress.FILE));
+  ipcMain.handle('dress:close', () => { if (dressWin && !dressWin.isDestroyed()) dressWin.close(); });
 
   /* ---------- 音色编辑（桌宠右键「音色…」） ---------- */
 
@@ -86,8 +100,9 @@ function wire() {
 /** Must be called once, after the local server is up and its port is known. */
 function setup(settingsUrl) {
   url = settingsUrl;
-  // 语音编辑页由同一个服务提供，只是路径不同
+  // 语音编辑页 / 服装页由同一个服务提供，只是路径不同
   voiceUrl = settingsUrl.replace(/\/settings$/, '/voice');
+  dressUrl = settingsUrl.replace(/\/settings$/, '/dress');
   wire();
 }
 
@@ -130,4 +145,19 @@ function openVoice() {
   log.info('打开音色编辑窗口');
 }
 
-module.exports = { setup, open, openVoice };
+/**
+ * 打开服装窗口（桌宠右键菜单的「换装…」）。
+ *
+ * 现在只有"原版"能穿（用户明确说了：不要上游那 8 套配色，要等以后做全新服装），
+ * 所以这个窗口的作用是**把位置占住**：清单、当前那套、"以后加衣服要往哪放"都写清楚，
+ * 免得以后加贴图时又得从零搭一遍 UI。
+ */
+function openDress() {
+  if (dressWin && !dressWin.isDestroyed()) { dressWin.show(); dressWin.focus(); return; }
+  if (!dressUrl) { log.warn('服装窗口还没准备好（服务未启动？）'); return; }
+  dressWin = openWindow({ width: 620, height: 700, title: 'Blue Fish Deskpet · 服装', preload: 'dress-preload.cjs', url: dressUrl });
+  dressWin.on('closed', () => { dressWin = null; });
+  log.info('打开服装窗口');
+}
+
+module.exports = { setup, open, openVoice, openDress };

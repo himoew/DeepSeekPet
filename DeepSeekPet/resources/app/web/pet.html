@@ -31,5 +31,35 @@
 <div class="menu" id="menu" role="menu" hidden></div>
 <div class="tools" id="tools" hidden></div>
 <script type="module" src="/web/pet-app.js"></script>
+<script>
+  /**
+   * 页面自检自报（`?diag=1` 时打开，平时完全不跑）。
+   *
+   * **为什么需要**：主进程的 `console.log` 在 GUI 起来之后是被丢掉的，而页面里的异常
+   * 又不会自己冒出来——"她没画出来"这类问题因此完全没有线索。这段代码把"页面到底画了
+   * 什么"持续写进 `document.title`，于是**从窗口外面**（Get-Process / user32 读标题）
+   * 就能看到：SVG 里有没有内容、canvas 多大、有没有 WebGL、有没有 JS 异常。
+   */
+  if (new URLSearchParams(location.search).get('diag') === '1') {
+    const report = (tag) => {
+      const petG = document.getElementById('pet');
+      const svg = document.getElementById('stageSvg');
+      const r = svg ? svg.getBoundingClientRect() : null;
+      const cs = [...document.querySelectorAll('canvas')].map((c) => {
+        const b = c.getBoundingClientRect();
+        return `${c.width}x${c.height}@${Math.round(b.x)},${Math.round(b.y)}:${Math.round(b.width)}x${Math.round(b.height)}`;
+      });
+      let gl = '?';
+      try { const c = document.createElement('canvas'); gl = c.getContext('webgl2') ? 'gl2' : (c.getContext('webgl') ? 'gl1' : 'GLNONE'); } catch (e) { gl = 'glthrow'; }
+      document.title = `DIAG ${tag} ready=${document.readyState} kids=${petG ? petG.childElementCount : -1}`
+        + ` inner=${petG ? petG.innerHTML.length : -1} tf=${petG ? petG.getAttribute('transform') : null}`
+        + ` svg=${r ? [r.x, r.y, r.width, r.height].map(Math.round).join(',') : null}`
+        + ` canvas=[${cs.join(' ')}] ${gl}`;
+    };
+    window.addEventListener('error', (e) => report(`ERR ${e.message}@${e.lineno}`));
+    window.addEventListener('unhandledrejection', (e) => report(`REJ ${(e.reason && (e.reason.stack || e.reason.message)) || e.reason}`));
+    setInterval(() => report('T'), 1000);
+  }
+</script>
 </body>
 </html>

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Blue Fish Deskpet · 服装</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px 20px 28px; background: #11151d; color: #e8edf5;
+    font: 14px/1.7 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  }
+  h1 { margin: 0 0 4px; font-size: 19px; }
+  .sub { margin: 0 0 18px; color: #9aa7bd; font-size: 13px; }
+  .card { background: #171c26; border: 1px solid #263043; border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .item {
+    position: relative; text-align: center; padding: 14px 10px 12px; border-radius: 10px;
+    border: 1px solid #2b3648; background: #1c2230; cursor: pointer; transition: .15s;
+  }
+  .item:hover { border-color: #4d6bfe; transform: translateY(-1px); }
+  .item.on { border-color: #4d6bfe; background: #1e2740; }
+  .item.locked { cursor: not-allowed; opacity: .55; }
+  .item.locked:hover { border-color: #2b3648; transform: none; }
+  .thumb {
+    width: 74px; height: 74px; margin: 0 auto 10px; border-radius: 14px; display: grid; place-items: center;
+    background: radial-gradient(circle at 50% 42%, #223049, #151a24 70%); border: 1px dashed #33415a;
+    font-size: 26px;
+  }
+  .item.on .thumb { border-style: solid; border-color: #4d6bfe; }
+  .name { font-weight: 600; }
+  .note { color: #8b98ae; font-size: 12px; line-height: 1.5; margin-top: 4px; }
+  .tag { position: absolute; top: 8px; right: 8px; font-size: 11px; color: #9fb0cc; background: #23304a; border-radius: 6px; padding: 1px 6px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  button {
+    font: inherit; color: #e8edf5; background: #2a3550; border: 1px solid #384a6b;
+    border-radius: 8px; padding: 7px 14px; cursor: pointer;
+  }
+  button:hover { background: #33415f; }
+  .status { color: #9aa7bd; font-size: 13px; }
+  code { background: #0d1117; border: 1px solid #263043; border-radius: 5px; padding: 1px 6px; font-size: 12px; }
+  ol { margin: 8px 0 0 20px; padding: 0; color: #b9c5d8; font-size: 13px; }
+  ol li { margin: 3px 0; }
+</style>
+</head>
+<body>
+  <h1>服装</h1>
+  <p class="sub">换她身上这一整套。<b>现在只有「原版」能穿</b>——配色那 8 套是上游的，不做；服装要等你画好新贴图。</p>
+
+  <section class="card">
+    <div class="grid" id="grid"></div>
+    <div class="row" style="margin-top:14px">
+      <span class="status" id="status"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <b>以后加一套新衣服，只要三步</b>
+    <ol>
+      <li>贴图放进 <code>resources\app\web\whale\</code>（自己一个目录，比如 <code>outfits\&lt;名字&gt;\</code>）；</li>
+      <li>在 <code>resources\app\web\whale\model.json</code> 里加一条（格式照上游的 <code>schemes</code> 那一栏）；</li>
+      <li>在 <code>resources\app\dress.cjs</code> 的 <code>OUTFITS</code> 里把这一格的 <code>id</code> / <code>label</code> 填上、<code>ready</code> 改成 <code>true</code>。</li>
+    </ol>
+    <p class="note" style="margin-top:10px">这一页和换装记录都是为这件事准备的：<b>接口已经接好，贴图一到就能用</b>，不用再改一遍 UI。</p>
+  </section>
+
+  <section class="card row" style="justify-content: space-between">
+    <span class="note">换装记录：<code id="file"></code></span>
+    <span class="row"><button id="reveal">打开所在文件夹</button><button id="close">关闭</button></span>
+  </section>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function render(d) {
+    $('file').textContent = d.file;
+    $('grid').innerHTML = (d.outfits || []).map((o) => `
+      <div class="item ${o.id === d.current ? 'on' : ''} ${o.ready ? '' : 'locked'}" data-id="${esc(o.id)}" data-ready="${o.ready ? '1' : '0'}">
+        ${o.id === d.current ? '<span class="tag">在穿</span>' : ''}
+        <div class="thumb">${o.ready ? '🐳' : '＋'}</div>
+        <div class="name">${esc(o.label)}</div>
+        <div class="note">${esc(o.note || '')}</div>
+      </div>`).join('');
+  }
+
+  async function refresh() {
+    try { render(await window.dress.load()); }
+    catch (err) { $('status').textContent = '读不到服装清单：' + err.message; }
+  }
+
+  $('grid').addEventListener('click', async (e) => {
+    const el = e.target.closest('.item');
+    if (!el) return;
+    if (el.dataset.ready !== '1') {
+      $('status').textContent = '这一套还没有贴图——等你做好新衣服，把贴图放进来就能穿了。';
+      return;
+    }
+    const r = await window.dress.wear(el.dataset.id);
+    if (!r.ok) { $('status').textContent = r.error || '换不了'; return; }
+    render({ ...r, file: $('file').textContent });
+    $('status').textContent = '换好了。桌宠里的她会立刻换过来（下次启动也还是这套）。';
+  });
+
+  $('reveal').addEventListener('click', () => window.dress.reveal());
+  $('close').addEventListener('click', () => window.dress.close());
+  refresh();
+</script>
+</body>
+</html>

@@ -44,6 +44,7 @@ const llm = require('./llm.cjs');
 const tts = require('./tts.cjs');
 const memory = require('./memory.cjs');
 const mood = require('./mood.cjs');
+const dress = require('./dress.cjs');
 
 /* ---------- 记住它站的位置 ---------- */
 /**
@@ -113,6 +114,19 @@ function contextLine(state) {
   if (s.words && s.talks >= 2) bits.push(`用户上次对你说过「${s.words}」`);
   return `${bits.join('，')}。`;
 }
+
+/**
+ * 读一下你刚打的那句话的情绪（`readTone`），记在 `state.tone` 上。
+ * 读不出来就把上一次的清掉——**不然"上一句的累"会一直影响后面的回答**。
+ * 顺手记一行日志：想知道"为什么它这次答得特别软/特别嗨"，看这一行就够。
+ */
+function noteTone(state, text) {
+  const tone = readTone(text);
+  state.tone = tone;
+  state.toneHint = tone ? (TONE_HINT[tone] || '') : '';
+  if (tone) log.info(`听出情绪:${tone}（本地关键词，不花 token）`);
+  return tone;
+}
 /** 小时 → 时段。比 `partOfDay()` 的四段细一点，专门给"你常在的时段"和模型上下文用。 */
 const HOUR_CN = (h) => (h < 5 ? '凌晨' : h < 9 ? '清早' : h < 12 ? '上午' : h < 14 ? '中午' : h < 18 ? '下午' : h < 23 ? '晚上' : '深夜');
 
@@ -156,11 +170,69 @@ function moodPick(state, fallback) {
 /** 心情只改"步调"，不动任何判定：动作、走路、发呆间隔都按这个倍率缩放。 */
 const moodSpeed = (state) => (typeof state.moodSpeed === 'number' ? state.moodSpeed : 1);
 
+/* ---------- 本地情绪识别（不花 token 的那一层"懂你"） ---------- */
+
+/**
+ * 你打的字先在这儿过一遍。命中就返回一个情绪名（对应 `lines.emotion` 的桶）。
+ *
+ * **为什么值得做**：本地 3B 看不出"今天累死了"和"今天真开心"的区别，云端模型也常常只顾着
+ * 接话；而这一层**零依赖、零延迟、不花 token**，只要几个关键词就能让它答得像"听懂了"。
+ *
+ * **顺序是有意的**（数组从前往后试）：先认负面和"累"，再认客气话，最后才是开心。
+ * 因为"累死了但今天还挺好"这种句子，先认出累才对——「累」放在「开心」后面就会被
+ * 那个"好"字抢走。改顺序就改这张表的顺序。
+ */
+const TONE = [
+  ['tired', /累|困死|好困|熬夜|加班|忙死|撑不住|顶不住|疲惫|没力气|不想动|睡了|该睡了/],
+  ['sad', /难过|不开心|委屈|想哭|哭了|伤心|失落|emo|郁闷|烦死|沮丧|孤独|没人/],
+  ['angry', /生气|气死|讨厌|烦人|可恶|过分|混蛋|火大|气炸|烦透|受不了/],
+  ['thanks', /谢谢|多谢|感谢|辛苦了|麻烦你了|谢啦/],
+  ['praise', /可爱|好看|喜欢你|爱你|真棒|厉害|好萌|好可爱|太可爱|棒极了/],
+  ['worried', /你还好吗|你没事吧|怎么了|不舒服|生病|感冒|发烧|注意身体/],
+  ['happy', /哈哈|开心|高兴|太好了|太棒|耶|爽|舒服|好耶|快乐|嘻嘻|笑死|不错哦|中奖|成了/],
+];
+
+/** 读一句人话里的情绪；读不出来就返回空串（**读不出是常态，不是错误**）。 */
+function readTone(text) {
+  const s = String(text || '');
+  if (!s) return '';
+  for (const [name, re] of TONE) if (re.test(s)) return name;
+  return '';
+}
+
+/** 情绪 → 给模型的一句提示（塞进 system 的【此刻】后面）。读不出来就没这句。 */
+const TONE_HINT = {
+  tired: '用户听起来很累，说点安慰的，别提要求。',
+  sad: '用户情绪低落，先陪着，别讲道理、别逗他。',
+  angry: '用户在生气，顺着他说，别劝架。',
+  thanks: '用户在谢你，别客气过头。',
+  praise: '用户在夸你，可以有点小得意。',
+  worried: '用户在关心你，回答得让人放心。',
+  happy: '用户心情很好，跟着一起高兴。',
+};
+
+/* ---------- 不说话的小动作（"活着的质感"） ---------- */
+
+/**
+ * 发呆之间那些**不出声的微动作**：歪头、换重心、瞟一眼鼠标。
+ * 页面侧由 pet-core 的 `microStep()` 画（见 pet-app.js 的 `case 'micro'`）。
+ *
+ * 为什么单独一条定时器、不塞进 `fidget()`：`fidget` 在有选择卡、暂停、你不在的时候会
+ * 整段返回，而"她其实是活的"这件事**恰恰应该在这些时候也看得到**（只是不出声）。
+ */
+const MICRO = ['tilt', 'step', 'look'];
+const MICRO_MIN_MS = 22_000;
+const MICRO_MAX_MS = 52_000;
+
 /**
  * 它穿什么。`figure: 'whale'` 是 DeepSeek 大肥鱼；`scheme` 对应 web\whale\model.json 里的配色，
  * 这里只带了 `deepseek`（原版），贴图在 web\whale\tex 和 web\whale\feat。
+ *
+ * **换装那一层在 `dress.cjs`**（用户要的是"以后加全新服装"，不是上游那 8 套配色）：
+ * 它记着挑了哪一套，`skinOverride()` 只在**页面认得的 scheme** 上返回覆盖值，
+ * 其余一律 `null` → 就用下面这个默认的。所以服装模块出任何问题都不会影响她出现。
  */
-const SKIN = { figure: 'whale', scheme: 'deepseek' };
+const SKIN = dress.skinOverride() || { figure: 'whale', scheme: 'deepseek' };
 
 /**
  * 页面一连上就发过去。**这就是让大肥鱼出现的那一条**：在收到带 `skin` 的
@@ -208,7 +280,7 @@ const INIT = {
     paused: false,
     quitLabel: '退出桌宠',
     quitPrompt: '要让我退下吗?',
-    buttons: { pause: true, settings: true, voice: true, quit: true, dress: false },
+    buttons: { pause: true, settings: true, voice: true, quit: true, dress: true },
   },
 };
 
@@ -643,13 +715,23 @@ function beatsFor(answer) {
 /**
  * 没接模型时（或者模型没调通时）的回话：回显一遍再挑一句内置台词。
  * 只为让"打字 → 它说话"这条路看得见。
+ *
+ * **听出情绪时先说情绪那句**（`lines.emotion`，`state.tone` 由 `noteTone` 填好）：
+ * 这样"没接模型"也不会对一句"今天累死了"回一句无关的客套话。
  */
-function replyText(text) {
+function replyText(state, text) {
   log.info(`收到一句话(内置台词):${text}`);
   return [
     { text: `「${text.slice(0, 40)}」`, actions: [] },
+    ...toneBeats(state),
     next(lines.reply),
-  ];
+  ].filter(Boolean);
+}
+
+/** 刚才那句话听出来的情绪，对应的一两条台词（没有就返回空数组）。 */
+function toneBeats(state) {
+  const list = state && state.tone ? lines.emotion?.[state.tone] : null;
+  return list && list.length ? [next(list)] : [];
 }
 
 /**
@@ -706,7 +788,7 @@ async function ask(ws, state, reactor, text, opts = {}) {
   const attempts = unsolicited ? AUTO_CHAT_RETRY + 1 : 1;
   if (!llm.isOn()) {
     if (unsolicited) return;                 // 自动说话只走模型，没接模型就算了（内置台词够多了）
-    reactor.reply('line', 'reply', replyText(text));
+    reactor.reply('line', 'reply', replyText(state, text));
     return;
   }
   if (state.asking) {
@@ -726,7 +808,7 @@ async function ask(ws, state, reactor, text, opts = {}) {
       let answer;
       try {
         answer = await llm.chat(unsolicited ? [] : state.history, attempt ? AUTO_CHAT_AGAIN : text, temperature,
-          unsolicited ? '（自动说话）' : '', contextLine(state));
+          unsolicited ? '（自动说话）' : '', contextLine(state), unsolicited ? '' : state.toneHint || '');
       } catch (err) {
         send(ws, { t: 'thinking', on: false });
         // 具体原因进日志（托盘「打开日志」或设置页的「测试连接」能看到细节）
@@ -741,8 +823,11 @@ async function ask(ws, state, reactor, text, opts = {}) {
         state.history.push({ role: 'user', content: text }, { role: 'assistant', content: answer });
         state.history = state.history.slice(-HISTORY_TURNS * 2);
       }
-      const beats = beatsFor(answer);
-      if (beats) reactor.reply('line', unsolicited ? 'auto' : 'answer', beats, { voice: true });
+      let beats = beatsFor(answer);
+      // 先把你那句话的情绪接住（`lines.emotion` 那一桶），再放模型自己的回答。
+      // **只在你直接跟它说话时加**，自动说话那条路不该冒出"我陪着你"这种没头没尾的话。
+      if (!unsolicited && state.tone) beats = [...toneBeats(state), ...(beats || [])];
+      if (beats && beats.length) reactor.reply('line', unsolicited ? 'auto' : 'answer', beats, { voice: true });
       return;
     }
     // 换了几句还是那点内容：这一次就不说，免得你看到的还是同一句
@@ -842,8 +927,10 @@ function attach(ws) {
     lastEvent: '',
     // 心情：`moodState`/`moodSpeed`/`moodCling` 是最新快照，`moodSent` 是"页面上现在显示的那一档"
     moodState: '', moodSpeed: 1, moodCling: 170, moodSent: '',
+    // 本地情绪识别：`tone` 是刚听出来的情绪（tired/sad/…），`toneHint` 是给模型的一句提示
+    tone: '', toneHint: '',
   };
-  let idle = null, auto = null, moodTimer = null;
+  let idle = null, auto = null, moodTimer = null, micro = null;
 
   /** 念大模型回答的那条路（内置台词不出声）。 */
   const speaker = createSpeaker(ws);
@@ -1049,6 +1136,36 @@ function attach(ws) {
     stepMood();
   }, MOOD_TICK_MS);
 
+  /* ---------- 不说话的小动作（歪头 / 换重心 / 瞟一眼鼠标） ---------- */
+
+  /**
+   * 挑一个微动作发下去（**不带气泡**，所以不受应答链和"有没有卡举着"的影响）。
+   * `pet-core` 的 `microStep()` 会把它画出来；`tilt`/`step` 的台词只在日志里露面。
+   */
+  function sendMicro() {
+    if (state.paused || state.card) return;                 // 暂停 / 有卡举着：别乱动
+    const kind = MICRO[Math.floor(Math.random() * MICRO.length)];
+    if (kind === 'look') {
+      // 瞟一眼光标那儿（会走动，所以只有"发呆且不在走路"的时候才发）
+      if (state.sleeping || state.walking) return;
+      state.walking = true;
+      send(ws, { t: 'walk', id: `w${++seq}`, to: 'cursor' });
+      log.info(`小动作:瞟一眼鼠标`);
+      return;
+    }
+    send(ws, { t: 'micro', kind });
+    const pool = lines.micro?.[kind];
+    log.info(`小动作:${pool && pool.length ? next(pool).text.replace(/[（）]/g, '') : kind}`);
+  }
+
+  const scheduleMicro = () => {
+    micro = setTimeout(() => {
+      sendMicro();
+      scheduleMicro();
+    }, (MICRO_MIN_MS + Math.random() * (MICRO_MAX_MS - MICRO_MIN_MS)) / moodSpeed(state));
+  };
+  scheduleMicro();
+
   /* ---------- 它会问你：用页面里那套选择卡（点一下，或者按数字键 1–9） ---------- */
 
   /**
@@ -1243,6 +1360,7 @@ function attach(ws) {
         state.pokes = 0;
         memory.addTalk(text);                 // 记忆：聊过一次，并记下这句（截短）
         mood.onEvent('talk');                 // 心情：你主动跟它说话，它也高兴
+        noteTone(state, text);                // 本地情绪识别：先听懂你这句是什么情绪
         stepMood();
         state.lastEvent = '';                 // 你在直接跟它说话，就别说"刚被戳了"了
         // 你直接打字了：那张卡就别再举着（模型那句 `say` 到了页面也会把它收掉）
@@ -1260,6 +1378,10 @@ function attach(ws) {
           case 'voice':
             // 音色编辑：单独一个窗口（拖滑杆 + 反复试听，塞进设置页很难受）
             require('./settings.cjs').openVoice();
+            break;
+          case 'dress':
+            // 服装：也单独一个窗口（将来贴图多了，一页缩略图比对话框清楚）
+            require('./settings.cjs').openDress();
             break;
           case 'pause':
           case 'resume': {
@@ -1284,6 +1406,11 @@ function attach(ws) {
       case 'interrupted':
         state.walking = false;      // 溜达结束(或被拎起来打断了)
         state.lastUserAt = Date.now();
+        break;
+
+      case 'micro':
+        // 页面把那个小动作演完了（`pet-core` 的 `microStep`）。**故意不动 `lastUserAt`**：
+        // 它自己动一下不算"你理了它"，不然犯困/睡觉的计时会被这些小动作一直推后。
         break;
 
       case 'prefs':
@@ -1343,6 +1470,7 @@ function attach(ws) {
     clearTimeout(auto);
     clearInterval(awayPoll);       // 系统空闲那条轮询
     clearInterval(moodTimer);      // 心情的心跳
+    clearTimeout(micro);           // 微动作那条定时器
     if (pm) {                      // 监听器是跟着这条连接注册的，必须摘掉
       pm.off('lock-screen', onSleep); pm.off('suspend', onSleep);
       pm.off('unlock-screen', onWake); pm.off('resume', onWake);
@@ -1355,5 +1483,5 @@ function attach(ws) {
   });
 }
 
-// `next` / `partOfDay` / `fill` / `moodPick` 是纯函数，导出给 test\smoke.cjs 用。
-module.exports = { attach, SKIN, INIT, next, partOfDay, moodOf, beatsFor, createSpeaker, fill, moodPick };
+// `next` / `partOfDay` / `fill` / `moodPick` / `readTone` 是纯函数，导出给 test\smoke.cjs 用。
+module.exports = { attach, SKIN, INIT, next, partOfDay, moodOf, beatsFor, createSpeaker, fill, moodPick, readTone, TONE };

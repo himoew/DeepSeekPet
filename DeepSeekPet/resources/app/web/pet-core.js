@@ -602,7 +602,16 @@ export function createPet(els, opts) {
    * 心情（`setMood`）：**只影响步调**，不动任何判定。`cling` 是「黏着你」那一档的"够近了"门槛，
    * `speed` 是走路速度的倍率（开心走得快、困了慢吞吞）。默认值 = 老行为，所以没接心情时一模一样。
    */
-  let mood = { cling: 170, speed: 1 };
+  let mood = { cling: 170, speed: 1, energy: null };
+  /**
+   * 不说话的小动作（`setMicro`）：`tilt` 歪头、`step` 换重心。一个包络（0→1→0）走完就结束，
+   * 结束时报一条 `micro` 回去（World 只在日志里用）。**它们只加姿态，不加表情、不出声**，
+   * 所以跟"发呆""有卡举着""你在忙"都不冲突 —— 那些情况下照样能看到她是活的。
+   */
+  let microState = { kind: '', k: 0, t: 0, dur: 0 };
+  /** 绘制出错只上报一次（见下面 render 里的 try/catch）。 */
+  let drawFailReported = false;
+
   /** 连戳计数：音高跟着升（世界那套连击是 2.5 秒一个窗口，这里跟它对齐）。 */
   let pokeStreak = 0, pokeAt = 0;
   const P = [];
@@ -788,9 +797,26 @@ export function createPet(els, opts) {
       return [pdx * pet.facing / pm * 5 * k, pdy / pm * 4 * k];
     };
 
+    /* ---------- 不说话的小动作：把包络往前推一格 ---------- */
+    if (microState.kind) {
+      microState.t += dt;
+      const u = microState.t / microState.dur;
+      if (u >= 1) {
+        const done = microState.kind;
+        microState = { kind: '', k: 0, t: 0, dur: 0 };
+        onEvent('micro', { kind: done, x: Math.round(pet.x) });
+      } else {
+        // 0 → 1 → 0 的平滑包络（两头都是 0，所以做完自然回到原来的姿态，不用"复位"）
+        microState.k = u < .5 ? u * 2 : (1 - u) * 2;
+      }
+    }
+    const microK = microState.k;
+
     switch (m) {
       case 'idle': {
         lookT = track();
+        // 往下瞟一眼（只用在这一个动作里，而且是在 track 之后，所以看得出"它低头看了下鼠标"）
+        if (microState.kind === 'look') lookT = [lookT[0], lookT[1] + 3.4 * microK];
         if (pointer.inside && !press && pdx * pet.facing < -50 && pm < 600) {
           pet.turnAcc += dt;
           if (pet.turnAcc > .9) { pet.facing *= -1; pet.turnAcc = 0; }
@@ -1069,9 +1095,30 @@ export function createPet(els, opts) {
     if (pet.swapAge < .07 && pet.eyePrev) { eyes = pet.eyePrev; eyeClose = pet.swapAge / .07; }
     else if (pet.swapAge < .16) eyeClose = 1 - (pet.swapAge - .07) / .09;
     const face = { ...fc, eyes, gap: pet.gap.map(g => Math.min(64, g + pet.talkK * 12)), blush: pet.blushK };
-    const frame = { look: pet.look, legs, low: pet.low, t: T, blink, eyeClose, acc: skin, swing: pet.swing };
-    if (custom) custom.draw(petG, face, { ...frame, face: fname, mode: pet.mode, modeT: pet.modeT, talk: pet.talkK, drowse: pet.drowse, sit: pet.sitK, facing: pet.faceVis, tilt: pet.tilt, lean, groupRot: rot });
-    else petG.innerHTML = figure(face, frame);
+    const frame = {
+      look: pet.look, legs, low: pet.low, t: T, blink, eyeClose, acc: skin, swing: pet.swing,
+      // 心情：`accMood` 给 figure.js 调呼吸的深浅与节奏（`null` = 没有这一层，行为同上游）。
+      // **单独一个字段**，不塞进 `skin`：`skin` 是"她穿什么"，心情是"她此刻什么状态"。
+      accMood: mood.energy === null ? null : { energy: mood.energy },
+      microTilt: microState.kind === 'tilt' ? 8.5 * microK : 0,
+      microStep: microState.kind === 'step' ? microK : 0,
+    };
+    if (custom) {
+      /**
+       * 绘制**必须有兜底**：她画不出来时，症状是"窗口在、日志正常、屏幕上什么都没有"，
+       * 一点线索都没有（页面的异常也不会自己冒出来）。所以出一次错就通过 `petHost.sampleBackdrop`
+       * 那条现成的通道把消息送到主进程（`pet-host.cjs` 会写进 `data\pet-host.log`），
+       * 而且**只报一次**，不会刷屏。
+       */
+      try {
+        custom.draw(petG, face, { ...frame, face: fname, mode: pet.mode, modeT: pet.modeT, talk: pet.talkK, drowse: pet.drowse, sit: pet.sitK, facing: pet.faceVis, tilt: pet.tilt, lean, groupRot: rot });
+      } catch (err) {
+        if (!drawFailReported) {
+          drawFailReported = true;
+          try { window.petHost?.report?.(`绘制她的身体时出错：${err && (err.stack || err.message)}`); } catch { /* 报告本身失败就算了 */ }
+        }
+      }
+    } else petG.innerHTML = figure(face, frame);
 
     // 阴影量的是"脚底离地多高"。原来写的是 `pet.dy + 220*S*1.09`（220 = 后颈到脚底），
     // 那只对"拎后颈"成立；现在是抓哪儿算哪儿 —— 直接问变换：脚底此刻在屏幕上的哪儿。
@@ -1265,7 +1312,16 @@ export function createPet(els, opts) {
     setMood(m) {
       const cling = m && Number.isFinite(m.cling) ? clamp(m.cling, 60, 320) : 170;
       const speed = m && Number.isFinite(m.speed) ? clamp(m.speed, 0.5, 1.8) : 1;
-      mood = { cling, speed };
+      mood = { cling, speed, energy: m && Number.isFinite(m.energy) ? m.energy : null };
+    },
+    /**
+     * 不说话的小动作（World 发 `{t:'micro', kind}`，这边 `case 'micro'` 转过来）。
+     * 只有 `tilt`（歪头）和 `step`（换重心）两种；做完会回一条 `{t:'micro'}` 给 World。
+     * 正在做的时候不重复触发（一来就把它做完，不然会抖）。
+     */
+    micro(kind) {
+      if (microState.kind || (kind !== 'tilt' && kind !== 'step')) return;
+      microState = { kind, k: 0, t: 0, dur: kind === 'tilt' ? 1.7 : 1.8 };
     },
     /** Head top in stage pixels, for placing a speech bubble. */
     anchor() { return toStage(A.bubble[0], (custom ? A.bubble[1] : (HEAD_TOP[skin.head] ?? 12) - 8) + pet.low); },

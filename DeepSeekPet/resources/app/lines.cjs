@@ -526,6 +526,73 @@ module.exports = {
     ],
   },
 
+  /**
+   * **不说话的小动作**（`{t:'micro', kind}`，由 pet.cjs 的 `scheduleMicro` 挑时机）。
+   *
+   * 这一批跟"动作"（actions）不是一回事：它们是**纯姿态微动**，页面侧由 `pet-core.js` 的
+   * `microStep()` 驱动（歪头、倒脚），**不带任何气泡**。`text` 只是给日志看的名字，
+   * 页面上一个字都不会出现。
+   *
+   * 为什么要单独一层：发呆（`idle`）是有台词的大动作，而"活着的质感"其实来自两次发呆之间
+   * 那些**不出声的小动作**。放在这里，想加/想调都只动这个文件。
+   */
+  micro: {
+    tilt: [
+      { text: '（歪了下头）' },
+      { text: '（头微微一偏）' },
+      { text: '（歪着头看你）' },
+    ],
+    step: [
+      { text: '（换了个重心）' },
+      { text: '（原地踩了踩）' },
+      { text: '（挪了挪脚）' },
+    ],
+  },
+
+  /**
+   * **本地情绪识别**（`pet.cjs` 的 `readTone()`）—— 你打的字先在这儿过一遍，不花 token。
+   *
+   * 命中一个桶就等于"读懂了你这句的情绪"，然后：① 先回一句这个桶里的台词，
+   * ② 给模型的人设里塞一句"用户现在听起来很累"（见 `llm.chat()` 的 `emotionHint`）。
+   *
+   * **优先级是有意的**（改 `TONE` 那张表的顺序就会变）：累 > 委屈 > 生气 > 谢谢 > 夸它 >
+   * 担心 > 开心。因为"今天累死了太好了"这种句子，先认出累才对。
+   * 桶的键必须和 `TONE` 里的一致，`test\smoke.cjs` 有一条专门盯着。
+   */
+  emotion: {
+    tired: [
+      { text: '累了就先歇会儿吧,我在这儿。', actions: ['shy'] },
+      { text: '别硬撑,靠一会儿也行。', actions: ['love'] },
+      { text: '今天辛苦啦。', actions: ['happy'] },
+    ],
+    sad: [
+      { text: '……我陪着你。', actions: ['shy'] },
+      { text: '不开心的话,摸我一下。', actions: ['love'] },
+      { text: '没事的,慢慢来。', actions: ['nod'] },
+    ],
+    angry: [
+      { text: '谁惹你了,我去瞪他。', actions: ['angry'] },
+      { text: '消消气,我尾巴给你拽。', actions: ['look'] },
+      { text: '哼,我也不喜欢那个。', actions: ['angry'] },
+    ],
+    thanks: [
+      { text: '不客气呀。', actions: ['happy'] },
+      { text: '嘿嘿,被夸到了。', actions: ['shy'] },
+    ],
+    praise: [
+      { text: '那当然,我可是大肥鱼。', actions: ['happy'] },
+      { text: '你也很棒呀。', actions: ['love'] },
+    ],
+    worried: [
+      { text: '我没事的,你放心。', actions: ['nod'] },
+      { text: '你在担心我吗?有点开心。', actions: ['shy'] },
+    ],
+    happy: [
+      { text: '哇,你听起来很开心,我也开心。', actions: ['happy'] },
+      { text: '什么事这么高兴,说说看。', actions: ['love'] },
+    ],
+  },
+
   /** 睡醒之后第一句。 */
   wakeUp: [
     { text: '……我睡着了?', actions: ['surprised'] },

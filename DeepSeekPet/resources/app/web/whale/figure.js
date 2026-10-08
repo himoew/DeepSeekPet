@@ -338,6 +338,8 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     ahoge: spring(140, 6, 38), head: spring(70, 10, 16), armN: spring(60, 9, 95), armF: spring(60, 9, 95),
   };
   let lastT = null, prevTilt = 0, prevLow = 0, headTilt = 0, fx = '';
+  /** 绘制抛错只上报一次（见 `draw` 外面那层 try/catch）。 */
+  let drawFailed = false;
   // pet-core tips Coo's whole round body to listen, nod, doze or wobble; she keeps her feet on the floor and
   // moves her head instead. Only flight, dragging and the jump's crouch and landing tip the whole group,
   // running keeps half its lean. The shares ease between modes so the group never snaps.
@@ -373,6 +375,24 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
   let creaseA = 1;
 
   function draw(petG, fc, o) {
+    /**
+     * **绘制失败必须留下痕迹**：`ctl.setFigure()` 是先把 `#pet` 清空、再让新身体画进去的，
+     * 所以这里抛一次错，她就**整个人消失**（窗口在、日志正常、屏幕上一个像素都没有，
+     * 完全看不出是这个函数的问题）。所以最外层包一道，出错就把消息+堆栈报给主进程，
+     * 写进 `data\pet-host.log`（页面里的 `console` 在 GUI 里是丢掉的）。
+     * 只报第一次，随后继续尝试画（下一帧说不定就好了）。
+     */
+    try {
+      return drawNow(petG, fc, o);
+    } catch (err) {
+      if (!drawFailed) {
+        drawFailed = true;
+        try { globalThis.petHost?.report?.(`[figure.draw 抛错] ${err && (err.stack || err.message)}`); } catch { /* 报告失败就算了 */ }
+      }
+    }
+  }
+
+  function drawNow(petG, fc, o) {
     if (mountedIn !== petG || !petG.contains(fo)) mount(petG);
     if (frameN++ % 20 === 0) fitCanvas();
     const t = o.t, dt = lastT == null ? 1 / 60 : clamp(t - lastT, 0, .05);
@@ -384,7 +404,7 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     sitK = lerp(sitK, clamp(o.sit ?? 0, 0, 1), ease(12, dt));
     const low = o.low || 0;
     const lowV = (low - prevLow) / Math.max(dt, 1e-3); prevLow = low;
-    const breath = Math.sin(t * (mode === 'sleep' ? 1.7 : 2.4));
+    const breatheBase = Math.sin(t * (mode === 'sleep' ? 1.7 : 2.4));
 
     /* head: tilt toward what it looks at, nod with sleep, wobble with dizzy */
     let tiltT = o.look[0] * .7 + Math.sin(t * .9) * 1.2 - o.look[1] * .4;
@@ -441,8 +461,25 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     const armN = sp.armN.step(aN, dt), armF = sp.armF.step(aF, dt);
 
     /* deformer states */
-    // pet-core sinks the hips 29 when seated; the sitting drawing's lowest point is 19.4 above the soles
-    st.body = { a: -sway * 1.2 + (held ? o.swing * .15 : 0), ty: low - 9.6 * sitK, sx: 1 + .006 * breath + .04 * plop, sy: 1 - .012 * breath - .06 * plop };
+    // 呼吸：深度和节奏跟着心情（困了就浅而慢、有精神就深而快）。**没有心情这一层时，
+    // 两个系数都是 1**，也就是上游原来那句 `1 + .006 * breath`，一字不差。
+    // 心情由 pet-core 的 `setMood` 存着、经 `frame.accMood` 传进来。
+    // （早先想过挂在 `o.acc` 也就是 skin 上 —— 那是个错误的方向：skin 是"她穿什么"，
+    //   而且页面那侧为了挂它写出了会 throw 的一行，见 pet-app.js 里那段 ⚠️ 注释。）
+    const bEnergy = o.accMood && Number.isFinite(o.accMood.energy) ? o.accMood.energy : null;
+    const bDepth = bEnergy === null ? 1 : bEnergy < .36 ? .7 : bEnergy > .74 ? 1.5 : 1;
+    const bRate = bEnergy === null ? 1 : bEnergy < .36 ? .82 : bEnergy > .74 ? 1.12 : 1;
+    const breathe = breatheBase * bRate;
+    // 不说话的小动作：换重心（身上那半边的位移+微转）——呆毛和鳍会**自动**跟着惯性甩
+    // （它们本来就是被 `tiltVel` 驱动的），所以这里只动身体和头。
+    const stepK = (o.microStep || 0) * (Math.sin(t * 5.2) * .5 + .5);
+    st.body = {
+      a: -sway * 1.2 + (held ? o.swing * .15 : 0) + stepK * 4.2,
+      ty: low - 9.6 * sitK - stepK * 1.7,
+      sx: 1 + .006 * breathe * bDepth + .04 * plop,
+      sy: 1 - .012 * breathe * bDepth - .06 * plop,
+    };
+
     st.skirt = {
       fn: (u, v) => {
         const k = v * v;
@@ -451,7 +488,7 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
       },
     };
     // the sitting skirt breathes a little at its hem, and its front edge swings with the body
-    st.skirtSit = { fn: (u, v) => [skirt * 1.5 * v * v, -Math.max(0, breath) * .4 * v] };
+    st.skirtSit = { fn: (u, v) => [skirt * 1.5 * v * v, -Math.max(0, breathe) * .4 * v] };
     st.alpha.skirt = st.alpha.waist_bow_front = 1 - sitIn;
     st.alpha.leg_back = st.alpha.leg_front = 1 - smooth(.42, .52, sitK);
     st.alpha.skirt_sit = st.alpha.waist_bow_sit_front = sitIn;
@@ -461,7 +498,7 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     st.legFront = { a: lerp(legA[1], -60, sitK), ty: -lift[1] * .9 * (1 - sitK) };
     st.tail = { a: tail - 10 * sitK };
     st.tailBend = { fn: u => [0, -tail * .5 * u * u] };
-    st.neck = { a: headTilt + clamp(bend * .8, -10, 12), ty: (mode === 'sleep' ? 2.5 : 0) + breath * .35 };
+    st.neck = { a: headTilt + clamp(bend * .8, -10, 12) + (o.microTilt || 0), ty: (mode === 'sleep' ? 2.5 : 0) + breathe * .35 };
     const parallax = (k, ky) => (u, v) => [angleX * k * bump(u) * (.4 + .6 * bump(v)), angleY * ky * bump(v) * (.4 + .6 * bump(u))];
     st.headFront = { fn: parallax(4.2, 2.8) };
     // the eyes and mouth move with the face: the eyes' outline is shared between the two layers

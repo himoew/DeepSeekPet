@@ -17,6 +17,19 @@
  */
 const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, session, shell, systemPreferences } = require('electron');
 const { join } = require('node:path');
+const { appendFileSync } = require('node:fs');
+
+/**
+ * 诊断日志：**主进程的 console.log 在 GUI 起来之后是被丢掉的**（实测：加的探针一行都没进
+ * pet.log），所以"桌宠窗口没出现"这类问题必须写文件才查得动。放在 `data\pet-host.log`，
+ * 故意跟 pet.log 分开——它是窗口层的，不该混进她的行为日志里。
+ * 想要安静就删掉这个文件（它会自己再建）。
+ */
+function diag(msg) {
+  try {
+    appendFileSync(join(app.getPath('userData'), '..', 'pet-host.log'), `[${new Date().toISOString()}] ${msg}\n`);
+  } catch { /* 诊断本身绝不能让桌宠起不来 */ }
+}
 
 /** Milliseconds between the cursor reports the page gets. */
 const CURSOR_EVERY_MS = 100;
@@ -171,7 +184,7 @@ function trayIcon() {
 function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = null, openLog = null }) {
   if (!url) throw new Error('pet host needs --pet-url');
   const origin = new URL(url).origin;
-  let win = null, tray = null, dress = null;
+  let win = null, tray = null, dress = null, heartbeat = null;
   /** Id of the display whose work area the window covers. */
   let displayId = null;
 
@@ -191,6 +204,7 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
   const place = () => { if (win) cover(display()); };
 
   const create = () => {
+    diag(`create() · displays=${JSON.stringify(screen.getAllDisplays().map((x) => ({ id: x.id, wa: x.workArea, scale: x.scaleFactor })))}`);
     const d = display(), wa = d.workArea;
     win = new BrowserWindow({
       x: wa.x, y: wa.y, width: wa.width, height: wa.height,
@@ -217,7 +231,21 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
       shell.openExternal(target);
       return { action: 'deny' };
     });
-    win.once('ready-to-show', () => win.showInactive());
+    // 让她出现。**别只靠 `ready-to-show`**：它是"首帧画好了"的通知，而透明窗口偶尔
+    // 根本不发这个事件（页面一直没提交帧、GPU 初始化出问题…），于是进程活着、日志正常、
+    // 渲染循环也在跑，**窗口却始终是隐藏的**——用户看到的就是"桌面上没有宠物"，
+    // 而所有日志都显示一切正常（实测踩过：窗口存在、IsWindowVisible 为 False）。
+    // 所以：`ready-to-show` 到了就立刻显示，**再挂一个 2.5 秒的兜底**，到点还没显示就照样显示
+    // （透明窗口在页面画好之前是空的，show 一下没有任何副作用）。
+    let shown = false;
+    const showNow = (why) => {
+      if (shown || !win) return;
+      shown = true;
+      win.showInactive();
+      diag(`窗口已显示（${why}）visible=${win.isVisible()}`);
+    };
+    win.once('ready-to-show', () => showNow('ready-to-show'));
+    setTimeout(() => { if (!shown) showNow('兜底：ready-to-show 没来，2.5 秒后自己显示'); }, 2500);
     // the page learns where the cursor is even when the click-through window misses its moves
     let last = '';
     const cursorTimer = setInterval(() => {
@@ -231,10 +259,32 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
       win.webContents.send('pet:cursor', at);
     }, CURSOR_EVERY_MS);
     win.on('closed', () => { clearInterval(cursorTimer); win = null; });
-    // page console lines reach the World's log through stdout
-    win.webContents.on('console-message', (e) => { if (e.level !== 'debug') console.log(`[page:${e.level}] ${e.message}`); });
+    // page console lines reach the World's log through stdout —— **但 GUI 起来之后 stdout 是被
+    // 丢掉的**，所以页面里的 JS 报错原来谁也看不到。这里把 warning/error 写进诊断文件：
+    // "她画不出来"这类问题只有这一条线索（自检是纯 Node，验不到浏览器里的异常）。
+    win.webContents.on('console-message', (e) => {
+      const lvl = e.level ?? 0;
+      if (lvl === 2 || lvl === 3) diag(`[page:${lvl === 3 ? 'error' : 'warn'}] ${e.message}  @${e.lineNumber || 0}`);
+    });
+    win.webContents.on('preload-error', (_e, p, err) => diag(`[preload 出错] ${p}: ${err && err.message}`));
     win.webContents.on('did-fail-load', (_e, code, desc, failedUrl) => console.log(`[page:error] 加载失败 ${code} ${desc} ${failedUrl}`));
-    win.loadURL(url);
+    diag(`BrowserWindow 建好了 · bounds=${JSON.stringify(win.getBounds())} · visible=${win.isVisible()}`);
+    // `DSP_DIAG=1` 时给页面加 `?diag=1`：页面会把自己的绘制状态持续写进标题，
+    // 于是从窗口外面就能看到"她到底画了没有"（见 web\pet.html 末尾那段）。
+    win.loadURL(process.env.DSP_DIAG === '1' ? `${url}${url.includes('?') ? '&' : '?'}diag=1` : url);
+    win.webContents.on('did-finish-load', () => diag('页面加载完成(did-finish-load)'));
+    win.webContents.on('render-process-gone', (_e, d2) => diag(`渲染进程没了：${JSON.stringify(d2)}`));
+    // **心跳**：每 2 秒记一次它到底可见不可见、被摆到哪儿、还是不是置顶。
+    // 排查"桌面上没有宠物"只有这一条路——`console.log` 在 GUI 里是被丢掉的。
+    if (!heartbeat) {
+      heartbeat = setInterval(() => {
+        if (!win) return;
+        diag(`心跳 visible=${win.isVisible()} bounds=${JSON.stringify(win.getBounds())} top=${win.isAlwaysOnTop()} min=${win.isMinimized()}`);
+      }, 2000);
+    }
+    win.on('hide', () => diag('★ 窗口被隐藏了（hide 事件）'));
+    win.on('show', () => diag('窗口被显示（show 事件）'));
+    win.on('move', () => { if (win) diag(`窗口被移动 → ${JSON.stringify(win.getBounds())}`); });
   };
 
   const openDress = (target = `${origin}/dress`) => {
@@ -269,7 +319,12 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
     if (foreground) { if (back && foreground.current() === hwndOf(win)) foreground.give(back); }
     else if (win.isFocused()) win.blur();
   });
-  ipcMain.on('pet:hide', () => { if (win) win.hide(); });
+  // 隐藏 / 显示都留一行日志：**"桌面上没有宠物"这种问题，只有这两行能告诉你发生过什么**
+  // （原来这里是静默的，只能靠 `IsWindowVisible` 反查，很费时间）。
+  ipcMain.on('pet:hide', () => { if (win) { diag('窗口被隐藏（页面请求）'); win.hide(); } });
+  // 页面把异常 / 启动节点报上来：**写进诊断文件**。主进程的 console 在 GUI 里是丢掉的，
+  // 所以"她没画出来"这类问题只能靠这条通道留痕（见 web\diag.js）。
+  ipcMain.on('pet:report', (_e, msg) => diag(`[页面] ${String(msg).replace(/\s+/g, ' ').slice(0, 1200)}`));
   ipcMain.on('pet:openDress', () => openDress());
   ipcMain.handle('pet:sampleBackdrop', (_e, query) => {
     try { return win ? sampleBackdrop(win, query || {}) : []; } catch { return []; }
@@ -308,14 +363,19 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
     tray = new Tray(trayIcon());
     tray.setToolTip('Blue Fish Deskpet');
     tray.setContextMenu(Menu.buildFromTemplate([
-      { label: '显示桌宠', click: () => { if (!win) create(); else win.showInactive(); } },
-      { label: '隐藏桌宠', click: () => win && win.hide() },
+      { label: '显示桌宠', click: () => { if (!win) create(); else { win.show(); win.showInactive(); diag('窗口被显示（托盘菜单）'); } } },
+      { label: '隐藏桌宠', click: () => { if (win) { win.hide(); diag('窗口被隐藏（托盘菜单）'); } } },
       { label: '设置…', click: () => { if (openSettings) openSettings(); } },
       { label: '打开日志', click: () => { if (openLog) openLog(); } },
       { type: 'separator' },
       { label: '关闭桌宠窗口', click: () => app.quit() },
     ]));
-    tray.on('click', () => { if (win) (win.isVisible() ? win.hide() : win.showInactive()); });
+    tray.on('click', () => {
+      if (!win) return;
+      // `showInactive()` 对"先前被 hide() 过"的窗口未必有效，所以**先 show 再 showInactive**
+      if (win.isVisible()) { win.hide(); diag('窗口被隐藏（点托盘图标）'); }
+      else { win.show(); win.showInactive(); diag('窗口被显示（点托盘图标）'); }
+    });
   });
   app.on('window-all-closed', () => { if (!tray) app.quit(); });
   // with --parent-pid the window closes once that process is gone

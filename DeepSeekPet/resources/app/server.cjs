@@ -50,6 +50,8 @@ const ROUTES = {
   '/settings': 'settings.html',
   // 语音编辑页（桌宠右键「音色…」打开）
   '/voice': 'voice.html',
+  // 服装页（桌宠右键「换装…」打开）：现在先把接口占住，贴图以后再加
+  '/dress': 'dress.html',
   // 桌宠右键菜单里的人像（web\avatar.png，从大肥鱼缩略图搬来）
   '/api/avatar': 'avatar.png',
 };

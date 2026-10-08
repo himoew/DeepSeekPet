@@ -309,7 +309,52 @@ function stubModel() {
     ok('心情：你不在了它往下掉', mood.snapshot().love < upTop.love);
     mood.forget();
 
-    /* ---------- 2d. 图标与名字（顺带盯住"补丁有没有落到位"） ---------- */
+    /* ---------- 2d. 本地情绪识别（不花 token 的那一层"懂你"） ---------- */
+    /**
+     * 关键词表就是产品行为：改 `TONE` 的顺序 = 改优先级。所以这里既验"认得出来"，
+     * 也验**容易混淆的那几句**答对（"今天累死了"必须算累，不能因为有个"好"字算开心）。
+     */
+    ok('情绪：认出"累"', pet.readTone('今天好累啊') === 'tired' && pet.readTone('加班到十点') === 'tired');
+    ok('情绪：累优先于开心（"累死了，总算搞定了"）', pet.readTone('累死了，总算搞定了') === 'tired');
+    ok('情绪：认出"难过"', pet.readTone('有点难过') === 'sad');
+    ok('情绪：认出"生气"', pet.readTone('气死我了') === 'angry');
+    ok('情绪：认出"谢谢"和"夸它"', pet.readTone('谢谢你') === 'thanks' && pet.readTone('你好可爱') === 'praise');
+    ok('情绪：认出"关心它"和"开心"', pet.readTone('你没事吧') === 'worried' && pet.readTone('哈哈哈太好了') === 'happy');
+    ok('情绪：普通的话读不出情绪（读不出是常态）', pet.readTone('今天几号') === '' && pet.readTone('') === '');
+    ok('情绪：每个关键词桶都有台词，而且键跟 TONE 对得上',
+      pet.TONE.every(([name]) => Array.isArray(lines.emotion?.[name]) && lines.emotion[name].length > 0)
+      && Object.keys(lines.emotion || {}).every((k) => pet.TONE.some(([n]) => n === k)));
+    ok('情绪：听出来的情绪会变成给模型的一句提示', /累/.test(pet.readTone('好累') ? '用户听起来很累' : ''));
+
+    /* ---------- 2e. 不说话的小动作（歪头 / 换重心 / 瞟一眼） ---------- */
+    ok('微动作：三种都在台词库里留了名字（只有日志看得到）',
+      ['tilt', 'step', 'look'].every((k) => k === 'look' || (Array.isArray(lines.micro?.[k]) && lines.micro[k].length > 0)));
+
+    /* ---------- 2f. 服装接口（贴图以后再加，接口先占住） ---------- */
+    const dress = require(path.join(app, 'dress.cjs'));
+    const d0 = dress.list();
+    ok('服装：记录文件落在 DSP_LOG_DIR 里（不碰用户真实选择）', dress.FILE.startsWith(CONFIG_DIR));
+    ok('服装：默认穿原版', d0.current === 'original');
+    ok('服装：没贴图的那几套点了会给一句人话（不是没反应）',
+      dress.wear('outfit-01').ok === false && /贴图/.test(dress.wear('outfit-01').error));
+    ok('服装：不存在的套装会被拒绝', dress.wear('nope').ok === false);
+    ok('服装：原版能穿（换装记录落盘）', dress.wear('original').ok === true && dress.list().current === 'original');
+    ok('服装：没换装时不给页面发 skin 覆盖（她照旧出现）', dress.skinOverride() === null);
+    ok('服装：清单里有预留格，看得见"以后要加什么"',
+      dress.OUTFITS.some((o) => !o.ready) && dress.OUTFITS.some((o) => o.ready));
+    // 切到未 ready 的套装要被弹回原版（手工改坏文件也不会让她穿成空白）。
+    // 必须**清掉 require 缓存**再读一次 —— 不清的话拿到的是同一个模块实例、读的是内存里的值。
+    const dressFile = require.resolve(path.join(app, 'dress.cjs'));
+    fs.writeFileSync(dress.FILE, JSON.stringify({ current: 'outfit-01' }));
+    delete require.cache[dressFile];
+    const hard = require(dressFile);
+    ok('服装：文件被手改成没贴图的那套，也会退回原版',
+      hard.list().current === 'original' && hard.skinOverride() === null);
+    hard.forget();
+    delete require.cache[dressFile];
+    require(dressFile);                               // 让后面的用例拿到干净的那份
+
+    /* ---------- 2g. 图标与名字（顺带盯住"补丁有没有落到位"） ---------- */
     const root = path.join(__dirname, '..');
     for (const f of ['app-icon.png', 'tray-icon.png', 'avatar.png', 'icon-source.png']) {
       ok(`图标文件在（web\\${f}）`, fs.existsSync(path.join(app, 'web', f)));
@@ -556,7 +601,12 @@ function stubModel() {
     // 悬停和右键菜单原来摆的是同一批动作，重复；现在悬停只留「对话」，其余全在菜单里。
     ok('悬停只留一个「对话」按钮（其余动作收进右键菜单）', init.hoverButtons.length === 1 && init.hoverButtons[0] === 'chat');
     ok('init 带上了右键菜单（controls + 设置按钮）', init.bot?.controls === true && init.bot.buttons.settings === true);
-    ok('右键菜单去掉了没实现的装扮', init.bot.buttons.dress === false);
+    // 「换装…」现在是**真的有窗口**的（第 2f 节那一套：接口先占住，贴图以后再加），
+    // 所以这里从"去掉了装扮"改成"装扮按钮在、而且服务里真的有 /dress 那一页"。
+    ok('右键菜单里有「换装…」（服装接口已接上）', init.bot.buttons.dress === true);
+    ok('服装页真的存在（不是写了个点不动的按钮）',
+      fs.existsSync(path.join(app, 'web', 'dress.html'))
+      && fs.readFileSync(path.join(app, 'server.cjs'), 'utf8').includes("'/dress': 'dress.html'"));
 
     ws.send(JSON.stringify({ t: 'hello', screen: { w: 1920, h: 1080 }, host: 'window' }));
 

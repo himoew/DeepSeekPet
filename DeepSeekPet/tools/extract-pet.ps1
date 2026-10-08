@@ -75,14 +75,19 @@ Write-Host "pet package : $pet"
 Write-Host "target      : $app"
 
 # ---------------------------------------------------------------------------
-# Guard: our own edits to these two files are NOT in patch-assets.mjs, so a
+# Guard: our own edits to these files are NOT in patch-assets.mjs, so a
 # re-extract silently deletes the hit regions, the petting state machine, the
-# region-aware dragging, the gaze feed and the voice plumbing. Back them up, then
-# refuse unless -Force was given. (Markers below are the ones our code adds.)
+# region-aware dragging, the gaze feed and the voice plumbing. figure.js is
+# different: its ahoge/fin animation IS re-applied by patch-assets, but the
+# breathing depth and the micro-move poses (microTilt / microStep) were added by
+# hand and would be lost. Back them up, then refuse unless -Force was given.
+# (Markers below are the ones our code adds.)
 # ---------------------------------------------------------------------------
 $guarded = @{
   'pet-app.js'  = 'STROKE_CFG'
   'pet-core.js' = 'SCRUFF_GRAB'
+  'whale\figure.js' = 'microTilt'
+  'pet-host.cjs' = '窗口被隐藏（页面请求）'
 }
 $found = @()
 foreach ($name in $guarded.Keys) {

@@ -8,10 +8,13 @@
  * window ignores the mouse except over the figure, a bubble, the menu or the hover buttons.
  * Colors follow the World's `theme` through `data-theme` on the root element.
  */
+import { boot } from './diag.js';
 import { applyTheme, createPet, createSfx, clamp, f, mini, normalizeSkin, skinCss, EXPRESSIONS, HEAD_TOP, ICONS } from './pet-core.js';
 
 const $ = (s) => document.querySelector(s);
 const host = window.petHost || null;
+// 走到这一步就说明模块加载完成了（`diag.js` 在它自己的首个 import 位置就装上了错误监听）
+boot(`pet-app 模块已加载 · host=${host ? 'window' : 'tab'}`);
 document.body.classList.add(host ? 'desk' : 'tab');
 
 const stage = $('#stage');
@@ -231,8 +234,19 @@ function applyPrefs(p) {
   if (Array.isArray(p.hoverButtons)) prefs.hoverButtons = p.hoverButtons.filter((id) => typeof id === 'string' && id in ACTIONS);
   if (p.bot) { prefs.bot = p.bot; if (!menu.hidden && !menu.querySelector('.m-head.confirm')) renderMenuHead(); }
   if (typeof p.thinking === 'boolean') ctl.setThinking(p.thinking);
-  // 心情（World 每换一档才发一次）：只影响"黏着你"的远近和走路的快慢，不影响任何判定。
-  if (p.mood && typeof p.mood === 'object') { prefs.mood = { ...p.mood }; ctl.setMood(prefs.mood); }
+  /**
+   * 心情（World 每换一档才发一次）：只影响"黏着你"的远近和走路的快慢，不影响任何判定。
+   *
+   * ⚠️ **别写 `prefs.skin.mood = …`** —— `prefs` 上根本没有 `skin` 这个键，那一行会抛
+   * `TypeError: Cannot set properties of undefined`，而且它抛在 **WebSocket 消息处理函数**里、
+   * 也就是页面**异步启动链**的中间（`ready()` → `await connect()` → 装帧循环 → 创建她），
+   * 于是"她从来没被创建" → **窗口在、日志全正常、屏幕上一个像素都没有**（实测踩过）。
+   * 现在交给 `ctl.setMood()` 自己存着，绘制时由 pet-core 传给 figure（见 `frame.accMood`）。
+   */
+  if (p.mood && typeof p.mood === 'object') {
+    prefs.mood = { ...p.mood };
+    ctl.setMood(prefs.mood);
+  }
   refreshButtons();
 }
 
@@ -247,6 +261,8 @@ function onOrder(m) {
     case 'confirm': dropAsks(); queue.push({ kind: 'ask', confirm: true, id: m.id, question: m.question, options: m.options, own: false }); ctl.holdRoam(20); break;
     case 'walk': walk(m); break;
     case 'act': acts.push(...m.actions); ctl.holdRoam(20); break;
+    // 不出声的小动作（歪头 / 换重心）：World 那边 timed 出来，这边画完回一条 `micro` 收尾
+    case 'micro': ctl.micro(m.kind); break;
     case 'listen': onListen(m); break;
     case 'thinking': ctl.setThinking(!!m.on); break;
     case 'dialog': queue.push({ kind: 'dialog', id: m.id, d: m }); ctl.holdRoam(20); break;

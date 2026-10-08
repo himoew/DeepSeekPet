@@ -154,11 +154,19 @@ function wrap(err, cfg, url) {
  * `context` 是**此刻的处境**（几点、认识你多久、刚被摸过头…），会并进 system 那一句。
  *   为什么要有它：没有这段时，模型只知道"我是条鱼女仆"+ 你这句话，答得像通用客服；
  *   加上之后，本地 3B 也会说出"你又摸我头"这种只有当事人才说得出的回答。**只花几十个字。**
+ * `emotionHint` 是**本地关键词识别出来的情绪提示**（`pet.cjs` 的 `TONE_HINT`，比如
+ *   "用户听起来很累，说点安慰的，别提要求。"）。它和 `context` 分开传，是因为
+ *   它是**这一句话**的属性、不是它的处境；并在 system 末尾，模型最先照做。
  */
-async function chat(history, text, temperature = 0, tag = '', context = '') {
+async function chat(history, text, temperature = 0, tag = '', context = '', emotionHint = '') {
   const cfg = load();
+  const sys = [
+    cfg.persona,
+    context ? `\n【此刻】${context}` : '',
+    emotionHint ? `\n【你这句的情绪】${emotionHint}` : '',
+  ].join('');
   const messages = [
-    { role: 'system', content: context ? `${cfg.persona}\n\n【此刻】${context}` : cfg.persona },
+    { role: 'system', content: sys },
     ...history.slice(-6),
     { role: 'user', content: text },
   ];

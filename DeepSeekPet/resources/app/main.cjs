@@ -16,6 +16,18 @@ const log = require('./log.cjs');
 // `__dirname` 是 <应用目录>\resources\app，所以这就是用户看到的那个文件夹。
 const APP_ROOT = path.join(__dirname, '..', '..');
 
+/**
+ * 软件渲染开关。**透明窗口是靠 Chromium 的 GPU 合成画出来的**，GPU 那条路一出问题
+ * （驱动、远程桌面、虚拟机显卡…）症状就是：**窗口存在、`isVisible()` 为 true、
+ * 位置也对，但屏幕上一个像素都没有**——光看日志会以为一切正常。
+ * 设 `DSP_DISABLE_GPU=1` 启动就退回软件合成，用来判断"是不是 GPU 的锅"。
+ * （`appendSwitch` 必须在 app ready 之前调用。）
+ */
+if (process.env.DSP_DISABLE_GPU === '1') {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu-compositing');
+}
+
 log.info(`main.cjs 已加载 · Electron ${process.versions.electron} · Node ${process.versions.node} · Chromium ${process.versions.chrome}`);
 log.info(`运行时:${process.execPath}`);
 log.info(`应用目录:${APP_ROOT}`);
