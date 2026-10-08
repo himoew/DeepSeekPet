@@ -137,9 +137,11 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
      * 现在连**画出来没有**一起报：直角坐标宽高、子节点数、以及实际用的填充色。
      */
     const box = root.getBoundingClientRect ? root.getBoundingClientRect() : { width: -1, height: -1 };
-    const fill = ballEl.firstChild && getComputedStyle ? getComputedStyle(ballEl.firstChild).fill : '?';
+    // 读**球体那一个圆**的填充（不是渐变定义节点 —— 读错了会显示成 rgb(0,0,0)，白排查一轮）
+    const body = ballEl.querySelector ? ballEl.querySelector('.toy-ball-body') : null;
+    const fill = body && body.getAttribute ? (body.getAttribute('fill') || 'none') : '?';
     report(`[玩具球] 已挂到 #fx · 父节点=${fxG.id || fxG.tagName} · 子节点=${fxG.children.length}`
-      + ` · 球的盒子=${Math.round(box.width)}x${Math.round(box.height)} · fill=${fill}`);
+      + ` · 球的盒子=${Math.round(box.width)}x${Math.round(box.height)} · 球体半径=${body ? body.getAttribute('r') : '?'} · fill=${fill}`);
   }
 
   function place({ fromLeft } = {}) {
