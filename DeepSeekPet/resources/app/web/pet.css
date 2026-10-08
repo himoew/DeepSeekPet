@@ -194,6 +194,12 @@ body.desk .floor{display:none}
 .toy-ball-shadow{fill:rgba(0,0,0,.30)}
 .toy-ball-pic{pointer-events:none}
 
+/* ---------- 弹弹乐的球门（web/game.js 画进 #fx） ---------- */
+.toy-goals{pointer-events:none}
+.toy-goal-frame{fill:rgba(120,190,255,.10); stroke:rgba(160,210,255,.55); stroke-width:2}
+.toy-goal-grid{fill:none; stroke:rgba(160,210,255,.28); stroke-width:1}
+.toy-goal-flash .toy-goal-frame{stroke:#fff}
+
 /* context menu: the bot and its run controls on top, the actions as icon tiles below */
 .menu{
   position:fixed; z-index:5; width:max-content; padding:6px; border-radius:16px;

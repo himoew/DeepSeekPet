@@ -10,6 +10,7 @@
  */
 import { boot, report } from './diag.js';
 import { createBall } from './ball.js';
+import { createGame } from './game.js';
 import { applyTheme, createPet, createSfx, clamp, f, mini, normalizeSkin, skinCss, EXPRESSIONS, HEAD_TOP, ICONS } from './pet-core.js';
 
 const $ = (s) => document.querySelector(s);
@@ -49,8 +50,8 @@ const prefs = {
    * a different thing; this one is called `sayVoice` to stay out of its way.)
    */
   ttsOn: false, sayVoice: false,
-  /** 玩具球开着吗（悬停那个球按钮切换；World 记在配置里，重启后还在）。 */
-  ball: false, ballKnown: false,
+  /** 玩具球/游戏模式的三态：`off` 关 · `ball` 出球自由玩 · `game` 弹弹乐。 */
+  ballMode: 'off', ballModeKnown: false,
 };
 const sfx = createSfx();
 if (host) sfx.unlock();
@@ -162,6 +163,12 @@ addEventListener('resize', () => {
  *
  * 她踢到球时报给 World：`ballKick`（选一句踢球的台词）、`ballOn` / `ballOff`（开关）。
  */
+/**
+ * 弹弹乐的游戏逻辑（球门/比分/她的守门）在 `web/game.js` 里，通过钩子驱动球与她的动作。
+ * 这里用一层可变的 `hooks` 转接：`ball` 要先造出来才能把球交给 `game`，
+ * 而 `ball` 的构造又要拿到钩子 —— 直接互相引用会踩"用到还没初始化"的坑。
+ */
+const hooks = { step: null, kick: null };
 const ball = createBall({
   fxG: $('#fx'),
   sfx,
@@ -169,9 +176,42 @@ const ball = createBall({
   onEvent: (kind, d) => {
     // 踢到球 → 告诉 World 选一句台词。**报的是横向比例（0..1）**，World 不用知道窗口多大；
     // 它拿这个数决定"下次走过去找球"时的目标位置。
-    if (kind === 'ballKick') send({ t: 'ballKick', at: +(ball.x / Math.max(1, innerWidth)).toFixed(4), x: d?.x ?? 0 });
+    if (kind === 'ballKick') send({ t: 'ballKick', at: +(d.x / Math.max(1, innerWidth)).toFixed(4) });
+  },
+  game: { onStep: (s) => hooks.step?.(s), onKick: (i) => hooks.kick?.(i) },
+});
+
+const game = createGame({
+  fxG: $('#fx'),
+  ball, sfx,
+  control: {
+    bounds: () => ctl.bounds,
+    pet: () => ctl.where,
+    /** `x` 是 0..1 的横向比例（页面这套走路接口收的就是比例）。 */
+    walkTo: (x) => { ctl.holdRoam(6); ctl.walkTo(Math.min(1, Math.max(0, x)) * innerWidth); },
+    jump: () => ctl.act(['jump']),
+    act: (a) => ctl.act([a]),
+  },
+  onEvent: (kind, d) => {
+    if (kind === 'goal') send({ t: 'ballGoal', scorer: d.scorer, score: d.score, defence: d.defence });
+    else if (kind === 'charge') send({ t: 'ballCharge' });
+    else if (kind === 'mode') send({ t: 'ballMode', mode: d.mode, defence: d.defence });
   },
 });
+hooks.step = (s) => game.onStep(s);
+hooks.kick = (i) => game.onKick(i);
+
+/**
+ * 切换球 / 弹弹乐的三态。**页面自己立刻切**（不等 World 一个来回），然后报给 World 记住。
+ * `fromServer` 时不再回发（那是 World 同步过来的，回发会绕成环）。
+ */
+function setBallMode(mode, { fromServer = false, fromUser = false } = {}) {
+  prefs.ballMode = mode;
+  prefs.ballModeKnown = true;
+  game.setMode(mode);
+  refreshButtons();
+  if (!fromServer) send({ t: 'ballMode', mode, fromUser });
+}
 
 /* ---------- connection ---------- */
 let ws = null, backoff = 500, watching = false;
@@ -250,12 +290,11 @@ function applyPrefs(p) {
   if (Array.isArray(p.hoverButtons)) prefs.hoverButtons = p.hoverButtons.filter((id) => typeof id === 'string' && id in ACTIONS);
   if (p.bot) { prefs.bot = p.bot; if (!menu.hidden && !menu.querySelector('.m-head.confirm')) renderMenuHead(); }
   if (typeof p.thinking === 'boolean') ctl.setThinking(p.thinking);
-  // 玩具球：World 记着这个开关，所以第一次 `init` / 重连之后都由它说了算
-  if (typeof p.ball === 'boolean' && (p.ball !== prefs.ball || !prefs.ballKnown)) {
-    const first = !prefs.ballKnown;
-    prefs.ball = p.ball;
-    prefs.ballKnown = true;
-    ball.setOn(p.ball, { fromLeft: first ? false : Math.random() < .5 });
+  // 球 / 弹弹乐的三态开关：World 记着（第一次 `init`、重连、或它在菜单里改过时都会同步过来）
+  if (typeof p.ballMode === 'string' && ['off', 'ball', 'game'].includes(p.ballMode)
+    && (p.ballMode !== prefs.ballMode || !prefs.ballModeKnown)) {
+    prefs.ballModeKnown = true;
+    setBallMode(p.ballMode, { fromServer: true });
   }
   /**
    * 心情（World 每换一档才发一次）：只影响"黏着你"的远近和走路的快慢，不影响任何判定。
@@ -1186,21 +1225,24 @@ const ACTIONS = {
     run: () => openInput(),
   },
   /**
-   * 玩具球开关（悬停时它旁边那一列里的第二个按钮）。
+   * 球 / 弹弹乐开关（悬停时它旁边那一列里的第二个按钮）。**三态**（用户要的）：
+   *   点一下 → 出球（自由玩，踢/拨/追都通用）
+   *   再点一下 → **游戏模式**（球门 + 比分，她守自己那一边）
+   *   再点一下 → 关掉（**她会闹脾气**：随机委屈/生气，由 World 配表情台词）
    *
-   * **页面自己立刻切**（不然点一下要等一个来回才看到球），同时报给 World：World 记住这个开关
-   * （`config\settings.json` 的 `ball` + `data\ball.json`），重启后还在，并且**关掉时它会闹脾气**
-   * ——由 World 挑一句台词、配一个随机的委屈/生气表情。
+   * 页面自己立刻切（不等一个来回），同时报给 World 记住（`config\settings.json` 的 `ballMode`）。
    */
-  ball: {
+  game: {
     keep: true,
     icon: () => ICONS.ball,
-    on: () => prefs.ball,
-    state: () => (prefs.ball ? '收走球（她会不高兴）' : '给她一个球玩'),
+    on: () => prefs.ballMode !== 'off',
+    badge: () => (prefs.ballMode === 'game' ? 'VS' : ''),
+    state: () => (prefs.ballMode === 'off' ? '给她一个球玩（再点一下进游戏模式）'
+      : prefs.ballMode === 'ball' ? '球 · 再点一下进「弹弹乐」游戏模式'
+        : `弹弹乐:${game.score[1]} : ${game.score[0]}（她守${game.defence === 0 ? '左' : '右'}）· 再点一下收走`),
     run: () => {
-      prefs.ball = !prefs.ball;
-      ball.setOn(prefs.ball, { fromLeft: Math.random() < .5 });
-      send({ t: 'ball', on: prefs.ball });
+      const next = prefs.ballMode === 'off' ? 'ball' : prefs.ballMode === 'ball' ? 'game' : 'off';
+      setBallMode(next, { fromUser: true });
     },
   },
   voice: {
@@ -1885,6 +1927,7 @@ function frame(now) {
     ball.step(dt);         // 玩具球：物理 + 碰到她就踢（球在 #fx 那一层，不碰她的身体）
     ctl.render();
     ball.draw();
+    game.draw();           // 弹弹乐的球门（只在游戏模式下画）
     stepBackdrop(dt);
     stepTools();
     layout();

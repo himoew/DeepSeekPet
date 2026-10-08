@@ -381,9 +381,9 @@ function stubModel() {
       /ball\.step\(dt\)/.test(appSrc) && /ball\.draw\(\)/.test(appSrc));
     ok('玩具球：页面会把"踢到了"报给 World',
       /t: 'ballKick'/.test(appSrc) && /case 'ballKick'/.test(fs.readFileSync(path.join(app, 'pet.cjs'), 'utf8')));
-    ok('玩具球：开关存进配置（重启后还在）',
-      fs.readFileSync(path.join(app, 'llm.cjs'), 'utf8').includes('ball: false')
-      && fs.readFileSync(path.join(app, 'pet.cjs'), 'utf8').includes('llm.save({ ball: on })'));
+    ok('球/游戏模式：三态开关存进配置（重启后还在）',
+      fs.readFileSync(path.join(app, 'llm.cjs'), 'utf8').includes("ballMode: 'off'")
+      && fs.readFileSync(path.join(app, 'pet.cjs'), 'utf8').includes('llm.save({ ballMode: want })'));
     /**
      * **特效那一层不许被整层重写**（这条是为一次真实翻车加的）。
      *
@@ -800,12 +800,12 @@ function stubModel() {
 
     const init = await waitFor('init', () => fromPet.find((m) => m.t === 'init'));
     ok('init 带的是大肥鱼', init.skin.figure === 'whale' && init.skin.scheme === 'deepseek');
-    ok('init 只给这一版能兑现的悬停按钮', init.hoverButtons.every((b) => ['chat', 'ball', 'auto', 'roam', 'theme', 'sound', 'hide'].includes(b)));
+    ok('init 只给这一版能兑现的悬停按钮', init.hoverButtons.every((b) => ['chat', 'game', 'auto', 'roam', 'theme', 'sound', 'hide'].includes(b)));
     // 悬停和右键菜单原来摆的是同一批动作，重复；现在悬停只留要紧的几个。
     // 「对话」+「球」（用户要的：球的开关放在对话图标旁边）——其余全在右键菜单里。
     ok('悬停只有「对话」和「球」两个按钮',
-      init.hoverButtons.length === 2 && init.hoverButtons[0] === 'chat' && init.hoverButtons[1] === 'ball');
-    ok('球是默认关着的（要你自己点开）', init.ball === false);
+      init.hoverButtons.length === 2 && init.hoverButtons[0] === 'chat' && init.hoverButtons[1] === 'game');
+    ok('球/游戏模式默认是关的（要你自己点开）', init.ballMode === 'off');
     ok('init 带上了右键菜单（controls + 设置按钮）', init.bot?.controls === true && init.bot.buttons.settings === true);
     // 「换装…」现在是**真的有窗口**的（第 2f 节那一套：接口先占住，贴图以后再加），
     // 所以这里从"去掉了装扮"改成"装扮按钮在、而且服务里真的有 /dress 那一页"。
@@ -850,29 +850,52 @@ function stubModel() {
       warmed.catch(() => {});
     }
 
-    /* ---------- 4c. 玩具球：真开一次、真踢一次、真收走（走的是完整往返） ---------- */
+    /* ---------- 4c. 球与弹弹乐：三态开关 + 进球 + 蓄力，走完整往返 ---------- */
     /**
      * 静态守卫（2g）只能证明"代码在"，证明不了"这条链通"。这里连上真 World 走一遍：
-     *   开 → 她说一句 ballOn；踢到 → 她说一句 ballKick；收走 → 她说一句委屈或生气。
+     *   出球 → `ballOn`；踢到 → `ballKick`；进游戏 → `ballGameOn`；进球 → `ballGoal`；
+     *   蓄力 → `ballCharge`；收走 → 委屈或生气。
      */
     fromPet.length = 0;
-    ws.send(JSON.stringify({ t: 'ball', on: true }));
+    ws.send(JSON.stringify({ t: 'ballMode', mode: 'ball' }));
     const onSay = await nextReply('ballOn');
-    ok('玩具球：打开时她会说一句（ballOn）', !!onSay);
+    ok('球：出球时她会说一句（ballOn）', !!onSay);
 
     fromPet.length = 0;
     ws.send(JSON.stringify({ t: 'ballKick', at: 0.42 }));
     const kickSay = await nextReply('ballKick');
-    ok('玩具球：踢到球她会说一句（ballKick）', !!kickSay);
+    ok('球：踢到球她会说一句（ballKick）', !!kickSay);
 
     fromPet.length = 0;
-    ws.send(JSON.stringify({ t: 'ball', on: false }));
+    ws.send(JSON.stringify({ t: 'ballMode', mode: 'game' }));
+    const gameSay = await nextReply('ballGameOn');
+    ok('弹弹乐：进游戏模式她会招呼一声（ballGameOn）', !!gameSay);
+
+    fromPet.length = 0;
+    ws.send(JSON.stringify({ t: 'ballGoal', scorer: 1, score: [0, 1], defence: 1 }));
+    const goalMine = await nextReply('ballGoal');
+    ok('弹弹乐：她进球她会得意（ballGoalMine）',
+      !!goalMine && goalMine.beats.some((b) => textsOf(lines.ballGoalMine).includes(b.text)));
+
+    fromPet.length = 0;
+    ws.send(JSON.stringify({ t: 'ballGoal', scorer: 0, score: [1, 1], defence: 1 }));
+    const goalYours = await nextReply('ballGoal');
+    ok('弹弹乐：你进球她不服气（ballGoalYours）',
+      !!goalYours && goalYours.beats.some((b) => textsOf(lines.ballGoalYours).includes(b.text)));
+
+    fromPet.length = 0;
+    ws.send(JSON.stringify({ t: 'ballCharge' }));
+    const chargeSay = await nextReply('ballCharge');
+    ok('弹弹乐：蓄力飞踢会喊一声（ballCharge）', !!chargeSay);
+
+    fromPet.length = 0;
+    ws.send(JSON.stringify({ t: 'ballMode', mode: 'off' }));
     const offSay = await nextReply('ballOff');
     // 收走时是"委屈 / 生气"随机一套，两句都要能在台词库里找到出处
     const offPool = [...textsOf(lines.ballOffSad), ...textsOf(lines.ballOffAngry)];
-    ok('玩具球：收走时她会闹脾气（委屈或生气，随机）',
+    ok('球：收走时她会闹脾气（委屈或生气，随机）',
       !!offSay && offSay.beats.some((b) => offPool.includes(b.text)));
-    ok('玩具球：收走那一下带了表情（sad 或 angry）',
+    ok('球：收走那一下带了表情（sad 或 angry）',
       !!offSay && offSay.beats.some((b) => ['sad', 'angry', 'turn'].some((a) => (b.actions || []).includes(a))));
 
     /* ---------- 4d. 念出来：只有大模型的回答会出声 ---------- */

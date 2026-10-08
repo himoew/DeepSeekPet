@@ -67,7 +67,7 @@ function defaults() {
     autoChatMs: 0,           // 自动说话的间隔，0 = 用默认的一分钟。只给调试用（WMI 起的进程读不到环境变量）
     autoChatQuietMs: 0,      // 你刚说完话后的静默期，0 = 默认一分钟
     user: '你',              // 它叫你什么：设置页「你的名字」写这里，台词里的 {name} 用它
-    ball: false,             // 玩具球开着吗（悬停那个球按钮切换；开着她会自己去追着踢）
+    ballMode: 'off',         // 玩具球/弹弹乐的三态：off 关 · ball 出球自由玩 · game 游戏模式
   };
 }
 

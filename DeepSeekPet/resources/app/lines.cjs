@@ -446,6 +446,34 @@ module.exports = {
     { text: '还我球啦!', actions: ['angry'] },
     { text: '不理你了。', actions: ['turn'] },
   ],
+  /** 从"自由玩球"切进**弹弹乐游戏模式**（球门立起来了）。 */
+  ballGameOn: [
+    { text: '诶?有球门!', actions: ['surprised'] },
+    { text: '来呀,我守这边。', actions: ['happy'] },
+    { text: '（摆好了架势）', actions: ['stand'] },
+  ],
+  /** 游戏模式退回"自由玩球"。 */
+  ballBack: [
+    { text: '不玩了?那我们随便踢踢。', actions: ['look'] },
+    { text: '好吧,球门先收起来。', actions: ['nod'] },
+  ],
+  /** 进球：她进的（她得意）。 */
+  ballGoalMine: [
+    { text: '进了进了!', actions: ['happy'] },
+    { text: '嘿嘿,我厉害吧。', actions: ['wink'] },
+    { text: '（蹦了两下）', actions: ['hop'] },
+  ],
+  /** 进球：你进的（她不服气）。 */
+  ballGoalYours: [
+    { text: '啊……没守住。', actions: ['sad'] },
+    { text: '再来再来!', actions: ['angry'] },
+    { text: '这次我认真了。', actions: ['stand'] },
+  ],
+  /** 蓄力飞踢。 */
+  ballCharge: [
+    { text: '看我的飞踢!', actions: ['run'] },
+    { text: '（蓄力——）', actions: ['stand'] },
+  ],
 
   /** 没事干的时候偶尔冒一句。 */
   idle: [

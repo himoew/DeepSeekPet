@@ -105,7 +105,8 @@ function contextLine(state) {
   const bits = [`现在是${HOUR_CN(d.getHours())}${String(d.getMinutes()).padStart(2, '0')}分`];
   if (s.days > 1) bits.push(`你们认识第${s.days}天`);
   if (state.moodState) bits.push(`你现在心情${mood.LABEL[state.moodState] || '平静'}`);
-  if (state.ball) bits.push('旁边有个球可以玩');
+  if (state.ballMode === 'game') bits.push('你正在和用户玩弹弹乐（足球）');
+  else if (state.ballMode === 'ball') bits.push('旁边有个球可以玩');
   if (state.sleeping) bits.push('你刚睡醒或正犯困');
   if (state.lastEvent) bits.push(state.lastEvent);
   if (s.areaTop && s.areaTopCount >= 5) bits.push(`你最常被摸${AREA_CN[s.areaTop] || '这儿'}`);
@@ -259,8 +260,8 @@ const INIT = {
   // 想打字用悬停那个「对话」按钮（只留了一个按钮，就在它旁边）。
   doubleClickChat: false,
   autoChat: false,         // 接了模型之后每隔一分钟自己说一句（右键菜单里的「自动」）
-  // 玩具球开着吗（悬停那个球按钮切换；开关存在 config\settings.json 的 `ball` 里，重启后还在）
-  ball: llm.load().ball === true,
+  // 玩具球 / 弹弹乐的三态（悬停那个球按钮循环切换；存在 config\settings.json 的 `ballMode`）
+  ballMode: ['off', 'ball', 'game'].includes(llm.load().ballMode) ? llm.load().ballMode : 'off',
   /**
    * 悬停时它旁边出现的按钮。**只留「对话」一个**——其余动作右键菜单里全有，
    * 两处都摆一遍既重复又挡在它旁边（用户的要求：悬停只保留左上角那个「对话」）。
@@ -269,7 +270,7 @@ const INIT = {
    * voice 和 dress 依赖这一版没带的模块，写了也不会显示。
    * 想加回来就照 ACTIONS 的顺序往里填，最多 MAX_HOVER（pet-app.js，6）个。
    */
-  hoverButtons: ['chat', 'ball'],
+  hoverButtons: ['chat', 'game'],
   /**
    * 右键它时弹出的那个菜单头。`controls: true` 是必须的，不给页面直接不画菜单。
    * 点哪一项会回一条 {t:'control', action}，在下面 attach 的 switch 里处理。
@@ -929,8 +930,8 @@ function attach(ws) {
     moodState: '', moodSpeed: 1, moodCling: 170, moodSent: '',
     // 本地情绪识别：`tone` 是刚听出来的情绪（tired/sad/…），`toneHint` 是给模型的一句提示
     tone: '', toneHint: '',
-    // 玩具球：开关（存在配置里，重启后还在）+ 球最近一次被踢到时的横向位置（0..1）
-    ball: llm.load().ball === true, ballX: -1,
+    // 玩具球 / 弹弹乐：三态开关 + 球最近一次被踢到时的横向位置（0..1）
+    ballMode: 'off', ballX: -1,
   };
   let idle = null, auto = null, moodTimer = null, micro = null;
 
@@ -956,6 +957,7 @@ function attach(ws) {
 
   // 换身体。只发这一条，大肥鱼就会出现在桌面上。
   send(ws, INIT);
+  state.ballMode = INIT.ballMode;
 
   /** 认识的第 7/30/100/180/365 天（说句子用的），心情那边也要用，所以放在最前面。 */
   const MILESTONE_DAYS = new Set([7, 30, 100, 180, 365, 730]);
@@ -1096,7 +1098,7 @@ function attach(ws) {
    * 而且她追球时用的是现成的走路（`{t:'walk', to}` 收的是**窗口宽度的比例**）。
    */
   function playBall() {
-    if (!state.ball) return false;
+    if (state.ballMode !== 'ball') return false;
     state.walking = true;
     // 走到球的**另一边**一点（不站进球里），偏差按左右分
     const raw = ballAt() + (Math.random() < .5 ? .04 : -.04);
@@ -1136,8 +1138,10 @@ function attach(ws) {
       const line = memoryLine();
       if (line) { reactor.reply('line', 'memory', [line]); memory.markSaid(); return; }
     }
-    // 有球的时候先想着球：它自己会过去踢一脚（球动了页面会报 `ballKick`）
-    if (state.ball && !state.walking && roll < 0.30) { playBall(); return; }
+    // 有球的时候先想着球：它自己会过去踢一脚（球动了页面会报 `ballKick`）。
+    // **只在自由玩球（`ball`）时这样**：游戏模式下她的走位由 `web/game.js` 管（要守门/追球），
+    // 这里再插一脚会跟它抢。
+    if (state.ballMode === 'ball' && !state.walking && roll < 0.30) { playBall(); return; }
     if (roll < 0.34) reactor.reply('line', 'idle', [idleLine()]);
     else if (roll < 0.5 && !state.walking) {
       // 偶尔溜达到鼠标那儿去
@@ -1435,34 +1439,56 @@ function attach(ws) {
         state.lastUserAt = Date.now();
         break;
 
-      /* ---------- 玩具球 ---------- */
+      /* ---------- 玩具球 / 弹弹乐 ---------- */
 
-      case 'ball': {
-        // 悬停那个球按钮：页面自己已经先切了显示，这条是"记住它"（配置）+ 关掉时闹脾气
-        const on = m.on === true;
-        if (on === state.ball) break;
-        state.ball = on;
+      case 'ballMode': {
+        /**
+         * 三态开关（页面按球按钮循环）：`off` → `ball` → `game`。
+         * 页面已经先切好了显示，这条负责**记住它**（配置）+ 关掉时闹脾气 + 进游戏时招呼一声。
+         */
+        const want = ['off', 'ball', 'game'].includes(m.mode) ? m.mode : 'off';
+        if (want === state.ballMode) break;
+        const prev = state.ballMode;
+        state.ballMode = want;
         try {
-          llm.save({ ball: on });
+          llm.save({ ballMode: want });
         } catch (err) {
-          log.warn(`玩具球的开关没能存进配置（重启后会恢复原样）：${err.message}`);
+          log.warn(`球/游戏模式的开关没能存进配置（重启后会恢复原样）：${err.message}`);
         }
-        if (on) {
-          log.info('玩具球：开');
-          if (!state.paused && !state.card) reactor.reply('line', 'ballOn', [next(lines.ballOn)]);
-        } else {
-          log.info('玩具球：关（她会不高兴）');
-          if (state.paused || state.card) break;
+        log.info(`球/游戏模式：${prev} → ${want}`);
+        if (state.paused || state.card) break;
+        if (want === 'off') {
           /**
            * **收走球要闹脾气**：随机在"委屈 / 生气"里挑一种，台词和表情一起挑
            * （用户的原话：「球收时她会出现不开心或者哭泣又或是生气的随机表情和对话」）。
            * 用 `line` 而不是 `react`：它不是"对刚才那一下的回话"，不该 2.5 秒就过期。
            */
-          const bucket = Math.random() < .5 ? lines.ballOffSad : lines.ballOffAngry;
-          reactor.reply('line', 'ballOff', [next(bucket)]);
+          reactor.reply('line', 'ballOff', [next(Math.random() < .5 ? lines.ballOffSad : lines.ballOffAngry)]);
+        } else if (prev === 'off') {
+          reactor.reply('line', 'ballOn', [next(lines.ballOn)]);
+        } else if (want === 'game') {
+          reactor.reply('line', 'ballGameOn', [next(lines.ballGameOn)]);
+        } else {
+          reactor.reply('line', 'ballBack', [next(lines.ballBack)]);
         }
         break;
       }
+
+      case 'ballGoal': {
+        // 页面判定的进球（球门/比分都在 web/game.js 里）。这个不花 token，但**要说出来**
+        const mine = m.scorer === 1;                    // scorer 1 = 她进的
+        const [you, her] = Array.isArray(m.score) ? m.score : [0, 0];
+        log.info(`进球：${mine ? '她' : '你'}进的 · 比分 你${you} : 她${her}`);
+        if (state.paused || state.card) break;
+        reactor.reply('line', 'ballGoal', [next(mine ? lines.ballGoalMine : lines.ballGoalYours)]);
+        break;
+      }
+
+      case 'ballCharge':
+        // 蓄力飞踢（页面里的概率事件）：喊一声
+        if (state.paused || state.card) break;
+        reactor.reply('react', 'ballCharge', [next(lines.ballCharge)]);
+        break;
 
       case 'ballKick': {
         // 页面判定"她踢到球了"（物理在 web/ball.js），`at` 是球的横向比例（0..1）。

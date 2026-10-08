@@ -56,7 +56,7 @@ const report = (msg) => {
   try { globalThis.petHost?.report?.(String(msg).slice(0, 600)); } catch { /* 报告失败就算了 */ }
 };
 
-export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
+export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
   const st = {
     on: false,
     x: 0, y: 0, vx: 0, vy: 0,
@@ -67,6 +67,16 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
     lastKick: 0,
     since: 0,              // 上一次被踢到现在（秒）：用来决定"要不要过去找它玩"
   };
+
+  /**
+   * 游戏模式下的"瞄准 + 蓄力"（由 `web/game.js` 设置）。
+   *
+   *   `aimX`  踢出去时朝哪个方向（0..1 的横向比例）；null = 老行为（按球在她哪一侧往外推）
+   *   `power` 这一脚的力度系数（1 = 普通，1.6 上下 ≈ 蓄力飞踢）
+   *
+   * **保持通用**：没设这两项时（空闲玩球）行为跟以前一模一样 —— 用户要的"对球的那套互动通用"。
+   */
+  const aim = { x: null, power: 1 };
 
   let box = null;          // { W, H, floorY }，每帧问 stage 要
   let root = null, shadow = null, ballEl = null;
@@ -249,6 +259,21 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
 
     // 撞到她就踢
     kickIfTouching();
+
+    /**
+     * **游戏模式的钩子**（`web/game.js`）。球本身不知道有"球门/比分"这回事：
+     * 它只把"这一帧发生了什么"告诉钩子，钩子（游戏）负责瞄准、判进球、记分。
+     * 没给钩子时（空闲玩球）一切照旧 —— 用户要的"对球的那套互动通用"。
+     */
+    if (game) {
+      game.onStep?.({
+        dt,
+        x: st.x, y: st.y, vx: st.vx, vy: st.vy,
+        resting: st.resting, dragging: st.dragging,
+        floorY: b.floorY, R,
+        setAim,
+      });
+    }
   }
 
   /** 她的碰撞盒（正面 / 背面宽度不同，跟着朝向镜像）。 */
@@ -266,6 +291,13 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
     };
   }
 
+  /**
+   * 踢一脚。两种情况：
+   *   - **瞄准模式**（游戏里 `aim.x` 有值）：朝那个方向踢（她的球门在对面），力度还乘 `aim.power`
+   *     —— 蓄力飞踢就是 `power` 给到 1.6 上下；
+   *   - **自由玩球**（没设瞄准）：老行为，按球在她哪一侧往外推。
+   * 两种都会先"往上抬一点"，看着才像被踢飞。
+   */
   function kickIfTouching() {
     const now = performance.now();
     if (now - st.lastKick < KICK_COOL_MS) return;
@@ -273,20 +305,36 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
     if (st.x + R < hb.x0 || st.x - R > hb.x1) return;
     if (st.y + R < hb.y0 || st.y - R > hb.y1) return;
 
-    // 方向：从她的中心指向球；球正好在中心时按朝向给一个默认方向
-    let dx = st.x - hb.cx;
-    const dy = (st.y - hb.cy) ;
-    if (Math.abs(dx) < 6) dx = stage.pet().faceVis >= 0 ? 8 : -8;
-    const len = Math.hypot(dx, dy) || 1;
-    const power = KICK_MIN + Math.random() * (KICK_MAX - KICK_MIN);
-    st.vx = (dx / len) * power;
-    st.vy = Math.min(-140, (dy / len) * power * .5 - 120);   // 总是往上抬一点，看着像被踢飞
+    const b = stage.bounds();
+    const base = KICK_MIN + Math.random() * (KICK_MAX - KICK_MIN);
+    const power = base * (aim.power || 1);
+    let dirX, dirY;
+    if (aim.x !== null && aim.x !== undefined) {
+      // 瞄准：横向朝目标、纵向固定仰角（好接），再归一化成方向
+      const targetX = b.minX + aim.x * (b.maxX - b.minX);
+      let dx = targetX - st.x;
+      if (Math.abs(dx) < 8) dx = (dx < 0 ? -8 : 8);
+      const dy = -0.45;
+      const n = Math.hypot(dx, 1) || 1;                   // 横向先化成"每 1 单位纵向"的比例
+      dirX = dx / n; dirY = dy;
+      const m = Math.hypot(dirX, dirY) || 1;
+      dirX /= m; dirY /= m;
+    } else {
+      let dx = st.x - hb.cx;
+      const dy = st.y - hb.cy;
+      if (Math.abs(dx) < 6) dx = stage.pet().faceVis >= 0 ? 8 : -8;
+      const n = Math.hypot(dx, dy) || 1;
+      dirX = dx / n; dirY = dy / n;
+    }
+    st.vx = dirX * power;
+    st.vy = Math.min(-140, dirY * power * .5 - 120);
     st.spinV = (st.vx / R) * 1.6;
     st.lastKick = now;
     st.since = 0;
     st.resting = false;
     sfx?.kick?.();
-    onEvent?.('ballKick', { x: Math.round(st.x), power: Math.round(power) });
+    onEvent?.('ballKick', { x: Math.round(st.x), power: Math.round(power), at: +(st.x / Math.max(1, b.W)).toFixed(4) });
+    game?.onKick?.({ x: st.x, power });
   }
 
   /* ---------- 鼠标：可以拿鼠标推球、也可以抓着甩 ---------- */
@@ -393,6 +441,31 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
      * `ctl.moving`，于是**抓球的时候只有 30fps**——手很跟手、画面却是半速的，用户实感就是"卡"。
      */
     get busy() { return st.on && (st.dragging || !st.resting); },
+    /**
+     * 游戏模式用：设"这一脚往哪踢、多大力"。
+     * 传 `{ x: null }` 就回到自由玩球的行为（`web/game.js` 退出游戏模式时会调它）。
+     */
+    setAim(a) {
+      aim.x = a && Number.isFinite(a.x) ? Math.min(1, Math.max(0, a.x)) : null;
+      aim.power = a && Number.isFinite(a.power) ? Math.min(2.2, Math.max(0.5, a.power)) : 1;
+    },
+    /**
+     * 游戏模式用：把球**直接放到某个位置**（开球、进球后重新开球）。
+     * 会顺手清掉速度、让她那一脚的冷却重新计时。
+     */
+    placeAt(fx, fy, opts = {}) {
+      const b = stage.bounds();
+      st.x = b.minX + Math.min(1, Math.max(0, fx)) * (b.maxX - b.minX);
+      st.y = fy === 'floor' ? b.floorY - R : Math.min(b.floorY - R, Math.max(0, Number(fy) || 0));
+      st.vx = Number(opts.vx) || 0;
+      st.vy = Number(opts.vy) || 0;
+      st.spinV = 0;
+      st.resting = !st.vx && !st.vy;
+      st.dragging = false;
+      st.lastKick = 0;
+      st.since = opts.since === undefined ? 0 : opts.since;
+      return { x: st.x, y: st.y };
+    },
     /** 拖着球的状态由页面设置（它知道指针按下/松开）。 */
     setDragging(on) { st.dragging = !!on; },
     /** 给调试/日志用。 */
