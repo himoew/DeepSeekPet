@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Blue Fish Deskpet · 设置</title>
+<style>
+  :root { color-scheme: dark; --accent: #4d6bfe; --line: #262c38; --ink: #e8ecf4; --dim: #8b95a8; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 22px 34px; background: #11151d; color: var(--ink);
+    font: 14px/1.6 "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  }
+  h1 { margin: 0 0 4px; font-size: 19px; }
+  .sub { margin: 0 0 20px; color: var(--dim); }
+  .card { background: #171c26; border: 1px solid var(--line); border-radius: 10px; padding: 16px 16px 6px; margin-bottom: 14px; }
+  .card.foot { padding: 12px 16px; }
+  label { display: block; margin-bottom: 14px; font-size: 13px; color: var(--dim); }
+  label b { color: var(--ink); font-size: 14px; }
+  label em { display: block; font-style: normal; color: #6f7889; font-size: 12px; margin-top: 3px; }
+  input[type=text], input[type=password], input[type=number], select, textarea {
+    display: block; width: 100%; margin-top: 5px; padding: 8px 10px;
+    background: #0e1219; color: var(--ink); border: 1px solid var(--line); border-radius: 7px;
+    font: inherit; font-size: 13px;
+  }
+  textarea { resize: vertical; line-height: 1.5; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); margin: 0 9px 0 0; vertical-align: -3px; }
+  .switch label { display: flex; align-items: flex-start; margin: 0 0 10px; color: var(--ink); }
+  .switch em { margin-top: 2px; }
+  label.inline > span { display: flex; align-items: center; margin-top: 5px; color: var(--ink); font-size: 13px; }
+  label.inline > span > span { margin-left: 2px; }
+  code { user-select: all; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 4px 0 18px; flex-wrap: wrap; }
+  button { font: inherit; font-size: 13px; padding: 8px 18px; border-radius: 7px; cursor: pointer; border: 1px solid var(--line); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); }
+  button.ghost { background: #1d2330; color: var(--ink); }
+  button.ghost:hover { border-color: #3a4354; }
+  button.link { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; }
+  .status { font-size: 13px; color: var(--dim); }
+  .status.ok { color: #4ec98a; }
+  .status.bad { color: #ff7b72; }
+  .status.busy { color: var(--dim); }
+  code { background: #0e1219; border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 12px; color: #b8c2d4; }
+  .foot p { margin: 0 0 8px; font-size: 12px; color: var(--dim); }
+  .off { opacity: .5; }
+</style>
+</head>
+<body>
+  <h1>Blue Fish Deskpet</h1>
+  <p class="sub">让它接上大模型说话。不接也能用——它会说 <code>lines.cjs</code> 里的内置台词。</p>
+
+  <section class="card switch">
+    <label>
+      <input type="checkbox" id="enabled">
+      <span><b>接大模型</b><em>关掉时只用内置台词；开着但调用失败时也会退回内置台词</em></span>
+    </label>
+  </section>
+
+  <section class="card" id="petCard">
+    <label>你的名字
+      <input type="text" id="user" spellcheck="false" maxlength="12" placeholder="你">
+      <em>它会用这个名字叫你（台词里写的是 <code>{name}</code>，比如「早安,{name}。」）。
+        留空就是"你"。<b>保存后立刻生效，不用重启</b>——它下次开口就叫新名字了。</em>
+    </label>
+  </section>
+
+  <section class="card" id="llmCard">
+    <label>接口预设
+      <select id="preset"></select>
+      <em>预设只帮你填地址和模型名，之后可以随便改</em>
+    </label>
+    <label>供应地址
+      <input type="text" id="baseUrl" spellcheck="false" placeholder="https://api.deepseek.com">
+      <em>填到域名或 <code>/v1</code> 为止，不用带 <code>/chat/completions</code></em>
+    </label>
+    <label>API Key
+      <input type="password" id="apiKey" spellcheck="false" placeholder="sk-…（本地模型留空）">
+      <em>明文存在 config\settings.json，只在本机，不会发到别处</em>
+    </label>
+    <label>模型
+      <input type="text" id="model" spellcheck="false" placeholder="deepseek-chat">
+    </label>
+    <label>一次最多生成
+      <input type="number" id="maxTokens" min="16" max="8192" step="16">
+      <em>本地模型大约 6 token/秒：128 就是 20 秒上限，40 字左右的回复约 7 秒。云端可以放大。</em>
+    </label>
+    <label>本地模型常驻（keep_alive）
+      <input type="text" id="keepAlive" spellcheck="false" placeholder="8h（留空 = 不发送）">
+      <em>Ollama 默认 5 分钟没人问就把模型从内存里卸掉，下次再问要重读几 GB 权重——实测 7B
+        要 <b>11 秒</b>。填 <code>8h</code>（或 <code>-1</code> 永不卸载）就能免掉这段等待，
+        代价是它常驻内存（7B 约 5 GB）。<b>只对本地端点发送</b>，云端留空。</em>
+    </label>
+    <label class="inline">启动时预热本地模型
+      <span><input type="checkbox" id="prewarm"><span>启动后先悄悄问一句，把模型读进内存</span></span>
+      <em>把那 11 秒挪到你说话之前。关掉的话，你第一句话就要等它加载。</em>
+    </label>
+    <label>人设（system 提示词）
+      <textarea id="persona" rows="6" spellcheck="false"></textarea>
+      <em>「测试连接」会用这段人设去问一句，所以你看到的就是桌宠会说的话——
+        不填人设它会用模型的原始语气回答，那又长又客气，跟桌宠没关系。</em>
+    </label>
+  </section>
+
+  <div class="row">
+    <button class="ghost" id="probe">测试连接</button>
+    <button class="primary" id="save">保存</button>
+    <span class="status" id="status"></span>
+  </div>
+
+  <section class="card" id="memoryCard">
+    <label>它的记忆
+      <em>它自己记着的事。**平时不显示任何数字**——只偶尔把里面的一件说出来（每天最多两句）。
+        这里给你看，不满意可以清空。</em>
+    </label>
+    <div class="mem" id="mem"></div>
+    <div class="row">
+      <button class="ghost" id="forget">忘掉一切</button>
+      <span class="status" id="memStatus"></span>
+    </div>
+    <p>存在：<code id="memFile"></code></p>
+  </section>
+
+  <section class="card foot">
+    <p>配置：<code id="configFile"></code> <button class="link" id="reveal">打开所在文件夹</button></p>
+    <p>日志：<code id="logFile"></code> <button class="link" id="openLog">打开日志</button></p>
+  </section>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let presets = [];
+
+  const form = () => ({
+    enabled: $('enabled').checked,
+    preset: $('preset').value,
+    baseUrl: $('baseUrl').value.trim(),
+    apiKey: $('apiKey').value,
+    model: $('model').value.trim(),
+    maxTokens: Number($('maxTokens').value) || 128,
+    keepAlive: $('keepAlive').value.trim(),
+    prewarm: $('prewarm').checked,
+    persona: $('persona').value,
+    user: $('user').value.trim() || '你',
+  });
+
+  function fill(cfg) {
+    $('enabled').checked = !!cfg.enabled;
+    $('preset').value = cfg.preset || 'custom';
+    $('baseUrl').value = cfg.baseUrl || '';
+    $('apiKey').value = cfg.apiKey || '';
+    $('model').value = cfg.model || '';
+    $('maxTokens').value = cfg.maxTokens || 128;
+    $('keepAlive').value = cfg.keepAlive || '';
+    $('prewarm').checked = cfg.prewarm !== false;
+    $('persona').value = cfg.persona || '';
+    $('user').value = cfg.user && cfg.user !== '你' ? cfg.user : '';
+    markOff();
+  }
+
+  const markOff = () => $('llmCard').classList.toggle('off', !$('enabled').checked);
+
+  function status(text, kind) {
+    const el = $('status');
+    el.textContent = text;
+    el.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  (async () => {
+    const data = await window.settings.load();
+    presets = data.presets;
+    $('preset').innerHTML = presets.map((p) => '<option value="' + p.id + '">' + p.label + '（Key ' + p.key + '）</option>').join('');
+    $('configFile').textContent = data.configFile;
+    $('logFile').textContent = data.logFile;
+    fill(data.cfg);
+  })().catch((err) => status('读配置失败：' + err.message, 'bad'));
+
+  $('enabled').addEventListener('change', markOff);
+
+  $('preset').addEventListener('change', () => {
+    const p = presets.find((x) => x.id === $('preset').value);
+    if (!p || p.id === 'custom') return;          // 自定义：别覆盖用户填的
+    $('baseUrl').value = p.baseUrl;
+    $('model').value = p.model;
+    $('keepAlive').value = p.keepAlive || '';     // 只有本地预设才带常驻
+    status('已填入「' + p.label + '」的地址和模型名，记得点保存', '');
+  });
+
+  $('probe').addEventListener('click', async () => {
+    status('正在试……', 'busy');
+    try {
+      const r = await window.settings.probe(form());   // 用表单里还没保存的值试
+      status(r.message, r.ok ? 'ok' : 'bad');
+    } catch (err) {
+      status('测试失败：' + err.message, 'bad');
+    }
+  });
+
+  $('save').addEventListener('click', async () => {
+    try {
+      const { cfg } = await window.settings.save(form());
+      fill(cfg);
+      status('已保存。下一句话就生效，不用重启桌宠。', 'ok');
+    } catch (err) {
+      status('保存失败：' + err.message, 'bad');
+    }
+  });
+
+  $('reveal').addEventListener('click', () => window.settings.revealConfig());
+  $('openLog').addEventListener('click', () => window.settings.openLog());
+
+  /* ---------- 它的记忆：只读的一张清单（数字只在你要的时候出现） ---------- */
+  const AREA_CN = { head: '头', body: '肚子', hand: '手', fin: '鳍', tail: '尾巴', low: '裙子', foot: '脚' };
+  const hourCn = (h) => (h < 5 ? '凌晨' : h < 9 ? '清早' : h < 12 ? '上午' : h < 14 ? '中午' : h < 18 ? '下午' : h < 23 ? '晚上' : '深夜');
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function showMemory(m) {
+    const rows = [
+      `认识第 <b>${m.days}</b> 天（第一次见面 ${esc(m.first)}）`,
+      `来过 <b>${m.visits}</b> 天`,
+      `聊过 <b>${m.talks}</b> 次${m.words ? `，上次你说「${esc(m.words)}」` : ''}`,
+      `戳 <b>${m.touch.poke}</b> · 摸 <b>${m.touch.pet}</b> · 拎起来 <b>${m.touch.grab}</b> · 放下 <b>${m.touch.drop}</b>`,
+      m.areaTop ? `最常摸的地方：<b>${AREA_CN[m.areaTop] || esc(m.areaTop)}</b>（${m.areaTopCount} 次）` : '还没摸熟呢',
+      `你常在 <b>${hourCn(m.hourTop)}</b> 出现${m.quiet ? `，让我安静过 <b>${m.quiet}</b> 次` : ''}`,
+      `这些事今天已经说过 <b>${m.saidToday}</b> 句`,
+    ];
+    $('mem').innerHTML = rows.map((r) => `<p>${r}</p>`).join('');
+    $('memFile').textContent = m.file;
+  }
+
+  $('forget').addEventListener('click', async () => {
+    if (!confirm('让它忘掉一切？\n（认识的这些天、聊过的话、互动的次数都会清空，从今天重新认识）')) return;
+    try {
+      showMemory(await window.settings.forget());
+      $('memStatus').textContent = '已经忘掉了，从今天重新开始。';
+      setTimeout(() => { $('memStatus').textContent = ''; }, 4000);
+    } catch (err) {
+      $('memStatus').textContent = '清空失败：' + err.message;
+    }
+  });
+
+  window.settings.memory().then(showMemory).catch(() => { $('mem').textContent = '（读不到记忆文件）'; });
+</script>
+</body>
+</html>

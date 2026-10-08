@@ -1,0 +1,47 @@
+# 这个仓库只装"我们自己写的/改的"东西。
+# 下面这些要么是第三方，要么是运行时（几百 MB），都不该进库。
+
+# 上游 Coopanion（476MB，只用来 extract-pet.ps1 抽资源）
+Coopanion/
+
+# 运行时/语音引擎/音色（约 300~550MB，由 setup-runtime.ps1 / setup-tts.ps1 装配）
+DeepSeekPet/resources/app/vendor/
+DeepSeekPet/tools/tts/
+
+# 用户的东西：日志、记忆、位置；录音样本
+DeepSeekPet/data/
+voice-samples/
+_voice-backup-*/
+
+# 杂项
+*.log
+*.bak
+
+# 个人的试音草稿 / 抓包日志（不属于项目源码）
+run-sherpa.cmd
+piper-voices.json
+sherpa-*.log
+
+# 我自己跑验收留下的东西（日志、提交信息草稿、临时比对表）
+_verify-*.log
+_smoke-*.log
+_commit-msg.txt
+_*.txt
+
+# 你的配置（settings.json 里是 API Key）与下载来的运行时压缩包
+DeepSeekPet/config/
+config/
+electron-v*.zip
+# 运行时装进源码目录时（setup-runtime.ps1 就是这么干的）不该被提交
+DeepSeekPet/Coopanion.exe
+DeepSeekPet/BlueFishDeskpet.exe
+DeepSeekPet/*.dll
+DeepSeekPet/*.pak
+DeepSeekPet/*.dat
+DeepSeekPet/*.bin
+DeepSeekPet/*.json.bak
+DeepSeekPet/locales/
+DeepSeekPet/version
+DeepSeekPet/LICENSE.electron.txt
+DeepSeekPet/LICENSES.chromium.html
+DeepSeekPet/resources/default_app.asar

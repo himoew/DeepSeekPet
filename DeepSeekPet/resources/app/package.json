@@ -1,0 +1,8 @@
+{
+  "name": "blue-fish-deskpet",
+  "productName": "Blue Fish Deskpet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Blue Fish Deskpet: the DeepSeek whale girl on a transparent always-on-top window. Local, offline, with local voice and a local model.",
+  "main": "main.cjs"
+}
