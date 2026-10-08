@@ -598,6 +598,11 @@ export function createPet(els, opts) {
   let press = null, strokeAcc = 0, petCool = 0;
   /** 页面每 100ms 喂一次全屏光标位置（`setGaze`）——它不在这块窗口上时也能知道鼠标在哪儿。 */
   let gaze = null;
+  /**
+   * 心情（`setMood`）：**只影响步调**，不动任何判定。`cling` 是「黏着你」那一档的"够近了"门槛，
+   * `speed` 是走路速度的倍率（开心走得快、困了慢吞吞）。默认值 = 老行为，所以没接心情时一模一样。
+   */
+  let mood = { cling: 170, speed: 1 };
   /** 连戳计数：音高跟着升（世界那套连击是 2.5 秒一个窗口，这里跟它对齐）。 */
   let pokeStreak = 0, pokeAt = 0;
   const P = [];
@@ -794,9 +799,10 @@ export function createPet(els, opts) {
         if (free && !pet.listening && T > pet.nextAt && !(pet.expr && T < pet.exprUntil)) {
           // 「黏着你」那一档（roam = 'cling'）：光标跑远了就走过去待着；离得近就照常自己发呆/走动。
           // 用的是页面喂进来的全屏光标（gaze），所以鼠标在别处它也知道。
-          if (roam === 'cling' && gaze && Math.abs(gaze.x - pet.x) > 170) {
-            pet.nextAt = T + rnd(2.5, 4.5);
-            walkTo(clamp(gaze.x - Math.sign(gaze.x - pet.x) * 70, minX(), maxX()), false, 0);
+          // **离多近算"够近了"由心情决定**（`mood.cling`：黏人 90px、想你 240px，见 mood.cjs）。
+          if (roam === 'cling' && gaze && Math.abs(gaze.x - pet.x) > mood.cling) {
+            pet.nextAt = T + rnd(2.5, 4.5) / mood.speed;
+            walkTo(clamp(gaze.x - Math.sign(gaze.x - pet.x) * mood.cling * .4, minX(), maxX()), false, 0);
           } else decide();
         }
         break;
@@ -804,7 +810,9 @@ export function createPet(els, opts) {
       case 'walk': case 'run': {
         const run = m === 'run', d = pet.target - pet.x, dist = Math.abs(d), dir = Math.sign(d) || pet.facing;
         pet.facing = dir;
-        const vMax = run ? 250 : 78;
+        // 快慢跟心情走（`mood.speed`：开心 1.35 倍、困了 0.7 倍）。步伐的节奏是从
+        // `pet.speed / vMax` 算出来的，所以缩放 `vMax` 一起变——不会出现"滑步"。
+        const vMax = (run ? 250 : 78) * mood.speed;
         const vT = Math.min(vMax, run ? dist * 4 + 20 : dist * 3 + 14);
         strideT = run ? 17 : 10; liftT = run ? 15 : 8; bobT = run ? 7 : 3; rate = run ? 4.4 : 2.1;
         leanT = run ? (dist < 50 && pet.speed > 120 ? -6 : 11) : 4;
@@ -1249,6 +1257,16 @@ export function createPet(els, opts) {
      * 注意别拿它当 `pointerDown/Move` 那套用：那个是"手真的在它身上"。
      */
     setGaze(p) { gaze = p && typeof p.x === 'number' && typeof p.y === 'number' ? { x: p.x, y: p.y } : null; },
+    /**
+     * 心情（`mood.cjs` 那一层推出来的快照，见 pet.cjs 的 `stepMood`）。
+     * 只有两个数有用：`cling` 决定「黏着你」离你多近才算"已经在旁边"，`speed` 决定走路快慢。
+     * 传空/坏值就回到默认（等于没有心情这一层，老页面照旧）。
+     */
+    setMood(m) {
+      const cling = m && Number.isFinite(m.cling) ? clamp(m.cling, 60, 320) : 170;
+      const speed = m && Number.isFinite(m.speed) ? clamp(m.speed, 0.5, 1.8) : 1;
+      mood = { cling, speed };
+    },
     /** Head top in stage pixels, for placing a speech bubble. */
     anchor() { return toStage(A.bubble[0], (custom ? A.bubble[1] : (HEAD_TOP[skin.head] ?? 12) - 8) + pet.low); },
     emitHeart,

@@ -10,6 +10,7 @@ const log = require('./log.cjs');
 const llm = require('./llm.cjs');
 const tts = require('./tts.cjs');
 const memory = require('./memory.cjs');
+const mood = require('./mood.cjs');
 const voiceConfig = require('./voice-config.cjs');
 
 let win = null;
@@ -37,7 +38,9 @@ function wire() {
   /* ---------- 它的记忆（只读 + 清空） ---------- */
 
   ipcMain.handle('settings:memory', () => memory.snapshot());
-  ipcMain.handle('settings:forget', () => memory.forget());
+  ipcMain.handle('settings:forget', () => { mood.forget(); return memory.forget(); });
+  /** 它现在的心情（只读）：看得到"为什么它今天话少了"这种事的来由。 */
+  ipcMain.handle('settings:mood', () => mood.snapshot());
 
   /* ---------- 音色编辑（桌宠右键「音色…」） ---------- */
 

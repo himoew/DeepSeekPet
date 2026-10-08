@@ -489,6 +489,43 @@ module.exports = {
     ],
   },
 
+  /**
+   * **按心情的发呆话**（`mood.cjs` 那一层：love / energy 两条轴推出来的档）。
+   *
+   * `pet.cjs` 的 `idleLine()` 先照当前心情从这儿挑一条，挑不到就退回 `idleByTime` / `idle`，
+   * 所以这几个桶**可以只写几条**，也可以一直不加（不影响任何行为）。
+   *
+   * 键必须和 `mood.cjs` 的 `LABEL` 一致：clingy 黏人 · happy 开心 · quiet 安静 ·
+   * tired 困倦 · lonely 想你。写错键就是"这个心情永远挑不到专属台词"，日志里看不出来，
+   * 所以 `test\smoke.cjs` 专门盯了这条。
+   */
+  mood: {
+    clingy: [
+      { text: '你走到哪儿我跟到哪儿。', actions: ['love'] },
+      { text: '再陪我一会儿嘛。', actions: ['shy'] },
+      { text: '（蹭了蹭你的手）', actions: ['love'] },
+    ],
+    happy: [
+      { text: '今天心情不错呢。', actions: ['happy'] },
+      { text: '（尾巴摆个不停）', actions: ['happy'] },
+      { text: '跟你在一起真好。', actions: ['love'] },
+    ],
+    quiet: [
+      { text: '嗯,我在的。', actions: ['nod'] },
+      { text: '就这样待着吧。', actions: ['look'] },
+    ],
+    tired: [
+      { text: '（眼皮沉得抬不起来）', actions: ['sleepy'] },
+      { text: '让我缓一缓……', actions: ['sleepy'] },
+      { text: '今天有点提不起劲。', actions: ['sad'] },
+    ],
+    lonely: [
+      { text: '你是不是把我忘了。', actions: ['sad'] },
+      { text: '……（安静地看着你）', actions: ['look'] },
+      { text: '有空的时候,看看我好不好。', actions: ['shy'] },
+    ],
+  },
+
   /** 睡醒之后第一句。 */
   wakeUp: [
     { text: '……我睡着了?', actions: ['surprised'] },

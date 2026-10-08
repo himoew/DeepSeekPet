@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('settings', {
   openLog: () => ipcRenderer.invoke('settings:openLog'),
   /** 它的记忆（只读）：认识多少天、聊过几次、各项互动次数… */
   memory: () => ipcRenderer.invoke('settings:memory'),
+  /** 它现在的心情（只读）：两条轴 + 中文档位（love / energy / label / speed / cling）。 */
+  mood: () => ipcRenderer.invoke('settings:mood'),
   /** 忘掉一切（重新认识）。 */
   forget: () => ipcRenderer.invoke('settings:forget'),
   close: () => ipcRenderer.invoke('settings:close'),

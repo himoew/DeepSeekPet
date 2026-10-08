@@ -43,6 +43,7 @@ const lines = require('./lines.cjs');
 const llm = require('./llm.cjs');
 const tts = require('./tts.cjs');
 const memory = require('./memory.cjs');
+const mood = require('./mood.cjs');
 
 /* ---------- 记住它站的位置 ---------- */
 /**
@@ -105,6 +106,7 @@ function contextLine(state) {
   const d = new Date();
   const bits = [`现在是${HOUR_CN(d.getHours())}${String(d.getMinutes()).padStart(2, '0')}分`];
   if (s.days > 1) bits.push(`你们认识第${s.days}天`);
+  if (state.moodState) bits.push(`你现在心情${mood.LABEL[state.moodState] || '平静'}`);
   if (state.sleeping) bits.push('你刚睡醒或正犯困');
   if (state.lastEvent) bits.push(state.lastEvent);
   if (s.areaTop && s.areaTopCount >= 5) bits.push(`你最常被摸${AREA_CN[s.areaTop] || '这儿'}`);
@@ -131,6 +133,29 @@ function fill(line, vars) {
 const AWAY_SEC = 240;        // 系统 4 分钟没有任何输入 = 你不在
 const AWAY_POLL_MS = 5000;   // 每 5 秒看一次（很便宜）
 
+/* ---------- 心情（那一条连续的数，见 mood.cjs） ---------- */
+
+/** 心情心跳的间隔。它只做"慢慢回归中位 / 按时间改精神"，30 秒一次足够。 */
+const MOOD_TICK_MS = 30_000;
+/** 发呆 / 犯困优先挑当前心情专属的那几句：这几桶可能是空的，空了就退回原来那套。 */
+const MOOD_PICK_TRIES = 4;
+
+/**
+ * 从一组台词里挑一条**当前心情专属**的（`lines.mood.<档>`，见 lines.cjs 的注释）。
+ *
+ * 为什么不是"先查有没有再挑"：台词桶是抽签不重复的（`next()`），
+ * 直接 `next(lines.mood?.[state]) || next(fallback)` 就够——没有这个档、或者桶是空的，
+ * 自然退回原来那句，一行判断都不用加。**心情只影响它自己找话说的那一路**
+ * （发呆、犯困），戳/摸/拖拽这些对刚才那一下的回话一直照旧。
+ */
+function moodPick(state, fallback) {
+  const list = lines.mood?.[state.moodState];
+  return (list && list.length ? next(list) : null) || next(fallback);
+}
+
+/** 心情只改"步调"，不动任何判定：动作、走路、发呆间隔都按这个倍率缩放。 */
+const moodSpeed = (state) => (typeof state.moodSpeed === 'number' ? state.moodSpeed : 1);
+
 /**
  * 它穿什么。`figure: 'whale'` 是 DeepSeek 大肥鱼；`scheme` 对应 web\whale\model.json 里的配色，
  * 这里只带了 `deepseek`（原版），贴图在 web\whale\tex 和 web\whale\feat。
@@ -154,6 +179,9 @@ const INIT = {
   scale: 1,                // 想让它大一点就调这里：1.3、1.5……
   // 它叫你什么。设置页「你的名字」写进 config\settings.json 的 `user`，这里读出来。
   user: llm.load().user || '你',
+  // 它现在什么心情（love / energy 两条轴推出来的档）：页面拿它调步调与"黏着你"的距离。
+  // 心跳每 30 秒会重发一次（见 attach 里的 moodTick）。
+  mood: mood.snapshot(),
   // 记住它上次站的位置（页面报、World 存，见上面 PET 那段）
   rememberPosition: true,
   startX: loadPetX(),
@@ -812,8 +840,10 @@ function attach(ws) {
     away: false, battAt: 0,
     // 刚发生在它身上的事（给模型上下文用，比如"你刚被摸了头"）
     lastEvent: '',
+    // 心情：`moodState`/`moodSpeed`/`moodCling` 是最新快照，`moodSent` 是"页面上现在显示的那一档"
+    moodState: '', moodSpeed: 1, moodCling: 170, moodSent: '',
   };
-  let idle = null, auto = null;
+  let idle = null, auto = null, moodTimer = null;
 
   /** 念大模型回答的那条路（内置台词不出声）。 */
   const speaker = createSpeaker(ws);
@@ -838,15 +868,38 @@ function attach(ws) {
   // 换身体。只发这一条，大肥鱼就会出现在桌面上。
   send(ws, INIT);
 
+  /** 认识的第 7/30/100/180/365 天（说句子用的），心情那边也要用，所以放在最前面。 */
+  const MILESTONE_DAYS = new Set([7, 30, 100, 180, 365, 730]);
+
+  /**
+   * 心情变了就说一声（页面据此调步调与"黏着你"的距离）。
+   * 只在**档位真的换了**的时候发，免得每 30 秒都往页面上塞一条没用的消息。
+   */
+  function stepMood() {
+    const m = mood.snapshot();
+    state.moodState = m.state;
+    state.moodSpeed = m.speed;
+    state.moodCling = m.cling;
+    if (m.state !== state.moodSent) {
+      state.moodSent = m.state;
+      log.info(`心情「${m.label}」（love=${m.love} energy=${m.energy}）`);
+      send(ws, { t: 'prefs', mood: m });
+    }
+    return m;
+  }
+
   // 这次见面记一笔（来过几天 / 常在的时段 / 第一次见面）
   const mem = memory.touchSeen();
+  // 好久没来 / 认识的里程碑：心情跟着动一下（先更新，问候语随后就按新心情挑）
+  const felt = mood.mind({ awayDays: mem.awayDays, milestone: MILESTONE_DAYS.has(mem.days) });
+  if (felt.before !== felt.after) log.info(`（隔了 ${mem.awayDays} 天没来）`);
+  stepMood();
   const greeting = setTimeout(() => reactor.reply('line', 'hello', [next(lines.hello[partOfDay()])]), 2000);
 
   /**
    * 开机后的第二句：**只在值得说的日子说**——认识的第 7/30/100/180/365 天，
    * 或者隔了 3 天以上才回来。放在问候之后 2.5 秒，不跟它挤在一起。
    */
-  const MILESTONE_DAYS = new Set([7, 30, 100, 180, 365, 730]);
   const memoryGreeting = setTimeout(() => {
     if (state.paused || state.card) return;
     if (mem.days > 1 && MILESTONE_DAYS.has(mem.days)) {
@@ -876,6 +929,7 @@ function attach(ws) {
     const away = systemIdleSec() >= AWAY_SEC;
     if (away === state.away) return;
     state.away = away;
+    mood.tick({ away });                      // 你不在的时候它想你（love 掉得快一点）
     if (away) {
       log.info(`系统 ${AWAY_SEC} 秒没动静，它安静待着`);
       return;
@@ -918,15 +972,15 @@ function attach(ws) {
     pm.on('on-battery', onBattery);
   }
 
-  const idleDelay = () => IDLE_MIN_MS + Math.random() * (IDLE_MAX_MS - IDLE_MIN_MS);
+  const idleDelay = () => (IDLE_MIN_MS + Math.random() * (IDLE_MAX_MS - IDLE_MIN_MS)) / moodSpeed(state);
 
   /** 现在"该只动不说"吗：你选了「我在忙」（quietUntil），**或者**你根本不在（away）。 */
   const hushed = () => Date.now() < state.quietUntil || state.away;
 
   /** 发呆台词：一半用"这个时段"专属的，一半用通用的（`lines.idleByTime`）。 */
   const idleLine = () => (Math.random() < .5
-    ? next(lines.idleByTime?.[partOfDay()] || lines.idle)
-    : next(lines.idle));
+    ? moodPick(state, lines.idleByTime?.[partOfDay()] || lines.idle)
+    : moodPick(state, lines.idle));
 
   /**
    * 挑一句"记忆话"：优先"你上次说过的那句"，其次"你最喜欢摸我哪儿"，再其次"你常在的时段"。
@@ -956,7 +1010,7 @@ function attach(ws) {
     }
     if (quiet > DROWSY_AFTER_MS) {
       // 犯困这条也只在"你还在"的时候说：你人都走了还念叨就怪了
-      if (!hushed()) reactor.reply('line', 'drowsy', [next(lines.drowsyByTime?.[partOfDay()] || lines.drowsy)]);
+      if (!hushed()) reactor.reply('line', 'drowsy', [moodPick(state, lines.drowsyByTime?.[partOfDay()] || lines.drowsy)]);
       return;
     }
     const roll = Math.random();
@@ -985,6 +1039,15 @@ function attach(ws) {
     }, idleDelay());
   };
   scheduleIdle();
+
+  /**
+   * 心情的心跳：每 30 秒让它往"平常"回一点、按时段改精神、你不在就往下掉。
+   * 它跟发呆/自动说话是**独立**的定时器（心情该变就变，跟"这一轮说不说话"无关）。
+   */
+  moodTimer = setInterval(() => {
+    mood.tick({ away: state.away, sleeping: state.sleeping });
+    stepMood();
+  }, MOOD_TICK_MS);
 
   /* ---------- 它会问你：用页面里那套选择卡（点一下，或者按数字键 1–9） ---------- */
 
@@ -1104,6 +1167,11 @@ function attach(ws) {
         state.lastUserAt = Date.now();
         // 记忆 + "刚发生了什么"：**带 stage 的里程碑不算新的一次**（不然摸一下就记三下）
         if (!m.stage || m.stage === 'start') memory.addTouch(m.kind || 'touch', areaOf(m));
+        // 心情：一下互动一次（同样是"带 stage 的 milestone 不算新的一次"）
+        if (!m.stage || m.stage === 'start') mood.onEvent(m.kind || 'touch');
+        // "够了够了"那一段不算互动，但会让它有点烦（摸过头也是会烦的）
+        if (m.kind === 'pet' && m.stage === 'over') mood.onEvent('petOver');
+        stepMood();
         state.lastEvent = eventPhrase(m) || state.lastEvent;
         if (state.paused) break;              // 暂停时不接话
         // **有张选择卡举着的时候，一个字都不说。**
@@ -1174,6 +1242,8 @@ function attach(ws) {
         state.lastUserAt = Date.now();
         state.pokes = 0;
         memory.addTalk(text);                 // 记忆：聊过一次，并记下这句（截短）
+        mood.onEvent('talk');                 // 心情：你主动跟它说话，它也高兴
+        stepMood();
         state.lastEvent = '';                 // 你在直接跟它说话，就别说"刚被戳了"了
         // 你直接打字了：那张卡就别再举着（模型那句 `say` 到了页面也会把它收掉）
         dropCard('你去打字了');
@@ -1272,6 +1342,7 @@ function attach(ws) {
     clearTimeout(memoryGreeting);
     clearTimeout(auto);
     clearInterval(awayPoll);       // 系统空闲那条轮询
+    clearInterval(moodTimer);      // 心情的心跳
     if (pm) {                      // 监听器是跟着这条连接注册的，必须摘掉
       pm.off('lock-screen', onSleep); pm.off('suspend', onSleep);
       pm.off('unlock-screen', onWake); pm.off('resume', onWake);
@@ -1284,5 +1355,5 @@ function attach(ws) {
   });
 }
 
-// `next` / `partOfDay` / `fill` 是纯函数，导出给 test\smoke.cjs 用。
-module.exports = { attach, SKIN, INIT, next, partOfDay, moodOf, beatsFor, createSpeaker, fill };
+// `next` / `partOfDay` / `fill` / `moodPick` 是纯函数，导出给 test\smoke.cjs 用。
+module.exports = { attach, SKIN, INIT, next, partOfDay, moodOf, beatsFor, createSpeaker, fill, moodPick };

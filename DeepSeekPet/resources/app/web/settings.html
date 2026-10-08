@@ -113,6 +113,7 @@
       <em>它自己记着的事。**平时不显示任何数字**——只偶尔把里面的一件说出来（每天最多两句）。
         这里给你看，不满意可以清空。</em>
     </label>
+    <p><b>现在的心情</b> <span id="moodNow">…</span></p>
     <div class="mem" id="mem"></div>
     <div class="row">
       <button class="ghost" id="forget">忘掉一切</button>
@@ -225,10 +226,24 @@
     ];
     $('mem').innerHTML = rows.map((r) => `<p>${r}</p>`).join('');
     $('memFile').textContent = m.file;
+    showMood();
+  }
+
+  /**
+   * 现在的心情：两条轴（love/energy）+ 中文档位。
+   * 它是**会自己变的运行期状态**，跟记忆不是一回事（清空记忆只顺手把它拉回中位）。
+   */
+  function showMood() {
+    if (!window.settings.mood) return;
+    window.settings.mood().then((k) => {
+      const pct = (v) => Math.round(v * 100);
+      $('moodNow').innerHTML = `<b>${esc(k.label)}</b>（喜欢 ${pct(k.love)} · 精神 ${pct(k.energy)}）`
+        + ` · 动作 ${k.speed}× · 黏你 ${k.cling}px`;
+    }).catch(() => { $('moodNow').textContent = '（读不到）'; });
   }
 
   $('forget').addEventListener('click', async () => {
-    if (!confirm('让它忘掉一切？\n（认识的这些天、聊过的话、互动的次数都会清空，从今天重新认识）')) return;
+    if (!confirm('让它忘掉一切？\n（认识的这些天、聊过的话、互动的次数都会清空，从今天重新认识；它会回到平常的心情）')) return;
     try {
       showMemory(await window.settings.forget());
       $('memStatus').textContent = '已经忘掉了，从今天重新开始。';

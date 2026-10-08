@@ -22,6 +22,8 @@ document.head.appendChild(skinStyle);
 
 const prefs = {
   roam: 'calm', sound: true, theme: document.documentElement.dataset.theme, scale: 1, user: '伙伴', mic: false, micDevice: '', bot: null,
+  /** 心情快照（World 发过来的 `{ state, label, speed, cling }`）；页面只拿它调步调。 */
+  mood: null,
   /** Voice input: switched on, recognizer ready, why not, how to talk, and the mode in force. */
   voice: { enabled: false, ready: false, detail: null, hint: '', mode: 'hold' },
   /**
@@ -229,6 +231,8 @@ function applyPrefs(p) {
   if (Array.isArray(p.hoverButtons)) prefs.hoverButtons = p.hoverButtons.filter((id) => typeof id === 'string' && id in ACTIONS);
   if (p.bot) { prefs.bot = p.bot; if (!menu.hidden && !menu.querySelector('.m-head.confirm')) renderMenuHead(); }
   if (typeof p.thinking === 'boolean') ctl.setThinking(p.thinking);
+  // 心情（World 每换一档才发一次）：只影响"黏着你"的远近和走路的快慢，不影响任何判定。
+  if (p.mood && typeof p.mood === 'object') { prefs.mood = { ...p.mood }; ctl.setMood(prefs.mood); }
   refreshButtons();
 }
 
