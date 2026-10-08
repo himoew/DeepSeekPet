@@ -88,8 +88,12 @@ if (app.requestSingleInstanceLock()) {
     if (tts.available()) tts.warm().catch((err) => log.warn(`语音预热失败:${err.message}`));
     else log.info(`语音关闭：${tts.why()}`);
 
-    // 退出时把语音 worker 收掉，别留下一个线程
-    app.on('will-quit', () => tts.close());
+    // 退出时把语音 worker 收掉，别留下一个线程；顺手把心情落盘
+    // （心情平时是**攒着写**的，见 mood.cjs —— `flush` 保证最后那几次互动不会因为退出而丢）
+    app.on('will-quit', () => {
+      tts.close();
+      try { require('./mood.cjs').flush(); } catch { /* 存不下也不该拦住退出 */ }
+    });
 
     runPetHost({
       url: `${origin}/pet`,

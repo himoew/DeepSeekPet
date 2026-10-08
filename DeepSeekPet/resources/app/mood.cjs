@@ -141,7 +141,13 @@ function stepState(d) {
   return true;
 }
 
-/** 一次互动（页面报上来的 touch kind，或者 `talk`）。 */
+/** 一次互动（页面报上来的 touch kind，或者 `talk`）。
+ *
+ * ⚠️ **这里必须用 `saveSoon()`（攒着写），不能用 `saveNow()`**：
+ * 球撞在她身上、连戳、连续抚摸都会**高频**调到这里，每次都同步落盘的话，
+ * 每一次都是一次磁盘写 —— 实感就是"碰到她就卡一下"。
+ * `saveSoon` 攒 8 秒并 `unref()`，进程退出也不会被它吊住。
+ */
 function onEvent(kind) {
   const d = load();
   const e = EVENT[kind];
@@ -150,7 +156,7 @@ function onEvent(kind) {
   d.energy = clamp01(d.energy + (e.energy || 0));
   d.at = new Date().toISOString();
   if (stepState(d)) log.info(`心情变成「${LABEL[d.state]}」（love=${d.love.toFixed(2)} energy=${d.energy.toFixed(2)}）`);
-  saveNow();                      // 一下互动一个文件（本来就是低频动作），掉电也不会把心情丢了
+  saveSoon();
   return snapshot();
 }
 
@@ -224,4 +230,4 @@ function forget() {
   return snapshot();
 }
 
-module.exports = { onEvent, tick, mind, snapshot, forget, LABEL, FILE };
+module.exports = { onEvent, tick, mind, snapshot, forget, LABEL, FILE, saveNow, flush: saveNow };

@@ -17,15 +17,26 @@
  *   - 高球她**30%** 概率**跳起来用头顶**回去（太高的够不到）；
  *   - 你随时可以把球直接丢进她的门、或者把她拎到另一边 —— 那是**整蛊玩法**，规则不拦着。
  */
-const GOAL_W = 0.10;          // 球门宽度（占窗口宽度的比例）
-const GOAL_H = 150;           // 球门高度（px）
+import { HEAD_REACH } from './ball.js';
+
+/**
+ * 球门尺寸 —— **两个数都按"她能不能守住"来定**（用户实测反馈："球门太大了，随便一扔就进"）：
+ *   · 高度 ≈ 她的身高（≈ 96px）：她站在门前能挡住大部分，但高球还是能过去；
+ *   · 宽度只有窗口的 6%：比她的身宽（约 90px）窄一点，所以她站对位置就守得住。
+ * 想让游戏更难/更容易，就动这两个数（还有 `HEAD_CHANCE` 和 `aim` 的力度）。
+ */
+const GOAL_W = 0.06;          // 球门宽度（占窗口宽度的比例，约 77px @1280）
+const GOAL_H = 96;            // 球门高度（px，≈ 她的身高）
 const ZONE = 0.5;             // 中线：她的半场 / 你的半场
 const HEAD_CHANCE = 0.30;     // 高球跳起来顶回去的概率（用户指定）
 const CHARGE_CHANCE = 0.18;   // 蓄力飞踢的概率
 const CHARGE_POWER = 1.7;     // 蓄力时的力度系数
-const REACH_JUMP = 260;       // 球高过地面这么多以内她跳得够到；再高就够不到
+/** 球高过地面这么多以内她跳得够到（**跟球那边的头球盒子对齐**，见 ball.js 的 HEAD_REACH）。 */
+const REACH_JUMP = HEAD_REACH;
 const HEAD_X = 150;           // 横向差这么多以内才去顶
-const WALK_EVERY_MS = 700;    // 两次改走路目标的间隔（别每帧喊一次）
+const WALK_EVERY_MS = 320;    // 两次改走路目标的间隔（要跟得上球，但不能每帧喊）
+const WALK_EPS = 26;          // 离目标这么近就不喊了
+const DEFEND_X = 0.86;        // 回防站位（相对她那个半场的边线：越靠门越保守）
 
 /** 球往哪个门踢：她守 0（左）就踢右边（1.0），反之踢左边（0.0）。 */
 const targetFor = (defence) => (defence === 0 ? 1 : 0);
@@ -36,6 +47,10 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     defence: 1,               // 她守哪边：0 = 左，1 = 右
     score: [0, 0],            // [0] = 你进的球，[1] = 她进的球
     flash: 0,                 // 进球后网闪一下的计时
+    noGoal: 0,                // 这个时刻之前不再判进球（开球后的冷静期，防死循环）
+    lastRelease: 0,           // 球上一次"从手里松开"的时刻（用来给拖球进门限一次）
+    scoredThisRelease: false, // 这一次松手是否已经算过进球
+    calls: 0, tickAt: 0,      // 每帧调用次数自检（见 onStep）
     lastWalkAt: 0,
     lastHeadAt: 0,
   };
@@ -121,12 +136,14 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     return g.mode;
   }
 
-  /** 开球：球放到 `side` 那一边的门前，静止。 */
+  /** 开球：球放到 `side` 那一边的门前（**门框之外**！），静止，并给一小段"不判进球"的冷静期。 */
   function kickoff(side) {
     const b = control.bounds();
     const gr = goalRect(side);
-    const near = side === 0 ? gr.x1 + b.W * 0.09 : gr.x0 - b.W * 0.09;
+    // 一定要落在门框外面：落在门里的话，下一帧又会判进球 → 死循环（实测卡死）
+    const near = side === 0 ? gr.x1 + b.W * 0.10 : gr.x0 - b.W * 0.10;
     ball.placeAt(Math.min(0.94, Math.max(0.06, near / b.W)), 'floor', { since: 0 });
+    g.noGoal = performance.now() + 350;
   }
 
   /* ---------- 每帧：判进球 + 她的行动 ---------- */
@@ -138,11 +155,37 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     const now = performance.now();
     if (g.flash > 0) g.flash -= s.dt;
 
-    // 1) 进球：球心进了门框（横梁以下、门柱之间）
+    /**
+     * **每帧调用次数自检**：正常是 1 帧 1 次（30~60 次/秒）。
+     * 如果这里每秒几百上千次，说明帧循环被"递归/重入"了 ——
+     * 症状是**人物不动、但语音还在响**（语音在 worker 里，主线程卡住它照样出声）。
+     * 这一条能在卡死前把线索写进日志。
+     */
+    g.calls = (g.calls || 0) + 1;
+    if (now - (g.tickAt || 0) > 1000) {
+      g.tickAt = now;
+      if (g.calls > 200) {
+        try { globalThis.petHost?.report?.(`[弹弹乐] onStep 每秒 ${g.calls} 次（正常 30~60）——帧循环疑似重入/递归`); } catch { /* ignore */ }
+      }
+      g.calls = 0;
+    }
+    // 每次"从手里松开"只给一次进球机会：不然把球慢慢推过门线会每帧算一次分（分数疯涨）
+    const releasedAt = ball.releasedAt || 0;
+    if (releasedAt !== g.lastRelease) { g.lastRelease = releasedAt; g.scoredThisRelease = false; }
+
+    // 1) 进球：球心进了门框（横梁以下、门柱之间），而且是"往里飞"
     if (!s.dragging && s.y >= goalRect(0).yTop - 6) {
       for (const side of [0, 1]) {
         const gr = goalRect(side);
         if (s.x < gr.x0 || s.x > gr.x1) continue;
+        /**
+         * ★ **开球后有一小段时间不再判进球**（`g.noGoal`）。
+         * 没有它就会死循环：球停在门里 → 判进球 → 开球（球还在门的横坐标范围内）→ 又判进球……
+         * 实测症状就是"球一进网就卡死"。**这条是硬保险，别删。**
+         */
+        if (now < (g.noGoal || 0)) continue;
+        if (g.scoredThisRelease) continue;             // 这一次松手已经算过了
+        g.scoredThisRelease = true;
         const scorer = 1 - side;                       // 球进 side 的门 → 对面得分
         g.score[scorer] += 1;
         g.flash = 0.6;
@@ -156,27 +199,44 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     // 2) 瞄准：球在场上时，她一脚就往对面的门踢（力度随机在 ball 里，蓄力在 onKick 里）
     ball.setAim({ x: targetFor(g.defence), power: 1 });
     const herZone = g.defence === 0 ? s.x < b.minX + ZONE * b.W : s.x > b.maxX - ZONE * b.W;
-    if (!herZone) return;                              // 球在对面半场：她守着自己的门
-
     const gr = goalRect(g.defence);
     const netX = (gr.x0 + gr.x1) / 2;
     const high = b.floorY - s.y;                       // 球离地多高
+    /**
+     * **追球要积极**（用户实测："人物不会踢过来了""追到一半就停下，有点保守"）。
+     *
+     * 老写法的毛病：球不在她半场就 `return`（站在那儿看着）；球一变位置就每 700ms 喊一次新目标，
+     * 她一走一停，看着很犹豫。现在：
+     *   · 球在**她半场**：直接去球那儿（地滚球去踢、高球就跳顶）；
+     *   · 球在**对面半场**：她也**往中线靠**（准备接），而不是杵在门里；
+     *   · 目标每 `WALK_EVERY_MS` 才更新一次，而且离目标 26px 以内就不喊 —— 走起来才果断。
+     */
+    const goTo = (x, force, run) => {
+      const want = Math.min(b.maxX - 24, Math.max(b.minX + 24, x));
+      if (!force && Math.abs(want - pet.x) < WALK_EPS) return;
+      if (!force && now - g.lastWalkAt < WALK_EVERY_MS) return;
+      g.lastWalkAt = now;
+      control.walkTo(want / b.W, !!run);
+    };
+
     // 高球：站到球下面一点，然后跳起来用头顶（30%）
-    if (!s.resting && high > 40 && high < REACH_JUMP && Math.abs(s.x - pet.x) < HEAD_X) {
-      if (now - g.lastHeadAt > 900 && Math.random() < HEAD_CHANCE) {
+    if (herZone && !s.resting && high > 40 && high < REACH_JUMP && Math.abs(s.x - pet.x) < HEAD_X) {
+      if (now - g.lastHeadAt > 700 && Math.random() < HEAD_CHANCE) {
         g.lastHeadAt = now;
-        control.walkTo((s.x + (s.x < pet.x ? 16 : -16)) / b.W);
+        goTo(s.x + (s.x < pet.x ? 16 : -16), true, true);
         control.jump();
       }
       return;
     }
-    // 地滚球：走过去踢（她碰到就踢，方向已由 setAim 指好）
-    const stand = s.resting ? s.x : s.x;               // 停着的球就去踢；飞着的地滚球迎上去
-    const want = Math.min(b.maxX - 30, Math.max(b.minX + 30, stand));
-    if (Math.abs(want - pet.x) > 30 && now - g.lastWalkAt > WALK_EVERY_MS) {
-      g.lastWalkAt = now;
-      control.walkTo(want / b.W);
-    }
+    if (herZone) { goTo(s.x, false, true); void netX; return; }   // 她半场的球：**跑**过去踢
+    /**
+     * 球在对面：**立刻回防**（用户要的："当球不在自己区域会立刻选择返回防守"）。
+     * 站位在门前方一点（`DEFEND_X`），不是杵在门里 —— 那样才有反应距离。
+     */
+    const backX = g.defence === 0
+      ? b.minX + gr.w * DEFEND_X
+      : b.maxX - gr.w * DEFEND_X;
+    goTo(backX, false, true);                                    // 回防也跑
     void netX;
   }
 
@@ -214,6 +274,8 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
 
   return {
     setMode, onStep, onKick, draw, kickoff, goalRect,
+    /** 只给自检用的内部状态入口（合成测试跑得比真实时间快，得能重置冷静期）。 */
+    debug: g,
     get mode() { return g.mode; },
     get score() { return [...g.score]; },
     get defence() { return g.defence; },

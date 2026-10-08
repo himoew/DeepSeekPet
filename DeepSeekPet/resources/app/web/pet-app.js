@@ -187,8 +187,8 @@ const game = createGame({
   control: {
     bounds: () => ctl.bounds,
     pet: () => ctl.where,
-    /** `x` 是 0..1 的横向比例（页面这套走路接口收的就是比例）。 */
-    walkTo: (x) => { ctl.holdRoam(6); ctl.walkTo(Math.min(1, Math.max(0, x)) * innerWidth); },
+    /** `x` 是 0..1 的横向比例；`run === true` 时**跑**过去（比赛模式她默认跑，不然追不上球）。 */
+    walkTo: (x, run) => { ctl.holdRoam(6); ctl.walkTo(Math.min(1, Math.max(0, x)) * innerWidth, !!run); },
     jump: () => ctl.act(['jump']),
     act: (a) => ctl.act([a]),
   },

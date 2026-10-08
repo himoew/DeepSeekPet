@@ -1300,11 +1300,12 @@ export function createPet(els, opts) {
     get time() { return T; },
     get bounds() { return { W, H, floorY, S, minX: minX(), maxX: maxX() }; },
     /**
-     * 她此刻站在哪、朝哪边（**只读**）。
-     * 玩具球（`web/ball.js`）用它算碰撞：球砸到她身上就被踢出去。
-     * 只暴露位置和朝向，**不暴露可写句柄**，免得外面的模块把她搬走。
+     * 她站在哪儿、朝哪边、脚底在什么高度（**只读**）。
+     * 玩具球与弹弹乐（`web/ball.js` / `web/game.js`）用它算碰撞：
+     * 球砸到她身上就被踢出去；**她跳起来时头顶那一片也能顶球**（`feetY` 用来判断腾空）。
+     * 只暴露这三个数，**不暴露可写句柄**，免得外面的模块把她搬走。
      */
-    get where() { return { x: pet.x, faceVis: pet.faceVis }; },
+    get where() { return { x: pet.x, faceVis: pet.faceVis, feetY: pet.fy }; },
     setSkin(s) { skin = s; },
     /** Swaps the body's drawing: a custom figure (see `opts.figure`) or null for the built-in Coo. */
     setFigure(fig) {

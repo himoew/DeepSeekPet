@@ -43,8 +43,16 @@ const AIR_DRAG = 0.06;
 const R = 13;
 /** 踢出去的速度范围（px/s）。 */
 const KICK_MIN = 300, KICK_MAX = 520;
-/** 同一帧里最多踢一次：给碰撞一个"冷却"，免得贴着球时每帧都踢（球会抖）。 */
-const KICK_COOL_MS = 420;
+/** 同一帧里最多踢一次：给碰撞一个"冷却"，免得贴着球时每帧都踢（球会抖）。
+ *  **别调太大**：她追到球边上时冷却还没好就踢不到 —— 实测会变成"球重置了她不踢过来"。 */
+const KICK_COOL_MS = 280;
+/** 头球单独的冷却：跳起来顶一次就够，别在空中连着顶。 */
+const HEAD_COOL_MS = 320;
+/** 她跳起来时，头顶那一片的碰撞范围：**相对脚底**算（她跳多高，头就升多高）。 */
+const HEAD_ABOVE_FEET = 112;
+const HEAD_BOX_H = 50;
+/** 她跳起来时**够得到**的高度（px，球离地多高以内她会去顶）——跟上面的盒子对齐。 */
+export const HEAD_REACH = 150;
 /**
  * 她的碰撞盒（以她脚下中心为原点，单位 px）：front 是朝向那一侧、
  * 大一点；back 是背对那一侧、小一点。**刻意比她的身体略小**（宁可漏判也别误判成"踢到空气"）。
@@ -64,8 +72,15 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     resting: true,
     hover: false,          // 鼠标是不是停在球上
     dragging: false,       // 正被拖着（帧率要靠它：不然"抓球"只有 30fps，看着很卡）
-    lastKick: 0,
+    /**
+     * 冷却时间戳从 `-Infinity` 起：**别用 0**。
+     * `performance.now()` 在页面刚加载时很小（也可能被测试替身设成很小的值），
+     * 用 0 的话 `now - 0 >= 280` 一开始**不成立** —— 表现为"页面起来后头几百毫秒踢不动球"。
+     */
+    lastKick: -Infinity,
+    lastHead: -Infinity,
     since: 0,              // 上一次被踢到现在（秒）：用来决定"要不要过去找它玩"
+    releasedAt: 0,         // 上一次从手里松开（游戏用它给"拖进门"限一次）
   };
 
   /**
@@ -77,11 +92,21 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
    * **保持通用**：没设这两项时（空闲玩球）行为跟以前一模一样 —— 用户要的"对球的那套互动通用"。
    */
   const aim = { x: null, power: 1 };
+  /**
+   * 设"这一脚往哪踢、多大力"。**必须是函数**：游戏钩子 `onStep` 也要回调它
+   * （曾经只在返回对象里写了 `setAim`，钩子里一调就是 `ReferenceError` —— 实测被帧循环的报错通道抓到）。
+   */
+  function setAim(a) {
+    aim.x = a && Number.isFinite(a.x) ? Math.min(1, Math.max(0, a.x)) : null;
+    aim.power = a && Number.isFinite(a.power) ? Math.min(2.2, Math.max(0.5, a.power)) : 1;
+  }
 
   let box = null;          // { W, H, floorY }，每帧问 stage 要
   let root = null, shadow = null, ballEl = null;
   /** 球弹地的音效限流：`ballBounce` 一秒最多响 8 次（防"嗡嗡"的异响）。 */
   let lastBounceAt = 0;
+  /** 重入保护（见 `step`）。 */
+  let stepping = false;
   /** 被挤出 `#fx` 后只自动补挂一次（见 `draw()`）。 */
   let remountTried = false;
   const bounce = (k) => {
@@ -124,6 +149,16 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
 
   function mount() {
     if (root || !fxG) return;
+    /**
+     * **先把贴图预热**：第一次显示球时如果要现场解码 PNG，会看到"卡一下"。
+     * 页面一加载就开始拉这张图（它很小，几百 ms 就完事）。
+     */
+    try {
+      const img = new Image();
+      img.onload = () => report(`[玩具球] 贴图就绪 ${img.naturalWidth}x${img.naturalHeight}`);
+      img.onerror = () => report('[玩具球] 贴图加载失败！球会看不见（检查 /web/ball.png）');
+      img.src = '/web/ball.png';
+    } catch { /* 没有 Image（离线自检的桩环境）就算了 */ }
     root = mk('g', { class: 'toy-ball', 'aria-hidden': 'true' });
     shadow = mk('ellipse', { class: 'toy-ball-shadow' });
     ballEl = mk('g', { class: 'toy-ball-body-wrap' });
@@ -176,6 +211,21 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
 
   function step(dtRaw) {
     if (!st.on) return;
+    /**
+     * **重入保护**：这个函数在帧循环里被调。如果哪天有人（或某个钩子）在它没跑完时又调一次，
+     * 就会叠加物理、还可能把"进球/踢球"这类事件成倍放大 —— 症状是画面卡住但语音还在响
+     * （语音在 worker 里，主线程卡住它照样出声）。这里直接挡掉重入。
+     */
+    if (stepping) return;
+    stepping = true;
+    try {
+      stepInner(dtRaw);
+    } finally {
+      stepping = false;
+    }
+  }
+
+  function stepInner(dtRaw) {
     const dt = Math.min(Math.max(dtRaw, 0), 0.05);   // 切回窗口时别一次算一大步
     const b = (box = stage.bounds());
     const floorY = b.floorY - R;                       // 球心贴地时的高度
@@ -257,7 +307,7 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     // 掉出画面（比如她把球踢飞了）：过一会儿从边上再滚一个进来
     if (st.y > b.floorY + 400) place({ fromLeft: Math.random() < .5 });
 
-    // 撞到她就踢
+    // 撞到她就踢（或被她**跳起来用头顶**）
     kickIfTouching();
 
     /**
@@ -292,7 +342,27 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
   }
 
   /**
-   * 踢一脚。两种情况：
+   * 她的**脑袋**的碰撞盒 —— 只在**她腾空时**才算。
+   *
+   * 用户要的："她的脑袋应该也有碰撞体积，后面她可以跳起来接回来。"
+   * 所以跳起来的这段时间里，头顶那一片是能碰到球的：球从上方经过就**被顶回去**
+   * （顶回去的方向照旧走 `aim`，游戏里就是朝对面的门）。
+   * **"腾空"用她的脚离地判断**（`p.feetY` 比地面高一截），不去读她的内部状态机；
+   * 脑袋的位置也是**相对脚底**算的（她跳多高，头就跟着升多高）。
+   */
+  function headBox() {
+    const b = stage.bounds();
+    const p = stage.pet();
+    const feet = Number.isFinite(p.feetY) ? p.feetY : b.floorY;
+    if (b.floorY - feet < 6) return null;               // 站在地上：头不算碰撞体
+    const top = feet - HEAD_ABOVE_FEET;
+    return { x0: p.x - 34, x1: p.x + 34, y0: top, y1: top + HEAD_BOX_H };
+  }
+
+  /**
+   * 碰到她：**脑袋优先**（跳起来顶），否则算踢一脚。
+   *
+   * 两种情况：
    *   - **瞄准模式**（游戏里 `aim.x` 有值）：朝那个方向踢（她的球门在对面），力度还乘 `aim.power`
    *     —— 蓄力飞踢就是 `power` 给到 1.6 上下；
    *   - **自由玩球**（没设瞄准）：老行为，按球在她哪一侧往外推。
@@ -300,6 +370,28 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
    */
   function kickIfTouching() {
     const now = performance.now();
+    // 1) 头球
+    const head = headBox();
+    if (head && now - st.lastHead >= HEAD_COOL_MS
+      && st.x + R >= head.x0 && st.x - R <= head.x1
+      && st.y + R >= head.y0 && st.y - R <= head.y1) {
+      st.lastHead = now;
+      const b = stage.bounds();
+      const dir = aim.x !== null && aim.x !== undefined
+        ? Math.sign(b.minX + aim.x * (b.maxX - b.minX) - st.x) || (st.x < b.W / 2 ? 1 : -1)
+        : (stage.pet().faceVis >= 0 ? 1 : -1);
+      const power = (KICK_MIN + Math.random() * (KICK_MAX - KICK_MIN)) * 1.05;
+      st.vx = dir * power;
+      st.vy = -Math.min(300, power * .42);              // 顶出去带一点上抛，看着像"顶"
+      st.spinV = (st.vx / R) * 1.6;
+      st.resting = false;
+      st.since = 0;
+      sfx?.kick?.(1);
+      onEvent?.('ballHead', { x: Math.round(st.x), at: +(st.x / Math.max(1, b.W)).toFixed(4) });
+      game?.onKick?.({ x: st.x, power, head: true });
+      return;
+    }
+
     if (now - st.lastKick < KICK_COOL_MS) return;
     const hb = hitBox();
     if (st.x + R < hb.x0 || st.x - R > hb.x1) return;
@@ -441,14 +533,9 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
      * `ctl.moving`，于是**抓球的时候只有 30fps**——手很跟手、画面却是半速的，用户实感就是"卡"。
      */
     get busy() { return st.on && (st.dragging || !st.resting); },
-    /**
-     * 游戏模式用：设"这一脚往哪踢、多大力"。
-     * 传 `{ x: null }` 就回到自由玩球的行为（`web/game.js` 退出游戏模式时会调它）。
-     */
-    setAim(a) {
-      aim.x = a && Number.isFinite(a.x) ? Math.min(1, Math.max(0, a.x)) : null;
-      aim.power = a && Number.isFinite(a.power) ? Math.min(2.2, Math.max(0.5, a.power)) : 1;
-    },
+    /** 上一次从手里松开是什么时候（游戏用来给"拖球进门"限一次，见 setDragging）。 */
+    get releasedAt() { return st.releasedAt || 0; },
+    setAim,
     /**
      * 游戏模式用：把球**直接放到某个位置**（开球、进球后重新开球）。
      * 会顺手清掉速度、让她那一脚的冷却重新计时。
@@ -456,18 +543,31 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     placeAt(fx, fy, opts = {}) {
       const b = stage.bounds();
       st.x = b.minX + Math.min(1, Math.max(0, fx)) * (b.maxX - b.minX);
-      st.y = fy === 'floor' ? b.floorY - R : Math.min(b.floorY - R, Math.max(0, Number(fy) || 0));
+      const floorAt = b.floorY - R;
+      st.y = fy === 'floor' ? floorAt : Math.min(floorAt, Math.max(0, Number(fy) || 0));
       st.vx = Number(opts.vx) || 0;
       st.vy = Number(opts.vy) || 0;
       st.spinV = 0;
-      st.resting = !st.vx && !st.vy;
+      /**
+       * ⚠️ **放到半空时不能让它是"静止"**：静止分支会跳过重力，球就**悬在那儿不掉**
+       * （实测：球卡在空中不动）。只要不在贴地位置，就让它落下去。
+       */
+      const inAir = st.y < floorAt - 0.5;
+      if (inAir && st.vy === 0) st.vy = 1;
+      st.resting = !inAir && !st.vx && !st.vy;
       st.dragging = false;
-      st.lastKick = 0;
+      st.lastKick = -Infinity;                          // 放到新位置后允许立刻被踢（见上面 time 那句注释）
       st.since = opts.since === undefined ? 0 : opts.since;
       return { x: st.x, y: st.y };
     },
     /** 拖着球的状态由页面设置（它知道指针按下/松开）。 */
-    setDragging(on) { st.dragging = !!on; },
+    setDragging(on) {
+      const now = !!on;
+      // 松手那一刻记一笔：游戏里"拖球进门"要等这一轮结束才再算进球，
+      // 不然你把它慢慢推过门线，每帧都算一次（分数疯涨）
+      if (st.dragging && !now) st.releasedAt = performance.now();
+      st.dragging = now;
+    },
     /** 给调试/日志用。 */
     get state() { return { on: st.on, x: Math.round(st.x), y: Math.round(st.y), vx: Math.round(st.vx), vy: Math.round(st.vy), resting: st.resting, dragging: st.dragging }; },
   };
