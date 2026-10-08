@@ -83,18 +83,50 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
 
   /* ---------- 开关 ---------- */
 
+  /**
+   * 造一个 SVG 元素。**必须用 `createElementNS`，不能用 `innerHTML`**：
+   * 给 SVG 元素赋 `innerHTML` 时，字符串是按 **HTML** 规则解析的（`<circle>` 会落进 HTML 命名空间），
+   * 结果就是"元素确实在 DOM 里、但一个像素都不画" —— 而且不报错、`getBoundingClientRect` 还是 0。
+   * 实测踩过：球开了、日志说挂上了、肉眼什么都看不见。
+   */
+  const mk = (tag, attrs) => {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
+    return el;
+  };
+
+  /** 篮球的立体感靠一个**径向渐变**（左上偏亮），不是靠描边 —— 描边在小尺寸下会糊成一团。 */
+  function buildBall() {
+    const NS = 'http://www.w3.org/2000/svg';
+    const grad = document.createElementNS(NS, 'radialGradient');
+    grad.setAttribute('id', 'toyBallGrad');
+    grad.setAttribute('cx', '34%'); grad.setAttribute('cy', '30%'); grad.setAttribute('r', '78%');
+    const stops = [['0%', '#FFB061'], ['55%', '#EF8F31'], ['100%', '#C4671A']];
+    for (const [off, color] of stops) {
+      const s = document.createElementNS(NS, 'stop');
+      s.setAttribute('offset', off); s.setAttribute('stop-color', color);
+      grad.appendChild(s);
+    }
+    ballEl.appendChild(grad);
+    // 球体（渐变填充，没有描边）
+    ballEl.appendChild(mk('circle', { class: 'toy-ball-body', r: R, fill: 'url(#toyBallGrad)' }));
+    // 篮球缝线：一条竖线 + 两条侧弧（细、圆头，缩得再小也看得出是篮球）
+    ballEl.appendChild(mk('path', {
+      class: 'toy-ball-seam',
+      d: `M0 ${-R}V${R}`
+        + `M${-R * .60} ${-R * .82}a${R * 1.25} ${R} 0 0 0 0 ${R * 1.64}`
+        + `M${R * .60} ${-R * .82}a${R * 1.25} ${R} 0 0 1 0 ${R * 1.64}`,
+    }));
+    // 左上高光
+    ballEl.appendChild(mk('ellipse', { class: 'toy-ball-gloss', cx: -R * .30, cy: -R * .40, rx: R * .30, ry: R * .18, transform: 'rotate(-35)' }));
+  }
+
   function mount() {
     if (root || !fxG) return;
-    root = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    root.setAttribute('class', 'toy-ball');
-    root.setAttribute('aria-hidden', 'true');
-    shadow = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
-    shadow.setAttribute('class', 'toy-ball-shadow');
-    ballEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    ballEl.innerHTML = `
-      <circle class="toy-ball-body" r="${R}"/>
-      <path class="toy-ball-seam" d="M${-R} 0a${R} ${R} 0 0 0 ${2 * R} 0M0 ${-R}a${R} ${R} 0 0 0 0 ${2 * R}"/>
-      <circle class="toy-ball-dot" cx="${R * .42}" cy="${-R * .42}" r="2.2"/>`;
+    root = mk('g', { class: 'toy-ball', 'aria-hidden': 'true' });
+    shadow = mk('ellipse', { class: 'toy-ball-shadow' });
+    ballEl = mk('g', { class: 'toy-ball-body-wrap' });
+    buildBall();
     root.appendChild(shadow);
     root.appendChild(ballEl);
     fxG.appendChild(root);
@@ -102,9 +134,12 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
      * 首次挂载报一句给主进程（写进 `data\pet-host.log`）。
      * **为什么**：球曾经因为"和她的粒子抢同一层、被整层重写"而完全看不见，
      * 而日志里一点线索都没有（页面没抛错、World 那边一切正常）。
-     * 有这一行，下次至少能立刻分清"根本没挂上去"还是"挂上去又被抹了"。
+     * 现在连**画出来没有**一起报：直角坐标宽高、子节点数、以及实际用的填充色。
      */
-    report(`[玩具球] 已挂到 #fx · 父节点=${fxG.id || fxG.tagName} · 同层子节点=${fxG.children.length}`);
+    const box = root.getBoundingClientRect ? root.getBoundingClientRect() : { width: -1, height: -1 };
+    const fill = ballEl.firstChild && getComputedStyle ? getComputedStyle(ballEl.firstChild).fill : '?';
+    report(`[玩具球] 已挂到 #fx · 父节点=${fxG.id || fxG.tagName} · 子节点=${fxG.children.length}`
+      + ` · 球的盒子=${Math.round(box.width)}x${Math.round(box.height)} · fill=${fill}`);
   }
 
   function place({ fromLeft } = {}) {
@@ -141,6 +176,16 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
     const b = (box = stage.bounds());
     const floorY = b.floorY - R;                       // 球心贴地时的高度
     st.since += dt;
+
+    /**
+     * **被拖着的时候物理完全停手**（位置由指针说了算）。
+     *
+     * 这是"抓住拖动会一直乱弹直到飞走"的修法：原来 `drag()` 设坐标、`step()` 同一帧又施加重力
+     * 并把它挪走，两个东西抢同一个球；加上"撞到她就被踢"，就成了乱弹。
+     * 实测推演（离线跑真物理）：拖动中 `vy` 被每帧叠加到 **-335**，松手时这些速度全留着 → 乱飞。
+     * 现在拖住的时候不出物理、也不判碰撞；松手后由 `drag()` 留下的、**按位移算出来的**速度接手。
+     */
+    if (st.dragging) { st.vx = 0; st.vy = 0; st.resting = false; return; }
 
     /**
      * **静止 = 完全不动**：不受重力、不出声、位置锁在地面上。
@@ -258,21 +303,41 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
   }
 
   let lastDragAt = 0;
+  /**
+   * 最近几次指针采样（时间 + 位置）。
+   *
+   * **为什么不用"上一帧的位移"**：用户松手前常常会**停一下再松开**，那时最后一帧的位移是 0，
+   * 算出来就是"丢不出去"（实测反馈："松手的瞬间有关系，有时能丢出去"）。
+   * 所以速度取**最近一个短窗口（~100ms）的整体位移**：停手再松 → 速度自然衰减到很小（轻轻放下），
+   * 边动边松 → 用这一段真实的甩动速度丢出去。
+   */
+  const samples = [];
+  const pushSample = (x, y, now) => {
+    samples.push({ x, y, t: now });
+    while (samples.length > 3 && now - samples[0].t > 100) samples.shift();
+  };
+  /** 最近 100ms 的平均速度（px/s）。不足两个采样、或时间太短就给 0。 */
+  const velocityNow = (now) => {
+    if (samples.length < 2) return { vx: 0, vy: 0 };
+    const a = samples[0], b = samples[samples.length - 1];
+    const dt = (b.t - a.t) / 1000;
+    if (dt < 0.015) return { vx: 0, vy: 0 };
+    return { vx: (b.x - a.x) / dt, vy: (b.y - a.y) / dt };
+  };
 
-  /** 拖着球走：跟手，速度从手的位移算出来（松手就飞出去）。dt 由这里自己算（调用处拿不到帧的 dt）。 */
+  /** 拖着球走：位置完全跟着指针，**物理这一帧由 `step()` 跳过**（`st.dragging`）。 */
   function drag(x, y) {
     if (!st.on) return;
     st.resting = false;                    // 一拖就"醒过来"（静止分支会跳过物理）
     st.dragging = true;
     const now = performance.now();
-    const dt = Math.min(.05, Math.max(1 / 240, (now - lastDragAt) / 1000));
-    lastDragAt = now;
     const ny = Math.min(y, stage.bounds().floorY - R);
-    st.vx = (x - st.x) / dt;
-    st.vy = (ny - st.y) / dt;
+    pushSample(x, ny, now);
+    const v = velocityNow(now);
     // 甩得太狠就夹一下：不然松手那一下球会瞬间飞出屏幕
-    const sp = Math.hypot(st.vx, st.vy);
-    if (sp > 1400) { st.vx *= 1400 / sp; st.vy *= 1400 / sp; }
+    const sp = Math.hypot(v.vx, v.vy);
+    const k = sp > 900 ? 900 / sp : 1;
+    st.vx = v.vx * k; st.vy = v.vy * k;
     st.x = x; st.y = ny;
     st.spinV = st.vx / R;
     st.since = 0;

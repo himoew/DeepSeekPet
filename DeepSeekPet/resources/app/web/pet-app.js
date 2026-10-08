@@ -1536,7 +1536,9 @@ function writePointer(now) {
 const UI_SELECTOR = '.bubble:not([hidden]), .menu:not([hidden]), .tools:not([hidden])';
 const overUi = (e) => e.target.closest && e.target.closest(UI_SELECTOR);
 /** 拖着球走的状态（球不是她，所以不碰 pet-core 那套拖拽）。 */
-const ballDrag = { on: false };
+const ballDrag = { on: false, at: null };
+/** 开始 / 结束拖球：**同时**告诉球（帧率与物理都要看它）。 */
+const setBallDrag = (on) => { ballDrag.on = on; ball.setDragging(on); if (!on) ballDrag.at = null; };
 document.addEventListener('pointermove', (e) => {
   pointerSeen = true;
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
@@ -1555,8 +1557,9 @@ document.addEventListener('pointermove', (e) => {
   // 鼠标停在球上：手型给 grab（"可以拨它"），并且让窗口接鼠标
   const onBall = ball.hitTest(p.x, p.y);
   if (onBall && !ctl.pressing) stage.style.cursor = 'grab';
-  // 拖着球走：球跟手（速度也从手的位移算出来，松手就飞出去）。dt 由球自己算（这里拿不到帧的 dt）
-  if (ballDrag.on) ball.drag(p.x, p.y);
+  // 拖动由 **stage 那一层**的监听负责（指针被 stage 捕获，事件不冒泡到 document），
+  // 这里只记一下位置，供其它逻辑参考。
+  if (ballDrag.on) ballDrag.at = p;
   const hit = ctl.hitPet(p) || onBall, ui = !!overUi(e);
   diag.move = { at: performance.now(), type: e.pointerType, x: Math.round(p.x), y: Math.round(p.y), hit, ui };
   diag.types.add(e.pointerType);
@@ -1592,8 +1595,13 @@ stage.addEventListener('pointerdown', (e) => {
   closeMenu();
   // **球优先**：点在球上就是拨球，不惊动她（她自己碰到球才算踢）
   if (ball.hitTest(e.clientX, e.clientY)) {
-    ballDrag.on = true;
-    ball.setDragging(true);        // 拖球期间按 60fps（否则静止帧率 30fps，抓着像卡住）
+    setBallDrag(true);
+    /**
+     * ⚠️ **必须在这一层再挂一个 pointermove/pointerup**：
+     * 一旦 `setPointerCapture`，指针事件**只派发给被捕获的 `stage`，不再冒泡到 `document`**，
+     * 而拖动原本只挂在 `document` 上 —— 于是"球只在按下/松手附近跟一下、中间全丢"，
+     * 松手时的速度也就时有时无（用户实测："丢不出去，时好时坏"）。
+     */
     stage.setPointerCapture(e.pointerId);
     e.preventDefault();
     return;
@@ -1612,7 +1620,25 @@ stage.addEventListener('pointerdown', (e) => {
   } : null;
   if (ctl.pointerDown({ x: e.clientX, y: e.clientY }, { grab })) { stage.setPointerCapture(e.pointerId); e.preventDefault(); }
 });
-const up = () => { ballDrag.on = false; ball.setDragging(false); ctl.pointerUp(); stage.style.cursor = ''; };
+const up = () => { setBallDrag(false); ctl.pointerUp(); stage.style.cursor = ''; };
+// 被捕获的指针事件只到这里（不冒泡到 document），所以球在这一层也要跟手、也在这一层松手
+stage.addEventListener('pointermove', (e) => {
+  if (!ballDrag.on) return;
+  ball.drag(e.clientX, e.clientY);
+  ballDrag.at = { x: e.clientX, y: e.clientY };
+});
+/**
+ * 松手：**用按下-移动这一段里最后一次真实位移算出来的速度**去丢。
+ * 这里再补一次 `drag()`（用最后那个点），并且**只有在指针真的动过时才丢** ——
+ * 只是点一下球（没有位移）就当作"拨了一下"，不让它凭空飞出去。
+ */
+stage.addEventListener('pointerup', () => {
+  if (!ballDrag.on) return;
+  const at = ballDrag.at;
+  setBallDrag(false);
+  ball.setDragging(false);
+  if (at) ball.drag(at.x, at.y);
+});
 /**
  * Most milliseconds a drop on another display waits for the page to take the window's new size
  * (within a pixel: fractional scales round it). The size normally arrives a frame or two after

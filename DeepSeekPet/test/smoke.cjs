@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
+const { pathToFileURL } = require('node:url');
 
 // 必须在 require 应用模块之前：llm.cjs 和 log.cjs 在加载时就决定各自的目录，
 // pet.cjs 也在这时读「自动说话」的间隔。
@@ -416,7 +417,73 @@ function stubModel() {
       /else if \(Math\.abs\(st\.vy\) <= REST_VY/.test(ballSrc) && /st\.resting = true;/.test(ballSrc));
     // 帧率：球在动 / 正被拖着时必须按 60fps（原来只有 30fps，抓着像卡住）
     ok('玩具球：在动或被拖着时按 60fps（"抓球很卡"的修法）',
-      /ball\.busy/.test(appSrc) && /get busy\(\)/.test(ballSrc) && /ball\.setDragging\(true\)/.test(appSrc));
+      /ball\.busy/.test(appSrc) && /get busy\(\)/.test(ballSrc) && /setBallDrag|ball\.setDragging\(/.test(appSrc));
+
+    /* ---------- 2g-2. 玩具球：把它真跑起来（动态检查 + 物理推演） ---------- */
+    /**
+     * 静态检查证明不了"画出来了"，也证明不了"拖着不乱弹"。所以这里用最小 DOM 桩
+     * **把 `web/ball.js` 真的 import 起来跑**：
+     *   ① 构造时只用 `createElementNS`（**`innerHTML` 在 SVG 元素上按 HTML 解析，
+     *      `<circle>` 会落进 HTML 命名空间 → 元素在 DOM 里但一个像素都不画**，这个坑实测踩过）；
+     *   ② 落地后 6 秒内必须**停稳**（不是每帧都在弹）；
+     *   ③ 拖着的一秒里不许有速度残留（"抓住拖动一直乱弹直到飞走"就是这么来的）。
+     */
+    const nsCalls = [];
+    const fakeEl = () => ({
+      attrs: {},
+      children: { length: 1 },
+      appendChild() {},
+      setAttribute(k, v) { this.attrs[k] = v; },
+      getAttribute(k) { return this.attrs[k]; },
+      querySelector() { return null; },
+      getBoundingClientRect: () => ({ width: 0, height: 0 }),
+      set innerHTML(v) { this._html = v; },
+      get innerHTML() { return this._html; },
+      parentNode: { appendChild() {} },
+    });
+    const hadDoc = Object.prototype.hasOwnProperty.call(globalThis, 'document');
+    const hadHost = Object.prototype.hasOwnProperty.call(globalThis, 'petHost');
+    globalThis.document = { createElementNS: (ns, tag) => { nsCalls.push(ns); return fakeEl(); } };
+    globalThis.petHost = { report: () => {} };
+    try {
+      const { createBall } = await import(`${pathToFileURL(path.join(app, 'web', 'ball.js')).href}?smoke=${Date.now()}`);
+      const fakeG = fakeEl();
+      const ball = createBall({
+        fxG: fakeG, sfx: {},
+        stage: { bounds: () => ({ W: 1280, H: 760, floorY: 758, minX: 0, maxX: 1280 }), pet: () => ({ x: 100, faceVis: 1 }) },
+      });
+      // 挂载是**惰性**的：第一次开球才建元素（所以先 setOn 再断言）
+      ball.setOn(true, { fromLeft: false });
+      ok('玩具球：SVG 元素用 createElementNS 造（用 innerHTML 会画不出来）',
+        nsCalls.length >= 4 && nsCalls.every((n) => n === 'http://www.w3.org/2000/svg'));
+      for (let i = 0; i < 360; i += 1) ball.step(1 / 60);
+      ok('玩具球：落地后 6 秒内停稳（不再每帧弹一下）', ball.resting === true && ball.state.vx === 0 && ball.state.vy === 0);
+      // 拖着走一秒：位置跟手、速度必须是 0（物理这一帧被跳过）
+      ball.setDragging(true);
+      let dx = ball.x;
+      for (let i = 0; i < 60; i += 1) { dx += 8 * Math.sin(i / 6); ball.drag(dx, 300 + i); ball.step(1 / 60); }
+      const mid = ball.state;
+      ok('玩具球：拖着的时候物理停手（位置跟手、没有速度残留）',
+        mid.dragging === true && mid.vx === 0 && mid.vy === 0);
+      ball.setDragging(false);
+      for (let i = 0; i < 30; i += 1) ball.step(1 / 60);
+      ok('玩具球：松手后它自己往下掉（回落到地面方向）', ball.state.y > 300);
+    /**
+     * **指针捕获之后，事件只到被捕获的元素**（不再冒泡到 `document`）。
+     * 拖动原本只挂在 `document` 上，于是"球只在按下/松手附近跟一下、中间全丢"，
+     * 松手的速度时有时无（用户实测："丢不出去，时好时坏"）。
+     * 所以 `stage` 那一层必须**自己**有 pointermove 与 pointerup。
+     */
+    ok('玩具球：stage 自己监听 pointermove（指针捕获后事件不冒泡到 document）',
+      /stage\.addEventListener\('pointermove'/.test(appSrc));
+    ok('玩具球：stage 自己监听 pointerup（在被捕获的那一层松手）',
+      /stage\.addEventListener\('pointerup'/.test(appSrc));
+    ok('玩具球：丢出去的速度按"最近 100ms 的位移"算（停一下再松手也能丢）',
+      /velocityNow/.test(ballSrc) && /100/.test(ballSrc.match(/const samples[\s\S]{0,600}/)?.[0] || ''));
+    } finally {
+      if (hadDoc) delete globalThis.document; else delete globalThis.document;
+      if (hadHost) delete globalThis.petHost; else delete globalThis.petHost;
+    }
 
     /* ---------- 2h. 页面代码里的"跨函数引用"（纯 Node 也能盯住的致命笔误） ---------- */
     /**
