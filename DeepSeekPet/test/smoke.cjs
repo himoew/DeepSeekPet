@@ -468,6 +468,10 @@ function stubModel() {
       ball.setDragging(false);
       for (let i = 0; i < 30; i += 1) ball.step(1 / 60);
       ok('玩具球：松手后它自己往下掉（回落到地面方向）', ball.state.y > 300);
+    ok('玩具球：球的外观是贴图 web/ball.png，而且那张图真的在',
+      fs.existsSync(path.join(app, 'web', 'ball.png'))
+      && /ball\.png/.test(ballSrc)
+      && fs.statSync(path.join(app, 'web', 'ball.png')).size > 4000);
     /**
      * **指针捕获之后，事件只到被捕获的元素**（不再冒泡到 `document`）。
      * 拖动原本只挂在 `document` 上，于是"球只在按下/松手附近跟一下、中间全丢"，

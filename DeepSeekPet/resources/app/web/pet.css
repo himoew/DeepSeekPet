@@ -188,12 +188,11 @@ body.desk .floor{display:none}
 @keyframes trail-bob{50%{transform:translateY(-3px)}}
 
 /* ---------- 玩具球（web/ball.js 画进 #fx 那一层） ---------- */
-/* 它是个**篮球**：颜色与立体感都在这里 + ball.js 内的径向渐变，不跟她的配色走。 */
+/* 外观是一张贴图：`web/ball.png`（由用户给的球抠成透明 PNG，见 tools/make-ball-texture.py）。
+   想换球就换那张图；颜色不跟她的配色走。 */
 .toy-ball{pointer-events:none}
 .toy-ball-shadow{fill:rgba(0,0,0,.30)}
-.toy-ball-body{stroke:none}
-.toy-ball-seam{fill:none; stroke:#4a2a12; stroke-width:1.1; stroke-linecap:round; opacity:.9}
-.toy-ball-gloss{fill:#fff; opacity:.42}
+.toy-ball-pic{pointer-events:none}
 
 /* context menu: the bot and its run controls on top, the actions as icon tiles below */
 .menu{

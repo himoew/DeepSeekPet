@@ -95,30 +95,21 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
     return el;
   };
 
-  /** 篮球的立体感靠一个**径向渐变**（左上偏亮），不是靠描边 —— 描边在小尺寸下会糊成一团。 */
+  /**
+   * 球的外观：**直接用一张贴图**（`web/ball.png`，由用户给的图抠出来的，
+   * 见 `tools/make-ball-texture.py`）。
+   *
+   * 为什么不再自己拼：第一版用"圆 + 缝线 + 高光"手画，13px 半径下糊成一团、
+   * 还被说像鸡蛋。贴图一次到位，想换球只要换那张 PNG。
+   * **注意用 `<image>` 而不是给 SVG 元素赋 `innerHTML`**（那条路会落进 HTML 命名空间、画不出来）。
+   */
   function buildBall() {
-    const NS = 'http://www.w3.org/2000/svg';
-    const grad = document.createElementNS(NS, 'radialGradient');
-    grad.setAttribute('id', 'toyBallGrad');
-    grad.setAttribute('cx', '34%'); grad.setAttribute('cy', '30%'); grad.setAttribute('r', '78%');
-    const stops = [['0%', '#FFB061'], ['55%', '#EF8F31'], ['100%', '#C4671A']];
-    for (const [off, color] of stops) {
-      const s = document.createElementNS(NS, 'stop');
-      s.setAttribute('offset', off); s.setAttribute('stop-color', color);
-      grad.appendChild(s);
-    }
-    ballEl.appendChild(grad);
-    // 球体（渐变填充，没有描边）
-    ballEl.appendChild(mk('circle', { class: 'toy-ball-body', r: R, fill: 'url(#toyBallGrad)' }));
-    // 篮球缝线：一条竖线 + 两条侧弧（细、圆头，缩得再小也看得出是篮球）
-    ballEl.appendChild(mk('path', {
-      class: 'toy-ball-seam',
-      d: `M0 ${-R}V${R}`
-        + `M${-R * .60} ${-R * .82}a${R * 1.25} ${R} 0 0 0 0 ${R * 1.64}`
-        + `M${R * .60} ${-R * .82}a${R * 1.25} ${R} 0 0 1 0 ${R * 1.64}`,
+    ballEl.appendChild(mk('image', {
+      class: 'toy-ball-pic',
+      href: '/web/ball.png',
+      x: -R, y: -R, width: R * 2, height: R * 2,
+      preserveAspectRatio: 'xMidYMid meet',
     }));
-    // 左上高光
-    ballEl.appendChild(mk('ellipse', { class: 'toy-ball-gloss', cx: -R * .30, cy: -R * .40, rx: R * .30, ry: R * .18, transform: 'rotate(-35)' }));
   }
 
   function mount() {
@@ -137,11 +128,12 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
      * 现在连**画出来没有**一起报：直角坐标宽高、子节点数、以及实际用的填充色。
      */
     const box = root.getBoundingClientRect ? root.getBoundingClientRect() : { width: -1, height: -1 };
-    // 读**球体那一个圆**的填充（不是渐变定义节点 —— 读错了会显示成 rgb(0,0,0)，白排查一轮）
-    const body = ballEl.querySelector ? ballEl.querySelector('.toy-ball-body') : null;
-    const fill = body && body.getAttribute ? (body.getAttribute('fill') || 'none') : '?';
+    // 读**贴图那个 `<image>`** 的参数（不是渐变定义节点 —— 读错会白排查一轮）
+    const pic = ballEl.querySelector ? ballEl.querySelector('image') : null;
+    const href = pic ? (pic.getAttribute('href') || pic.getAttribute('xlink:href') || '?') : '?';
     report(`[玩具球] 已挂到 #fx · 父节点=${fxG.id || fxG.tagName} · 子节点=${fxG.children.length}`
-      + ` · 球的盒子=${Math.round(box.width)}x${Math.round(box.height)} · 球体半径=${body ? body.getAttribute('r') : '?'} · fill=${fill}`);
+      + ` · 球的盒子=${Math.round(box.width)}x${Math.round(box.height)} · 贴图=${href}`
+      + ` · 尺寸=${pic ? pic.getAttribute('width') + 'x' + pic.getAttribute('height') : '?'}`);
   }
 
   function place({ fromLeft } = {}) {
