@@ -831,7 +831,9 @@ export function createPet(els, opts) {
       case 'walk': case 'run': {
         const run = m === 'run', d = pet.target - pet.x, dist = Math.abs(d), dir = Math.sign(d) || pet.facing;
         pet.facing = dir;
-        // 快慢跟心情走（`mood.speed`：开心 1.35 倍、困了 0.7 倍）。步伐的节奏是从
+        // 快慢跟心情走，但**只有 ±10%**（`mood.speed`：开心 1.1 倍、困了 0.9 倍，见 mood.cjs）。
+        // 幅度收这么小是有原因的：走路是每帧都看得见的量，缩放 `vMax` 时位移先变、步伐节奏
+        // 后跟，差得多就像穿溜冰鞋。步伐的节奏是从
         // `pet.speed / vMax` 算出来的，所以缩放 `vMax` 一起变——不会出现"滑步"。
         const vMax = (run ? 250 : 78) * mood.speed;
         const vT = Math.min(vMax, run ? dist * 4 + 20 : dist * 3 + 14);

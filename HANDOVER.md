@@ -129,6 +129,44 @@
 
 ---
 
+## 1.25 心情的速度影响收到 ±10%（2026-10-08 第三批）
+
+**用户要的**（原话）：「微表情效果表现还不错，但是**心情里的加速显得手感很滑**，先修改一下让速度影响
+改为**最大 10%** 也就是 1.1 倍速或 0.9 倍速」。
+
+### 改了什么
+
+| 在哪 | 之前 | 现在 |
+|---|---|---|
+| `mood.cjs` | `MOVE_MIN = 0.7` / `MOVE_MAX = 1.35`（±35%） | **`MOVE_MIN = 0.9` / `MOVE_MAX = 1.1`**（±10%） |
+| `mood.cjs` 的 `snapshot().speed` | `MIN + (MAX-MIN) * energy`（energy=.6 时 ≈1.29） | **`1 + (energy - 0.5) * (MAX-MIN)`**：**中位正好 1.0**，只有明确的开心/困倦才差那 10% |
+| `pet-core.js` 的走路 | `vMax = (run ? 250 : 78) * mood.speed` | 同一行，但倍率小了；注释里写清"为什么必须小" |
+| 自检 | 断言 `0.5~1.4` | 断言 **`0.85~1.15`** |
+
+**为什么是 10%**：走路是**每帧都看得见**的量，而 `vMax` 缩放的是**位移**、步伐节奏是从
+`pet.speed / vMax` 反推的 —— 差得多时"位移先变、节奏后跟"，看着就像穿溜冰鞋。
+±35% 实测就是"滑"。这条幅度**是故意压小的**，以后要调先想这一点。
+
+### ★ 顺带发现的一件事（比这次改动本身更重要）
+
+用户当前那份 `data\pet-mood.json` 里 **`energy = 0`**：
+
+```json
+{ "love": 0.995, "energy": 0, "state": "happy", ... }
+```
+
+而且 `state` 是 `happy` 不是 `tired` —— 这正是第 1.24 节末尾（第二批优化发现）记的那条：
+`compute()` 把 `love > MID` 放在 `energy < 0.36` **前面**，所以"喜欢你就不困"，
+`tired` 这一档在 0.995 的 love 下**永远不可达**；再叠上夜间 `byHour = -0.0006/秒`（−2.16/小时），
+傍晚之后 `energy` 必然贴到 0。
+
+**这跟"滑"是同一件事的两面**：速度范围收到 ±10% 之后，`energy` 贴地也只会让她慢一成，
+**不会再出现"她明显变慢/变快"那种突兀感**；但 `energy` 贴地这件事本身还在，值得单独权衡
+（要不要给 `energy` 一个地板、要不要让 `tired` 在 love 高时也有机会）——
+那是**玩法决策，得问用户**，不要自己动。
+
+---
+
 ## 1.24 稳健性修复与清理（2026-10-08 第二批）
 
 **用户的原话**：「先按 a 进程范围修复，然后清理过时文档与死代码，整理交接文件，最后补充性修复 C」。
@@ -1364,7 +1402,7 @@ git push -u origin main
 | ① | `lines.cjs` 新增 `mood.{clingy,happy,quiet,tired,lonely}`（共 14 条） | 发呆 / 犯困**优先说当前心情那几句** |
 | ② | `pet.cjs` 的 `moodPick(state, fallback)` | 挑法就一行：`next(lines.mood?.[state.moodState]) \|\| next(fallback)` —— 桶空/键写错就**静默退回**原来那套，所以这几个桶可以不写、可以慢慢加 |
 | ③ | `pet.cjs` 的 `stepMood()` → `{t:'prefs', mood}` | 只在**档位真的换了**时发（不是每 30 秒都发） |
-| ④ | `web\pet-app.js` 的 `applyPrefs` → `ctl.setMood()` | `pet-core.js` 新增 `setMood`，**只影响两个数**：`mood.cling`（「黏着你」够近的门槛 240→90px）和 `mood.speed`（走路 `vMax` 的倍率 0.7~1.35） |
+| ④ | `web\pet-app.js` 的 `applyPrefs` → `ctl.setMood()` | `pet-core.js` 新增 `setMood`，**只影响两个数**：`mood.cling`（「黏着你」够近的门槛 240→90px）和 `mood.speed`（走路 `vMax` 的倍率，**现在只有 0.9~1.1**，见 1.25） |
 | ⑤ | `pet.cjs` 的 `contextLine` | 【此刻】里多一句「你现在心情黏人」，本地 3B 也能说出来 |
 | ⑥ | `settings.cjs` / `settings-preload.cjs` / `web\settings.html` | 设置页「它的记忆」卡片头上显示「现在的心情」：`黏人（喜欢 82 · 精神 61）· 动作 1.3× · 黏你 110px` |
 | ⑦ | `pet.cjs` 的 `idleDelay()` / `fidget()` | 发呆间隔按 `1 / mood.speed` 缩放（开心时更爱动，困了更蔫） |
@@ -1392,7 +1430,7 @@ git push -u origin main
 ### 留给下一个人的调参地图
 
 - **太黏 / 不够黏**：`mood.cjs` 的 `snapshot().cling = 240 - love*150`（一条式子，改它）。
-- **动作太快 / 太慢**：`MOVE_MIN=0.7` / `MOVE_MAX=1.35`；只想改走路就动 `pet-core.js` 的 `vMax`。
+- **动作太快 / 太慢**：`MOVE_MIN=0.9` / `MOVE_MAX=1.1`（**故意压到 ±10%**，见 1.25；再大就会"滑"）；只想改走路就动 `pet-core.js` 的 `vMax`。
 - **心情变太快 / 太慢**：`PULL`（回归）、`EVENT` 里各项的加减；"你不在时掉多快"是 `AWAY_PULL`
   和 `tick()` 里 `away` 那一行的 `* 30`。
 - **档位分界线**：`compute()`；**换档的黏滞**是 `LATCH`。

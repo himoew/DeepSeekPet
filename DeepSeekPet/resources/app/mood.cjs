@@ -59,8 +59,20 @@ const MID = 0.62;
 /** 心情档的中文名（`contextLine` 和日志用）。 */
 const LABEL = { clingy: '黏人', happy: '开心', quiet: '安静', tired: '困倦', lonely: '想你' };
 
-const MOVE_MIN = 0.7;    // energy=0 时的倍率：动作、走路、发呆间隔都拉长到 1/0.7
-const MOVE_MAX = 1.35;   // energy=1 时
+/**
+ * 动作/走路/发呆间隔的倍率范围：**只给 ±10%**。
+ *
+ * 一开始给的是 0.7~1.35（±35%），实测**走路明显"滑"**——`pet-core` 是按
+ * `vMax * mood.speed` 缩放的，位移一变快、步伐节奏来不及跟，看着就像穿溜冰鞋。
+ * 走路这种"每一帧都看得见"的量，超过一成就会觉得脚底打滑；台词和距离那几项本来就钝，
+ * 所以统一收到 ±10%（中位仍是 1.0，"平常"的手感完全不变）。
+ *
+ * `MOVE_MID` 是"速度正好 1.0"对应的 energy：不特别高兴也不特别累时就是**原速**，
+ * 只有明确的开心 / 困倦才差出那 10%。
+ */
+const MOVE_MIN = 0.9;    // energy=0（很没精神）：慢一成
+const MOVE_MAX = 1.1;    // energy=1（精神很足）：快一成
+const MOVE_MID = 0.5;    // = 1.0 倍对应的 energy
 /** 档位只在明确跨过一条线时才换（上面那组阈值 + 0.015 的滞后），免得在边缘抖来抖去。 */
 const LATCH = 0.015;
 
@@ -194,8 +206,11 @@ function snapshot() {
     label: LABEL[d.state] || '安静',
     /** 离"平常"有多远（0..1）：台词可用它决定要不要说重话。 */
     intensity: +Math.max(Math.abs(d.love - 0.6), Math.abs(d.energy - 0.6) * 0.6).toFixed(3),
-    /** 动作/走路/发呆快慢的倍率，页面直接用（见 pet-app.js 的 ctl.setMood）。 */
-    speed: +(MOVE_MIN + (MOVE_MAX - MOVE_MIN) * d.energy).toFixed(3),
+    /**
+     * 动作/走路/发呆快慢的倍率，页面直接用（见 pet-app.js 的 `ctl.setMood`）。
+     * **以 `MOVE_MID` 为 1.0**：精神半满 = 原速，很没精神 = 0.9，精神很足 = 1.1。
+     */
+    speed: +(1 + (d.energy - MOVE_MID) * (MOVE_MAX - MOVE_MIN)).toFixed(3),
     /** 「黏着你」那一档离光标多近才算"已经在旁边"（px）。 */
     cling: Math.round(240 - d.love * 150),
     file: FILE,

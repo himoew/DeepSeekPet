@@ -277,8 +277,9 @@ function stubModel() {
     ok('心情：推到极端也不会跑出 0~1', floored.love >= 0 && floored.energy >= 0 && floored.energy <= 1);
     ok('心情：喜欢和精力都垮了就是"困倦"那一档', floored.state === 'tired');
     ok('心情：档位有全部五种', ['clingy', 'happy', 'quiet', 'tired', 'lonely'].every((k) => !!mood.LABEL[k]));
-    ok('心情：动作倍率在 0.5~1.4 之间（不会变成慢动作或者抽搐）',
-      mood.snapshot().speed >= 0.5 && mood.snapshot().speed <= 1.4);
+    // 心情只给**很小的**速度差（±10%）：走路这种每帧都看得见的量，超过一成就像穿溜冰鞋
+    ok('心情：动作倍率收在 ±10% 以内（0.9~1.1，中位 1.0）',
+      mood.snapshot().speed >= 0.85 && mood.snapshot().speed <= 1.15);
     mood.forget();
     // 两个"基准值"：平常（love=energy=.6）的时候，它离你多远算够近、动作倍率是多大
     const clingCalm = mood.snapshot().cling;
