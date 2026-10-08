@@ -123,12 +123,14 @@ async function handle(req, res) {
 
 function startServer() {
   const server = http.createServer((req, res) => {
-    try {
-      handle(req, res);
-    } catch (err) {
+    // `handle` 是 async（试听那条路要 await 合成）：**必须在这里把 Promise 接住**。
+    // 原来只有一个同步 try/catch，`await` 之后的抛错会变成 unhandledRejection ——
+    // main.cjs 会因此记一行 `FATAL 未处理的 Promise 拒绝`（看着像启动崩了），
+    // 而请求那头一直没有响应、干挂着。
+    handle(req, res).catch((err) => {
       log.warn(`请求出错 ${req.url}:${err.message}`);
       try { fail(res, 400, 'bad request'); } catch { /* already answered */ }
-    }
+    });
   });
 
   const wss = new WebSocketServer({ noServer: true });

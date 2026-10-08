@@ -102,17 +102,15 @@ export const CHANNEL_DEFAULT = { head: { main: 'body', acc: 'eye' }, side: { mai
 // side and neck pieces lie on top of the body outline: mapping them to the body color would make them vanish
 export const NO_BODY = { head: false, side: true, glasses: false, neck: true };
 // character pieces carry their original colors; picking one fills its channels, which stay editable afterwards
-export const ITEM_COLORS = {
-  sailor: { main: 'body', acc: 'navigator' },
-  feather: { main: 'holo', acc: 'navigator' },
-  headphones: { main: 'claude', acc: 'holo' },
-};
-export const ROLES = {
-  cat: ['main'], bear: ['main'], bunny: ['main'], antenna: ['main', 'acc'], halo: ['acc'],
-  tophat: ['main', 'acc'], party: ['main', 'acc'], round: ['main'], square: ['main'], monocle: ['main'],
-  bowtie: ['main'], bell: ['main', 'acc'], scarf: ['main'], sailor: ['main', 'acc'],
-  headphones: ['main', 'acc'], feather: ['main', 'acc'], earring: ['main'], clip: ['main'], bow: ['main'],
-};
+/*
+ * 上游这里还有 `ITEM_COLORS` / `ROLES`（装扮页用：每件饰品占哪几个颜色通道）。
+ * 本 fork **没有装扮页**（改成 `dress.cjs` + 服装清单那套），`wear()` 也因此没有任何调用点，
+ * 所以 2026-10-08 的清理里把这三个死导出连同 `wear()` 一起删了 —— 留着会让读代码的人
+ * 以为装扮由这里驱动。
+ *
+ * ⚠️ **只删了"零引用的导出"**；上游那些"从不触发但活着"的功能路径（语音输入、屏幕取色…）
+ * 一律保留，理由见 HANDOVER 第 4 节（动它们等于自己维护一个 fork）。
+ */
 
 const mount = (a, r = 96) => `translate(${pt(pol(a, r))}) rotate(${f(90 - a)})`;
 const stroke = (cls, w) => `class="${cls}" fill="none" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"`;
@@ -227,7 +225,6 @@ export const FACES = {
   thinking:  { label: '思考', f: t => ({ gap: [46, 46], eyes: [ring({ rx: 14, ry: 15, dx: 3, dy: -4 }), ring({ rx: 14, ry: 15, dx: 3, dy: -4 })], think: true }) },
   run:       { label: '冲刺', f: t => { const g = 55 + 4 * Math.sin(t * 16); return { gap: [g, g], eyes: [ring(), ring()], sweat: true }; } },
 };
-export const GALLERY = ['neutral', 'happy', 'wink', 'love', 'shy', 'surprised', 'angry', 'sad', 'sleepy', 'sleep', 'dizzy', 'dragged'];
 
 /** One frame of the figure as SVG markup, in logo units. */
 export function figure(fc, o) {
@@ -317,13 +314,6 @@ export function normalizeSkin(raw) {
     if (validColor(slot, v)) skin.colors[slot][ch] = v;
   }
   return skin;
-}
-/** Picking an item: fills the character colors of pieces that carry them. */
-export function wear(skin, slot, id) {
-  const next = { ...skin, colors: JSON.parse(JSON.stringify(skin.colors)) };
-  next[slot] = id;
-  if (ITEM_COLORS[id]) Object.assign(next.colors[slot], ITEM_COLORS[id]);
-  return next;
 }
 function channelValue(skin, slot, ch, dark) {
   const v = skin.colors[slot][ch];
@@ -554,8 +544,11 @@ export function createSfx({ storageKey = 'cortico-pet.sound.v1', volume = .55 } 
 /* ---------- actions the pet can be asked to do ---------- */
 /** Expressions: a face held for a few seconds. */
 export const EXPRESSIONS = ['neutral', 'happy', 'wink', 'love', 'shy', 'surprised', 'angry', 'sad', 'sleepy', 'thinking'];
-/** Motions: things the body does. `sit` and `sleep` last until something else happens. */
-export const MOTIONS = ['stand', 'jump', 'hop', 'look', 'turn', 'nod', 'shake', 'spin', 'sit', 'sleep', 'dizzy', 'walk', 'run'];
+/**
+ * 动作（motions）的**唯一出处是 `pet-app.js` 的 `DUR` 表**（名字 → 持续秒数），
+ * 服务端那边是 `pet.cjs` 注释里那份名单。上游原来在这里还导出一份 `MOTIONS` 数组，
+ * 三处各写一遍、没有任何引用 —— 2026-10-08 清理时删掉，免得以后改动作只改一处。
+ */
 /** Body modes in which the figure travels across the stage or squashes fast. */
 const MOVING_MODES = new Set(['drag', 'air', 'crouch', 'land', 'walk', 'run']);
 
@@ -595,7 +588,7 @@ export function createPet(els, opts) {
     pulse: null, walkId: 0, listening: false, thinking: false, placed: false,
   };
   const pointer = { x: -1e4, y: -1e4, inside: false, vx: 0, samples: [] };
-  let press = null, strokeAcc = 0, petCool = 0;
+  let press = null;
   /** 页面每 100ms 喂一次全屏光标位置（`setGaze`）——它不在这块窗口上时也能知道鼠标在哪儿。 */
   let gaze = null;
   /**
@@ -1045,8 +1038,6 @@ export function createPet(els, opts) {
       if (fc.emit === 'z') { emit('z', toStage(A.z[0], A.z[1] + pet.low), { vx: pet.facing * 16, vy: -26, life: 2.4 }); pet.emitAt = T + 1.3; sfx.snore(pet.modeT); }
       if (fc.emit === 'tear') { emit('drop', toStage(A.tear[0] + pet.look[0], A.tear[1] + pet.low), { vx: pet.facing * rnd(10, 30), vy: -20, life: 3 }); pet.emitAt = T + .8; }
     }
-    strokeAcc *= Math.exp(-dt * 1.5);
-    petCool -= dt;
 
     for (let i = P.length - 1; i >= 0; i--) {
       const p = P[i];
@@ -1175,7 +1166,6 @@ export function createPet(els, opts) {
   /** Returns the cursor the stage should show. */
   function pointerMove(p) {
     const now = performance.now();
-    const ddx = p.x - pointer.x, ddy = p.y - pointer.y;
     Object.assign(pointer, p, { inside: true });
     pointer.samples.push({ t: now, x: p.x, y: p.y });
     while (pointer.samples.length > 2 && now - pointer.samples[0].t > 110) pointer.samples.shift();
@@ -1196,16 +1186,13 @@ export function createPet(els, opts) {
     }
     if (press) return 'grabbing';
     const over = hitPet(p);
-    if (over && ['idle', 'look', 'sit', 'sleep'].includes(pet.mode)) {
-      strokeAcc += Math.hypot(ddx, ddy);
-      if (strokeAcc > 320 && petCool <= 0) {
-        strokeAcc = 0; petCool = 2.5;
-        sfx.purr();
-        if (pet.mode === 'sleep') emitHeart();
-        else setExpr(Math.random() < .5 ? 'love' : 'shy');
-        onEvent('touch', { kind: 'pet', asleep: pet.mode === 'sleep' });
-      }
-    }
+    // **"蹭"的判定不在这里，别再搬回来。**
+    // 上游那套（累计位移 `strokeAcc > 320` 才反应一次，而且累计值每帧按 `exp(-dt*1.5)` 衰减）
+    // 实测人手舒服的 0.5–1.5Hz 抚摸**永远触发不了**，要每秒来回搓三次才行。
+    // 现在整段判定在 `web\pet-app.js` 的 STROKE 引擎里（往复判定 + 连续反馈 + 三段递进 +
+    // 睡着时"做梦"那条），这里只保留命中判定（它同时决定窗口什么时候接鼠标）。
+    // 两套一起跑过：一次抚摸会发出**两条** touch（一条没有 `stage`）、呼噜响两遍、
+    // 表情互相覆盖，World 那边还会多记一次互动（多涨好感、提前把选择卡问出来）。
     return over ? 'grab' : '';
   }
   function pointerUp() {

@@ -19,6 +19,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const log = require('./log.cjs');
+const store = require('./store.cjs');
 
 const CONFIG_DIR = process.env.DSP_CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'settings.json');
@@ -69,6 +70,13 @@ function defaults() {
   };
 }
 
+/**
+ * 上一次 `load()` 是不是"文件在、但读不动"（半截 JSON、编码坏了…），`save()` 靠它决定
+ * 要不要先把旧文件留一份 —— 详见下面 `save()` 的注释。
+ * `ENOENT`（第一次运行）不算：那本来就该用默认值。
+ */
+let loadError = null;
+
 /** 端点在不在本机（决定要不要发 keep_alive 这种 Ollama 私有字段）。 */
 function isLocal(cfg = load()) {
   return cfg.preset === 'ollama'
@@ -84,18 +92,46 @@ function load() {
     // 见到 BOM 就报错。**这一点很危险**——读配置失败会退回默认值，紧接着一次 `save()`
     // 就会把用户的真实设置覆盖掉（实测踩过，靠备份救回来的）。
     const raw = fs.readFileSync(CONFIG_FILE, 'utf8').replace(/^[\uFEFF\s]+/, '');
-    return { ...defaults(), ...JSON.parse(raw) };
+    const cfg = { ...defaults(), ...JSON.parse(raw) };
+    loadError = null;
+    return cfg;
   } catch (err) {
-    if (err.code !== 'ENOENT') log.warn(`config\settings.json 读不了（用默认值）:${err.message}`);
+    if (err.code === 'ENOENT') { loadError = null; return defaults(); }   // 第一次运行：本来就没有文件
+    loadError = err;
+    log.warn(`config\settings.json 读不了（用默认值）:${err.message}`);
     return defaults();
   }
 }
 
-/** 存配置：只覆盖传进来的字段。 */
+/**
+ * 存配置：只覆盖传进来的字段。
+ *
+ * 两道保险，都是被真实事故逼出来的（见 HANDOVER 第 8 节 18）：
+ *
+ * 1. **读不动的旧文件先留一份**：`load()` 读失败会退回默认值，而紧接着的保存会拿这份默认值
+ *    去覆盖 —— 用户填的 Key / 人设 / 模型就这么静默没了。所以只要上一次 `load()` 是
+ *    "文件在、但读不动"，就先把它改名成 `settings.json.bad-<时间>` 再写新的（东西还在，
+ *    自己打开就能捞回来）。
+ * 2. **原子写**（`store.writeJson`：先写 `.tmp` 再改名）。原来是直接覆写目标文件，
+ *    写到一半崩掉/掉电就留下半截 JSON —— 那正是第 1 条要处理的那种文件，等于自己制造事故。
+ *
+ * 写失败**抛错**（不是安静地算了）：设置页要能把"没保存上"显示给用户，
+ * `pet.cjs` 里那几个开关调用点本来就各自 try/catch 并记日志。
+ */
 function save(patch) {
   const next = { ...load(), ...patch };
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_FILE, `${JSON.stringify(next, null, 2)}\n`);
+  if (loadError) {
+    const bad = `${CONFIG_FILE}.bad-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    try {
+      fs.renameSync(CONFIG_FILE, bad);
+      log.warn(`配置读不动（${loadError.message}），原文件已留一份：${path.basename(bad)}`);
+      loadError = null;
+    } catch (err) {
+      log.warn(`想给读不动的配置留份备份，没成功:${err.message}`);
+    }
+  }
+  const bad = store.writeJson(CONFIG_FILE, next);
+  if (bad) throw new Error(`设置没能保存（${bad.message}）`);
   log.info(`设置已保存:${path.basename(CONFIG_FILE)}  enabled=${next.enabled} model=${next.model || '(空)'} keepAlive=${next.keepAlive || '(不发)'}`);
   return next;
 }

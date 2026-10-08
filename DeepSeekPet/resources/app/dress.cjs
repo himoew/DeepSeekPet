@@ -28,9 +28,9 @@
  * 而"她穿什么"更像"它自己的状态"（跟 `pet-pos.json` / `pet-mood.json` 一类），
  * 放在 `data\` 下、跟着 `DSP_LOG_DIR` 一起被隔离，自检就不会动到你真实的选择。
  */
-const fs = require('node:fs');
 const path = require('node:path');
 const log = require('./log.cjs');
+const store = require('./store.cjs');
 
 /** 跟 pet-pos.json / pet-mood.json 做邻居（`log.file` 认 `DSP_LOG_DIR`）。 */
 const FILE = path.join(path.dirname(log.file), 'dress.json');
@@ -60,8 +60,7 @@ let data = null;
 
 function load() {
   if (data) return data;
-  let raw = {};
-  try { raw = JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch { /* 第一次就是没有文件 */ }
+  const raw = store.readJson(FILE) || {};      // 第一次就是没有文件；坏了也一样（下面一律回原版）
   const base = blank();
   const wanted = typeof raw.current === 'string' ? byId(raw.current) : null;
   data = {
@@ -74,12 +73,9 @@ function load() {
 }
 
 function save() {
-  try {
-    fs.mkdirSync(path.dirname(FILE), { recursive: true });
-    fs.writeFileSync(FILE, `${JSON.stringify(load(), null, 2)}\n`);
-  } catch (err) {
-    log.warn(`服装没能存下来:${err.message}`);
-  }
+  // 原子写（先写 `.tmp` 再改名）：掉电/崩溃不会留下半截 JSON —— 见 store.cjs
+  const err = store.writeJson(FILE, load());
+  if (err) log.warn(`服装没能存下来:${err.message}`);
 }
 
 /** 现在穿的这一套（永远返回一个有效项）。 */

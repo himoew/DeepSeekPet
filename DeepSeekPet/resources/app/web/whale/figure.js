@@ -49,10 +49,12 @@ function loadImage(url) {
 
 /**
  * Loads the model and textures; resolves to a figure object for createPet's `opts.figure`.
- * `opts.raster` shows each frame as an SVG <image> copied from the canvas instead of the canvas itself (slower;
- * for pages that are screen-recorded, where a WebGL canvas inside SVG is not always in the capture).
  * `opts.scheme` picks a colour scheme (model.schemes; default the original); `opts.model` (model.json
  * already parsed) and `opts.asset(path)` (a texture's URL) are for pages that bundle the files.
+ *
+ * 上游这里还有一个 `opts.raster`（每帧把 canvas 转成 `<image>`，给"录屏抓不到 WebGL"的页面用）
+ * 和一个 `snapshot()`（离屏渲染若干帧出一张图）。两个在本 fork 里**零调用**，而 raster 那条路
+ * 每帧一次 `canvas.toDataURL()`（同步 GPU→CPU 回读 + PNG 编码）—— 2026-10-08 清理时删掉了。
  */
 export async function createWhaleFigure(base = new URL('./', import.meta.url), opts = {}) {
   const model = opts.model || await (await fetch(new URL('model.json', base))).json();
@@ -224,7 +226,17 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     thinking: 'sleep_mouth', run: ['happy_mouth', .7], angry: -1, sad: -1.2,
   };
 
+  /**
+   * 画这张脸。**整段包在 `save`/`restore` 里**：中途抛错（贴图少了、字段是 undefined…）
+   * 不会把 `globalAlpha` 和 save 栈永久留在那个 2D 上下文里 —— 那个泄漏的表现是
+   * "整张脸越来越淡"（比如 `brows_through` 留下的 alpha .4），而且不报任何错。
+   */
   function paintFace(fc, face, o, t) {
+    fg.save();
+    try { paintFaceBody(fc, face, o, t); } finally { fg.restore(); }
+  }
+
+  function paintFaceBody(fc, face, o, t) {
     fg.setTransform(1, 0, 0, 1, 0, 0);
     fg.clearRect(0, 0, FACE.w, FACE.h);
     paintBlush(fc.blush || 0);
@@ -266,6 +278,8 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
   /* ---------- mounting inside the pet's SVG group ---------- */
   const VIEW = model.view;
   let fo = null, canvas = null, fxG = null, rig = null, mountedIn = null, pxScale = 0, frameN = 0;
+  /** 上一次挂载失败的 `t`：`drawNow` 用它退避 2 秒，免得每帧重建 canvas/GL 上下文（见 mount）。 */
+  let mountFailT = null;
   function mount(petG) {
     petG.textContent = '';
     // the previous rig's GL context outlives its canvas until GC: release it or repeated
@@ -274,19 +288,28 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     rig = null;
     const box = (el) => { el.setAttribute('x', VIEW[0]); el.setAttribute('y', VIEW[1]); el.setAttribute('width', VIEW[2] - VIEW[0]); el.setAttribute('height', VIEW[3] - VIEW[1]); return el; };
     canvas = document.createElementNS('http://www.w3.org/1999/xhtml', 'canvas');
-    if (opts.raster) {
-      // each frame is copied into a plain SVG image: screenshots and recordings then always see it
-      fo = box(document.createElementNS(SVGNS, 'image'));
-    } else {
-      fo = box(document.createElementNS(SVGNS, 'foreignObject'));
-      canvas.style.cssText = 'width:100%;height:100%;display:block';
-      fo.appendChild(canvas);
-    }
+    fo = box(document.createElementNS(SVGNS, 'foreignObject'));
+    canvas.style.cssText = 'width:100%;height:100%;display:block';
+    fo.appendChild(canvas);
     fxG = document.createElementNS(SVGNS, 'g');
     petG.append(fo, fxG);
-    rig = createRig(canvas, { deformers, parts, view: VIEW });
-    for (const n in tex) rig.upload(n, tex[n]);
-    if (fade) for (const n in fade.set.tex) rig.upload(n + '@mix', fade.set.tex[n]);
+    // 换了新的 fxG：`fx` 那个"上一帧写过的特效串"缓存必须作废，不然不随时间变化的特效
+    // （比如感叹号）在重挂之后不会重画，会一直到状态变化为止都不见。
+    fx = '';
+    // ★ **挂载本身可能抛**（`createRig` 里 `webgl2 unavailable`、上下文耗尽…）。
+    // 关键不是"接住它"，而是**别让下一帧又重来一遍**：`mountedIn` 在下面才赋值，
+    // 一抛就还是 null，于是每一帧都 `petG.textContent = ''` + 新建 canvas + 再抛，
+    // 30fps 无限循环（还会把每页十几个 GL 上下文的配额耗光）。
+    // 这里只记下时刻，交给 `drawNow` 退避、由 `draw()` 的兜底记一笔日志。
+    try {
+      rig = createRig(canvas, { deformers, parts, view: VIEW });
+      for (const n in tex) rig.upload(n, tex[n]);
+      if (fade) for (const n in fade.set.tex) rig.upload(n + '@mix', fade.set.tex[n]);
+    } catch (err) {
+      mountFailT = lastT ?? 0;
+      rig = null;
+      throw err;
+    }
     mountedIn = petG; pxScale = 0;
   }
   // a fade in progress: the rig crossfades every part from `tex` to fade.set's textures over fade.dur seconds
@@ -318,13 +341,12 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     if (ready[next]) { apply(ready[next]); return Promise.resolve(); }
     return loadScheme(next).then(apply);
   }
-  let decoded = null; // raster mode: settles once the last frame's image is decoded
-  let fixedRes = 0; // canvas pixels per rig unit for a snapshot; 0 = follow the screen
   function fitCanvas() {
-    const m = fixedRes ? null : mountedIn.getScreenCTM();
-    if (!m && !fixedRes) return;
+    if (!mountedIn) return;                     // 挂载失败过：这一步跳过，别在 null 上取 CTM
+    const m = mountedIn.getScreenCTM();
+    if (!m) return;
     // the vertical axis: turning round squeezes the horizontal one through zero, which would shrink the canvas to a few texels
-    const k = fixedRes || Math.hypot(m.c, m.d) * (window.devicePixelRatio || 1) * 1.25;
+    const k = Math.hypot(m.c, m.d) * (window.devicePixelRatio || 1) * 1.25;
     if (Math.abs(k - pxScale) / (pxScale || 1) < .08) return;
     pxScale = k;
     canvas.width = Math.max(16, Math.round((VIEW[2] - VIEW[0]) * Math.min(k, 6)));
@@ -338,8 +360,8 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     ahoge: spring(140, 6, 38), head: spring(70, 10, 16), armN: spring(60, 9, 95), armF: spring(60, 9, 95),
   };
   let lastT = null, prevTilt = 0, prevLow = 0, headTilt = 0, fx = '';
-  /** 绘制抛错只上报一次（见 `draw` 外面那层 try/catch）。 */
-  let drawFailed = false;
+  /** 绘制抛错的次数与上一次上报的时刻（见 `draw` 外面那层 try/catch）。 */
+  let drawFails = 0, drawFailAt = -1e9;
   // pet-core tips Coo's whole round body to listen, nod, doze or wobble; she keeps her feet on the floor and
   // moves her head instead. Only flight, dragging and the jump's crouch and landing tip the whole group,
   // running keeps half its lean. The shares ease between modes so the group never snaps.
@@ -385,18 +407,31 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     try {
       return drawNow(petG, fc, o);
     } catch (err) {
-      if (!drawFailed) {
-        drawFailed = true;
-        try { globalThis.petHost?.report?.(`[figure.draw 抛错] ${err && (err.stack || err.message)}`); } catch { /* 报告失败就算了 */ }
+      drawFails += 1;
+      // 第一次立刻报，之后**每 60 秒再报一次**：偶发一次不吵，但"一直在失败"一定能看到。
+      // （原来只报第一次，第一次偶发错误之后真正的持续错误就永远不上报了——而那种情况下
+      // 屏幕上正是"她整个人不见了"。）
+      const now = typeof o?.t === 'number' ? o.t : performance.now() / 1000;
+      if (drawFails === 1 || now - drawFailAt > 60) {
+        drawFailAt = now;
+        try { globalThis.petHost?.report?.(`[figure.draw 抛错 第${drawFails}次] ${err && (err.stack || err.message)}`); } catch { /* 报告失败就算了 */ }
       }
     }
   }
 
   function drawNow(petG, fc, o) {
-    if (mountedIn !== petG || !petG.contains(fo)) mount(petG);
-    if (frameN++ % 20 === 0) fitCanvas();
-    const t = o.t, dt = lastT == null ? 1 / 60 : clamp(t - lastT, 0, .05);
+    // `t` 先算，而且**必须保证是有限的**：NaN 会顺着 `dt` 污染所有弹簧
+    // （`Math.abs(NaN) > lim` 恒为假，弹簧永远回不来），表现是"大半个身体悄悄不画了"
+    // 却**不抛任何错** —— 上面那层兜底和 diag.js 都看不到它。
+    const t = Number.isFinite(o.t) ? o.t : (lastT ?? 0);
+    const dt = lastT == null ? 1 / 60 : clamp(t - lastT, 0, .05);
     lastT = t;
+    // 挂载失败过就退避 2 秒再试一次（见 mount 里那段注释）。
+    if (mountedIn !== petG || !petG.contains(fo)) {
+      if (mountFailT != null && t - mountFailT < 2) return;
+      mount(petG);
+    }
+    if (frameN++ % 20 === 0) fitCanvas();
     const mode = o.mode || 'idle', face = o.face || 'neutral';
     const walking = mode === 'walk' || mode === 'run', held = mode === 'drag', airborne = mode === 'air';
 
@@ -546,14 +581,19 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     if (fade) {
       if (fade.t0 == null) fade.t0 = t;
       st.mix = smooth(0, 1, (t - fade.t0) / fade.dur);
-      const own = img;
-      img = fade.set.img; fg = fg2;
-      paintFace(fc, face, o, t);
-      img = own; fg = fg1;
+      const own = img, ownFg = fg;
+      // ★ 必须 try/finally：这里手工把全局 `img`/`fg` 换到"新配色 + 第二块画布"，
+      // 中途抛错时原来的写法会**永久停在**那个组合上 —— 之后每帧都用错素材画脸，
+      // 而且 `fade` 再也结束不了（静默、没有报错，只是脸不对）。
+      try {
+        img = fade.set.img; fg = fg2;
+        paintFace(fc, face, o, t);
+      } finally {
+        img = own; fg = ownFg;
+      }
       rig.upload('faceFx@mix', faceCv2);
     }
     rig.render(st);
-    if (opts.raster) { fo.setAttribute('href', canvas.toDataURL('image/png')); decoded = fo.decode ? fo.decode().catch(() => {}) : null; }
     if (fade && st.mix >= 1) endFade();
     drawFx(fc, t);
   }
@@ -603,20 +643,6 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     setScheme,
     /** Forgets the motion state (springs, clocks), for callers that replay a timeline from its start. */
     /**
-     * Renders `frames` frames of one pose (face `fc`, frame fields `o`, its clock starting at o.t) at `res` canvas
-     * pixels per rig unit, then gives up the WebGL context; returns an SVG <image> for the result in rig space.
-     * For pages showing many still figures, which would otherwise hold a GPU context each.
-     */
-    snapshot(fc, o, res = 3, frames = 60) {
-      fixedRes = res;
-      const g = document.createElementNS(SVGNS, 'g');
-      for (let i = 0; i < frames; i++) draw(g, fc, { ...o, t: (o.t || 0) + i / 60 });
-      const href = canvas.toDataURL('image/png');
-      rig.dispose();
-      rig = null; mountedIn = null; fixedRes = 0;
-      return `<image href="${href}" x="${VIEW[0]}" y="${VIEW[1]}" width="${VIEW[2] - VIEW[0]}" height="${VIEW[3] - VIEW[1]}"/>`;
-    },
-    /**
      * Releases the WebGL context and drops the mounted DOM (what `setFigure` switching away from
      * this figure calls). The figure object stays usable: the next `draw` re-mounts from scratch.
      */
@@ -627,13 +653,13 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     reset() {
       endFade();
       for (const k in sp) { sp[k].x = 0; sp[k].v = 0; }
+      // 重新起一具身体 = 重新给"绘制失败"一次上报机会（不然第一次偶发错误之后就一直静默）
+      drawFails = 0; drawFailAt = -1e9; mountFailT = null;
       lastT = null; prevTilt = 0; prevLow = 0; headTilt = 0; wTilt = 0; wLean = 0; finMood = 0; tailMood = 0; wagAmp = 0; sitK = 0;
     },
     /** Loads every scheme's textures, so later switches are immediate. */
     preload: () => Promise.all(SCHEMES.map(sc => loadScheme(sc.id))),
     get scheme() { return scheme; },
-    /** Raster mode: a promise that settles once the last drawn frame is ready to be painted. */
-    get painted() { return decoded || Promise.resolve(); },
     get colors() { return { z: accent() }; },
     schemes: SCHEMES,
     // points pet-core uses: eye tracking, tears, sleep z's, hearts [x from, x to, y], bubble

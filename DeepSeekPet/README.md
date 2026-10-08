@@ -372,7 +372,7 @@ Ollama 的加速名单里，而它和 CPU 抢的是同一份内存带宽，这�
 
 ## 它现在会说什么
 
-台词全在 **`resources\app\lines.cjs`**，一共 97 条，分门别类放好。逻辑在
+台词全在 **`resources\app\lines.cjs`**，一共 **302 条、39 个顶层桶**，分门别类放好。逻辑在
 `resources\app\pet.cjs`，只管"什么时候说哪一句"。
 
 它不是随机播报，会看情况：
@@ -482,14 +482,15 @@ DeepSeekPet/
 │  ├─ pet.cjs                ★ 它的行为：什么时候说哪句、什么时候去睡、连击怎么升级
 │  ├─ mood.cjs               ★ 心情：喜欢 / 精神两条轴 + 五档（黏人·开心·安静·困倦·想你）
 │  ├─ dress.cjs              ★ 服装清单与换装记录（接口先占住，贴图以后再加）
-│  ├─ lines.cjs              ★ 全部 293 条台词，想加就加
+│  ├─ lines.cjs              ★ 全部 302 条台词（39 个桶），想加就加
 │  ├─ llm.cjs                ★ 接大模型：配置读写 + OpenAI 兼容调用 + 把报错说人话
+│  ├─ store.cjs              ★ 小 JSON 文件的原子读写（先写 .tmp 再改名；配置/心情/记忆/服装都走它）
 │  ├─ settings.cjs           设置窗口 + IPC（含「它的记忆 / 心情」「服装」两个窗口）
 │  ├─ settings-preload.cjs   设置页面能碰到的全部能力（就这几个方法）
 │  ├─ dress-preload.cjs      服装页面能碰到的全部能力
 │  ├─ log.cjs                data\pet.log
 │  ├─ pet-host.cjs           桌宠窗口宿主（Coopanion 搬来；改了托盘菜单、图标与应用名，
-│  │                         另加了窗口显示兜底和页面报错落盘）
+│  │                         另加了窗口显示兜底、页面报错落盘、诊断日志轮转）
 │  ├─ preload.cjs            页面与窗口宿主之间唯一的桥（多了个 `report` 用于报错落盘）
 │  ├─ node_modules/ws/       WebSocket 实现（唯一第三方依赖，无子依赖）
 │  └─ web/                   页面（Coopanion 搬来，只打了补丁）
@@ -505,7 +506,7 @@ DeepSeekPet/
 │        ├─ model.json       骨架/枢轴/部件/表情定义（只留 deepseek 配色）
 │        ├─ tex/             25 张部件贴图（头发、裙、鳍、尾、脸…）
 │        └─ feat/            25 张五官贴图（眼、嘴、腮红…）
-├─ test/smoke.cjs            自检 212 项：文件、台词库、设置、模型链路、记忆、心情、图标、连点合并…
+├─ test/smoke.cjs            自检 219 项：文件、台词库、设置、模型链路、记忆、心情、图标、连点合并…
 └─ tools/                    重建与部署脚本（纯 ASCII，避免 PS 5.1 读成乱码）
    ├─ setup-runtime.ps1      装配 Electron 运行时（默认下载官方 Electron；-Source 复用本机 Coopanion）
    │                         最后会自动调 patch-exe.ps1
@@ -573,7 +574,7 @@ gemini / qwen / kimi / minimax）。
 ## 自检与重建
 
 ```powershell
-# 自检 212 项：页面文件、贴图、293 条台词、设置读写、模型链路（用假端点）、记忆、心情、图标、
+# 自检 219 项：页面文件、贴图、302 条台词、设置读写、模型链路（用假端点）、记忆、心情、图标、
 #              补丁 marker、连点合并与过期、自动说话、连击升级、睡着状态、暂停恢复、目录穿越防护、
 node test\smoke.cjs
 
@@ -610,6 +611,8 @@ powershell -ExecutionPolicy Bypass -File tools\deploy.ps1 -To D:\pet\DeepSeekPet
 **`data\pet-host.log` 是窗口与页面那一层的日志**（跟 `pet.log` 分开放，免得窗口的闲话埋掉她的行为）：
 里面记着窗口什么时候显示/隐藏、是否置顶、位置，以及**页面里的 JS 报错（带堆栈）**。
 **"她不对但日志看着一切正常"的时候，第一个该看的就是这个文件。**
+（它会自己轮转：超过 2 MB 就把当前那份改成 `pet-host.log.1`，所以不会无限长大；
+窗口状态的心跳只在**状态真的变了**时写一行，另外每 5 分钟留一次"我还活着"。）
 
 | 现象 | 原因与处理 |
 |---|---|

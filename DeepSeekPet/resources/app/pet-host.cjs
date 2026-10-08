@@ -17,17 +17,33 @@
  */
 const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, session, shell, systemPreferences } = require('electron');
 const { join } = require('node:path');
-const { appendFileSync } = require('node:fs');
+const { appendFileSync, statSync, renameSync, writeFileSync } = require('node:fs');
 
 /**
  * 诊断日志：**主进程的 console.log 在 GUI 起来之后是被丢掉的**（实测：加的探针一行都没进
  * pet.log），所以"桌宠窗口没出现"这类问题必须写文件才查得动。放在 `data\pet-host.log`，
  * 故意跟 pet.log 分开——它是窗口层的，不该混进她的行为日志里。
  * 想要安静就删掉这个文件（它会自己再建）。
+ *
+ * **它必须有上限**：那个每 2 秒一次的心跳曾经无条件写一行 ≈ 每天 4.3 万行、约 5 MB，
+ * 而这个文件当时没有任何轮转。现在超过 `LOG_MAX` 就改名成 `.1`（旧的 `.1` 被覆盖），
+ * 所以 `data\` 下最多两份、合计约 2×`LOG_MAX`。写不进去也绝不让桌宠起不来。
  */
+const LOG_MAX = 2 * 1024 * 1024;
+/** 日志路径与当前大小都懒着算：`app.getPath` 在 app ready 之前不一定可用。 */
+let logFile = '';
+let logSize = -1;
 function diag(msg) {
   try {
-    appendFileSync(join(app.getPath('userData'), '..', 'pet-host.log'), `[${new Date().toISOString()}] ${msg}\n`);
+    if (!logFile) logFile = join(app.getPath('userData'), '..', 'pet-host.log');
+    const line = `[${new Date().toISOString()}] ${msg}\n`;
+    if (logSize < 0) { try { logSize = statSync(logFile).size; } catch { logSize = 0; } }
+    if (logSize > LOG_MAX) {
+      try { renameSync(logFile, `${logFile}.1`); } catch { try { writeFileSync(logFile, ''); } catch { /* 都不行就继续追加 */ } }
+      logSize = 0;
+    }
+    appendFileSync(logFile, line);
+    logSize += Buffer.byteLength(line);
   } catch { /* 诊断本身绝不能让桌宠起不来 */ }
 }
 
@@ -277,9 +293,17 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
     // **心跳**：每 2 秒记一次它到底可见不可见、被摆到哪儿、还是不是置顶。
     // 排查"桌面上没有宠物"只有这一条路——`console.log` 在 GUI 里是被丢掉的。
     if (!heartbeat) {
+      let lastBeat = '', lastBeatAt = 0;
       heartbeat = setInterval(() => {
         if (!win) return;
-        diag(`心跳 visible=${win.isVisible()} bounds=${JSON.stringify(win.getBounds())} top=${win.isAlwaysOnTop()} min=${win.isMinimized()}`);
+        const beat = `visible=${win.isVisible()} bounds=${JSON.stringify(win.getBounds())} top=${win.isAlwaysOnTop()} min=${win.isMinimized()}`;
+        // **只在状态真的变了的时候写一行**（外加每 5 分钟留一次"我还活着"）。
+        // 原来的写法是无条件每 2 秒一行 ≈ 每天 4.3 万行，把这个文件写成了几百 MB 的垃圾，
+        // 而真正要看的信息（什么时候被隐藏了、被谁移位了）反而是变化时那几行。
+        const now = Date.now();
+        if (beat === lastBeat && now - lastBeatAt < 5 * 60_000) return;
+        lastBeat = beat; lastBeatAt = now;
+        diag(`心跳 ${beat}`);
       }, 2000);
     }
     win.on('hide', () => diag('★ 窗口被隐藏了（hide 事件）'));

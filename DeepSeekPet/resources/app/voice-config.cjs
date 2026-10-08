@@ -22,6 +22,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const voiceSpec = require('./tts-voice.cjs');
+const store = require('./store.cjs');
 
 /** 旋钮的名字、默认值、以及给界面看的取值范围。 */
 const KNOBS = {
@@ -66,11 +67,7 @@ const rootOf = (vendorDir) => path.join(vendorDir, 'voices');
 
 /** 读一份 voice.json（坏了就当空的，不要因为一个音色文件坏掉整个应用）。 */
 function readRaw(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^[\uFEFF\s]+/, ''));
-  } catch (e) {
-    return {};
-  }
+  return store.readJson(file) || {};
 }
 
 /**
@@ -143,7 +140,9 @@ function save(vendorDir, folder, patch) {
   const knobs = normalize({ ...normalize(raw), ...patch });
   const next = { ...raw, ...knobs };
   // 用户自己调过，就别再让旧的 `speed` 之类的默认值打架：knobs 就是权威
-  fs.writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  // 原子写：这几套参数是用户一条条拖出来的，写坏一次他就得重拖（见 store.cjs）
+  const err = store.writeJson(file, next);
+  if (err) return { ok: false, error: `voice.json 写不进去：${err.message}` };
   return { ok: true, folder, knobs };
 }
 

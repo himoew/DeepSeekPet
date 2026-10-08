@@ -13,7 +13,7 @@
  * 通过 `petHost.report()` 把消息+堆栈送到主进程，由 pet-host.cjs 写进 `data\pet-host.log`。
  * 上报失败一律吞掉——诊断绝不能影响她本身。
  */
-function report(msg) {
+export function report(msg) {
   try {
     const host = globalThis.petHost;
     if (host && typeof host.report === 'function') host.report(String(msg).slice(0, 2000));

@@ -19,9 +19,9 @@
  * **写入是攒着的**（`SAVE_MS`）：戳一下摸一下很频繁，不能每次都落盘；
  * 但"见面"这种一天一次的事会立刻写（`touchSeen`），免得刚认识就断电。
  */
-const fs = require('node:fs');
 const path = require('node:path');
 const log = require('./log.cjs');
+const store = require('./store.cjs');
 
 const FILE = path.join(path.dirname(log.file), 'pet-memory.json');
 const SAVE_MS = 5000;
@@ -48,8 +48,7 @@ let timer = 0;
 
 function load() {
   if (data) return data;
-  let raw = {};
-  try { raw = JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch { /* 没有就是第一次 */ }
+  const raw = store.readJson(FILE) || {};      // 没有就是第一次；坏了也当第一次（默认值在下面补）
   const base = blank();
   data = {
     ...base, ...raw,
@@ -66,12 +65,9 @@ function load() {
 function saveNow() {
   clearTimeout(timer);
   timer = 0;
-  try {
-    fs.mkdirSync(path.dirname(FILE), { recursive: true });
-    fs.writeFileSync(FILE, `${JSON.stringify(load(), null, 2)}\n`);
-  } catch (err) {
-    log.warn(`记忆没能存下来:${err.message}`);
-  }
+  // 原子写（先写 `.tmp` 再改名）：掉电/崩溃不会留下半截 JSON —— 见 store.cjs
+  const err = store.writeJson(FILE, load());
+  if (err) log.warn(`记忆没能存下来:${err.message}`);
 }
 
 /** 攒一会儿再写（戳/摸这种高频计数用）。 */

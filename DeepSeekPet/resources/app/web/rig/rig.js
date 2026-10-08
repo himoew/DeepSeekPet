@@ -196,8 +196,7 @@ export function createRig(canvas, model) {
     gl.uniform1i(loc.uTex, 0);
     gl.uniform1i(loc.uTex2, 1);
     const mixK = Math.min(1, Math.max(0, st.mix || 0));
-    const order = meshes.filter(m => !(opts.hidden && opts.hidden[m.part.id]))
-      .map(m => ({ m, z: st.z?.[m.part.id] ?? m.part.z })).sort((a, b) => a.z - b.z);
+    const order = meshes.map(m => ({ m, z: st.z?.[m.part.id] ?? m.part.z })).sort((a, b) => a.z - b.z);
     for (const { m } of order) {
       const p = m.part, alpha = st.alpha?.[p.id] ?? p.alpha ?? 1;
       const tex = textures.get(p.tex);
@@ -227,7 +226,6 @@ export function createRig(canvas, model) {
     gl, upload, render, dispose,
     /** Where a rest point lands this frame (for overlays and hit tests). */
     point(deformer, st, x, y) { return applyChain(chainOf(deformer), st, x, y); },
-    setView(v) { view = v; },
     get view() { return view; },
   };
 }

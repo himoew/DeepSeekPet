@@ -36,9 +36,9 @@
  *   { t:'control', action }  右键菜单点的:settings | pause | resume | quit
  *   { t:'prefs' | 'position' | 'arrived' | 'interrupted' }
  */
-const fs = require('node:fs');
 const path = require('node:path');
 const log = require('./log.cjs');
+const store = require('./store.cjs');
 const lines = require('./lines.cjs');
 const llm = require('./llm.cjs');
 const tts = require('./tts.cjs');
@@ -59,20 +59,17 @@ const POS_FILE = path.join(path.dirname(log.file), 'pet-pos.json');
 const POS_SAVE_MS = 20_000;
 let posSavedAt = 0;
 function loadPetX() {
-  try {
-    const x = JSON.parse(fs.readFileSync(POS_FILE, 'utf8')).x;
-    return typeof x === 'number' && x >= 0 && x <= 1 ? x : null;
-  } catch { return null; }
+  const d = store.readJson(POS_FILE);
+  const x = d && d.x;
+  return typeof x === 'number' && x >= 0 && x <= 1 ? x : null;
 }
 function savePetX(x) {
   if (typeof x !== 'number' || !(x >= 0 && x <= 1)) return;
   const now = Date.now();
   if (now < posSavedAt) return;
   posSavedAt = now + POS_SAVE_MS;
-  try {
-    fs.mkdirSync(path.dirname(POS_FILE), { recursive: true });
-    fs.writeFileSync(POS_FILE, JSON.stringify({ x: +x.toFixed(4), at: new Date().toISOString() }));
-  } catch (err) { log.warn(`位置没存下来:${err.message}`); }
+  const err = store.writeJson(POS_FILE, { x: +x.toFixed(4), at: new Date().toISOString() });
+  if (err) log.warn(`位置没存下来:${err.message}`);
 }
 
 /** 部位的中文名（台词和模型上下文都用它，对应 pet-app.js 的 REGION_AT / 这里的 AREAS）。 */

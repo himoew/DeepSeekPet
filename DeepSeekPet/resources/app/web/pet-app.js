@@ -8,7 +8,7 @@
  * window ignores the mouse except over the figure, a bubble, the menu or the hover buttons.
  * Colors follow the World's `theme` through `data-theme` on the root element.
  */
-import { boot } from './diag.js';
+import { boot, report } from './diag.js';
 import { applyTheme, createPet, createSfx, clamp, f, mini, normalizeSkin, skinCss, EXPRESSIONS, HEAD_TOP, ICONS } from './pet-core.js';
 
 const $ = (s) => document.querySelector(s);
@@ -24,7 +24,7 @@ const skinStyle = document.createElement('style');
 document.head.appendChild(skinStyle);
 
 const prefs = {
-  roam: 'calm', sound: true, theme: document.documentElement.dataset.theme, scale: 1, user: '伙伴', mic: false, micDevice: '', bot: null,
+  roam: 'calm', sound: true, theme: document.documentElement.dataset.theme, scale: 1, mic: false, micDevice: '', bot: null,
   /** 心情快照（World 发过来的 `{ state, label, speed, cling }`）；页面只拿它调步调。 */
   mood: null,
   /** Voice input: switched on, recognizer ready, why not, how to talk, and the mode in force. */
@@ -37,9 +37,6 @@ const prefs = {
    */
   hoverButtons: ['chat'],
   rememberPosition: false,
-  /** Double-clicking the pet opening the typing box: the World now sends `false` (and the listener
-   *  is gone) — a double click is two pokes, which is its own gesture with its own escalation. */
-  doubleClickChat: false,
   /** Draw at the moving frame rate while the body rests too. */
   lockFrameRate: false,
   /** The World lets the model speak on its own every minute (`auto`); this is the switch it reports. */
@@ -218,11 +215,9 @@ function applyPrefs(p) {
   if (p.theme === 'dark' || p.theme === 'light') { prefs.theme = p.theme; applyTheme(p.theme); }
   if (typeof p.scale === 'number') { prefs.scale = p.scale; ctl.resize(); }
   if (typeof p.rememberPosition === 'boolean') { prefs.rememberPosition = p.rememberPosition; reportPosition(); }
-  if (typeof p.user === 'string') prefs.user = p.user;
   if (typeof p.micDevice === 'string' && p.micDevice !== prefs.micDevice) { prefs.micDevice = p.micDevice; stopMic(); }
   if (typeof p.mic === 'boolean') { prefs.mic = p.mic; p.mic && !watching ? startMic() : stopMic(); }
   if (p.voice && typeof p.voice === 'object') prefs.voice = { ...prefs.voice, ...p.voice };
-  if (typeof p.doubleClickChat === 'boolean') prefs.doubleClickChat = p.doubleClickChat;
   if (typeof p.lockFrameRate === 'boolean') prefs.lockFrameRate = p.lockFrameRate;
   if (typeof p.autoChat === 'boolean') prefs.autoChat = p.autoChat;
   // `voice` reports whether the World will read answers out loud (it knows if the files are there).
@@ -571,14 +566,25 @@ function runAction(a) {
   if (a === 'walk' || a === 'run') {
     const id = 'act' + Math.random().toString(36).slice(2);
     const x = ctl.pet.x < innerWidth / 2 ? innerWidth * (.55 + Math.random() * .35) : innerWidth * (.1 + Math.random() * .35);
-    if (ctl.walkTo(x, a === 'run', id)) { actWait = { walkId: id }; walkTargets.set(id, true); }
-    return 12;
+    // ★ **必须先登记再 `walkTo()`**：目标离身体不到 2px 时 `walkTo` 会**同步**回调
+    // `arrived`（见 pet-core 的 walkTo），而 `onBody` 只认登记过的 id。原来顺序反了：
+    // 那次 arrived 被丢掉 → `actWait` 永远清不掉 → `stepActs` 从此一条 act 都不执行，
+    // 而且 `{t:'arrived'}` 永不发出去，World 那边的 `walking` 也永远是 true（连"瞟一眼鼠标"
+    // 都没了）。概率不高，但**不可自愈**（要重载页面）。`walk()` 是先登记后走，这里对齐它。
+    walkTargets.set(id, true);
+    if (ctl.walkTo(x, a === 'run', id)) { actWait = { walkId: id, at: ctl.time }; return 12; }
+    walkTargets.delete(id);
+    return 1;                      // 没走成（它正忙）：别白等 12 秒
+
   }
   ctl.act(a);
   return DUR[a] ?? 1;
 }
 function stepActs() {
   const now = ctl.time;
+  // 兜底：`actWait` 万一永远等不到 `arrived`（页面重载、走位被打断…），20 秒后自己放行——
+  // 不然动作队列会永久卡死（见 runAction 里那段注释）。
+  if (actWait && now - actWait.at > 20) actWait = null;
   if (actWait || now < actUntil || !acts.length) return;
   if (ctl.busy()) return;
   actUntil = now + runAction(acts.shift());
@@ -1763,23 +1769,44 @@ function stepBackdrop(dt) {
 const MOVING_FPS = 60, RESTING_FPS = 30;
 /** When the next frame is due (a rAF timestamp), and the gap between frames at the current rate. */
 let last = performance.now(), dueAt = 0, gap = 1000 / MOVING_FPS;
+/** 帧循环抛错的次数，以及上一次上报的时刻（见下面 frame 里的 try/catch）。 */
+let frameFails = 0, frameFailAt = 0;
+/**
+ * 一帧。**整段包在 try/catch 里，而且无论抛不抛错都要把下一帧排上。**
+ *
+ * 为什么非这样不可：`requestAnimationFrame(frame)` 原来写在函数最后一行，任何一处抛错
+ * （`stepDialog` 里取不到元素、`ctl.render()` 里的作用域错误、`layout()` 里的意外值…）
+ * 都会让**整条循环当场死掉** —— 她停在那儿、不再动、也不再接鼠标，而主进程日志一切正常
+ * （页面异常只上报、不重启）。HANDOVER 第 1.23 节那两次翻车就是这个症状。
+ * 现在：抛错 → 记一次、节流上报（第一次 + 每 60 秒）→ 跳过这一帧剩下的步骤 → 下一帧照排。
+ * 持续失败时按静止帧率（`full` 保持 false）跑，不会 60fps 空转刷屏。
+ */
 function frame(now) {
   // a display refresh up to a quarter gap early counts as on time, so the rate averages out over refresh rates it does not divide
   if (now < dueAt - gap / 4) { requestAnimationFrame(frame); return; }
   const dt = Math.min(.05, (now - last) / 1000); last = now;
-  stepActs();
-  stepDialog(dt);
-  stepTalkRead();
-  stepTalkMotion();
-  stepListen();
-  stepDrag();            // 拎起来：拎久了吭一声
-  stepStroke();          // 抚摸的连续反馈：爬"舒服程度"、续呼噜/爱心、判"够了"
-  ctl.step(dt);
-  ctl.render();
-  stepBackdrop(dt);
-  stepTools();
-  layout();
-  const full = prefs.lockFrameRate || ctl.moving;
+  let full = false;
+  try {
+    stepActs();
+    stepDialog(dt);
+    stepTalkRead();
+    stepTalkMotion();
+    stepListen();
+    stepDrag();            // 拎起来：拎久了吭一声
+    stepStroke();          // 抚摸的连续反馈：爬"舒服程度"、续呼噜/爱心、判"够了"
+    ctl.step(dt);
+    ctl.render();
+    stepBackdrop(dt);
+    stepTools();
+    layout();
+    full = prefs.lockFrameRate || ctl.moving;
+  } catch (err) {
+    frameFails += 1;
+    if (frameFails === 1 || now - frameFailAt > 60_000) {
+      frameFailAt = now;
+      report(`[帧循环抛错 第${frameFails}次] ${(err && (err.stack || err.message)) || err}`);
+    }
+  }
   gap = 1000 / (full ? MOVING_FPS : RESTING_FPS);
   // a frame more than a gap late starts the count again instead of drawing the missed ones back to back
   dueAt = now - dueAt > gap ? now + gap : dueAt + gap;

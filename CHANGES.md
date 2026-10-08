@@ -43,12 +43,31 @@
 
 ## 我们自己新增的文件（不基于上游）
 
-- 行为与配置：`pet.cjs` · `lines.cjs` · `llm.cjs` · `memory.cjs` · **`mood.cjs`** · `log.cjs` · `server.cjs` · `main.cjs`
+- 行为与配置：`pet.cjs` · `lines.cjs` · `llm.cjs` · `memory.cjs` · **`mood.cjs`** · `log.cjs` · `server.cjs` · `main.cjs` · **`store.cjs`**（小 JSON 的原子读写）
 - 服装：**`dress.cjs`** · **`dress-preload.cjs`** · **`web/dress.html`**
 - 语音：`tts.cjs` · `tts-voice.cjs` · `tts-worker.cjs` · `voice-config.cjs`
 - 窗口：`settings.cjs` · `settings-preload.cjs` · `voice-preload.cjs` · `preload.cjs`
 - 页面：`web/settings.html` · `web/voice.html` · **`web/diag.js`**（页面全局错误捕获）· 图标（`web/app-icon.png` 等，见 `tools/make-icons.py`）
 - 工程：`test/smoke.cjs`（自检）· `tools/*`（抽取、部署、装配、图标、试音）
+
+## 2026-10-08 稳健性修复（纯修复，不改玩法）
+
+这一轮只修"会静默出错"的地方，玩法（台词、手感、界面）一条都没动：
+
+| 修了什么 | 落在哪 |
+|---|---|
+| **帧循环抛一次错就永久静止**（她停在那儿、不再动也不接鼠标，而日志一切正常） | `web/pet-app.js`：整帧 `try/catch`，**无论如何都把下一帧排上**，失败按第一次 + 每 60 秒节流上报 |
+| **动作队列可能永久卡死**：`walkTo()` 会同步回调 `arrived`，而登记顺序反了 | `web/pet-app.js`：先登记再走（对齐 `walk()`），另加"20 秒没等到就自己放行"的兜底 |
+| **绘制/挂载失败被静默吞掉**；挂载失败时每帧重建 canvas 与 GL 上下文 | `web/whale/figure.js`：失败计数 + 节流上报、挂载失败退避 2 秒、fade 与画脸加 `try/finally`、非有限 `t` 防护 |
+| **抚摸有两套判定并行**（呼噜响两遍、一次抚摸报两条 touch） | `web/pet-core.js`：删掉上游那套"累计位移 > 320px"的判定，只留页面的 STROKE 引擎 |
+| **`data\pet-host.log` 无限增长**（2 秒一次心跳 ≈ 4.3 万行/天，且没有轮转） | `pet-host.cjs`：超 2 MB 轮转为 `.1`；心跳只在窗口状态**真的变了**时写，另每 5 分钟一次 |
+| **配置读坏 → 退回默认值 → 下一次保存把用户的 Key/人设顶掉** | `llm.cjs` + 新增 `store.cjs`：坏文件先留档 `settings.json.bad-<时间>`、**原子写**、写失败抛错 |
+| **状态文件裸覆写**，掉电/崩溃留下半截 JSON（心情 / 记忆 / 服装 / 音色 / 位置） | 新增 `store.cjs`（先写 `.tmp` 再 `rename`），上列模块全部改走它 |
+| 服务端 async 请求处理没接住 → 一行 `FATAL 未处理的 Promise 拒绝` | `server.cjs`：`.catch` 接住并如实回答 |
+| 死代码 / 死开关（会让人误以为它们在工作） | 删 `figure.js` 的 `opts.raster` / `snapshot()` / `painted`、`rig.js` 的 `setView` / `opts.hidden`、`pet-core.js` 的 `MOTIONS` / `ROLES` / `GALLERY` / `wear()` / `ITEM_COLORS`、`pet-app.js` 只写不读的 `prefs.user` / `prefs.doubleClickChat` |
+
+> 只删"零引用的导出与死开关"；上游那些**从不触发但活着**的功能路径（语音输入、屏幕取色…）
+> 一律保留 —— 理由见 `HANDOVER.md` 第 4 节（动它们等于自己维护一个 fork）。
 
 ## 功能上相对上游桌宠的改动
 

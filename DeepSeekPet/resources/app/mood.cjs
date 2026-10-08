@@ -30,9 +30,9 @@
  * （那个文件是给用户看的账本，心情不是账）。文件跟 pet.log 做邻居，所以 `DSP_LOG_DIR`
  * 一改（自检就是）它跟着被隔离，自检不会动到用户真实的心情。
  */
-const fs = require('node:fs');
 const path = require('node:path');
 const log = require('./log.cjs');
+const store = require('./store.cjs');
 
 /** 跟 pet-pos.json 做邻居（`log.file` 认 `DSP_LOG_DIR`，这里跟着它走）。 */
 const FILE = path.join(path.dirname(log.file), 'pet-mood.json');
@@ -80,8 +80,7 @@ let timer = 0;
 
 function load() {
   if (data) return data;
-  let raw = {};
-  try { raw = JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch { /* 第一次就是没有文件 */ }
+  const raw = store.readJson(FILE) || {};      // 第一次就是没有文件；坏了也当没有（默认值在下面补）
   const base = blank();
   data = {
     ...base, ...raw,
@@ -96,12 +95,9 @@ function load() {
 function saveNow() {
   clearTimeout(timer);
   timer = 0;
-  try {
-    fs.mkdirSync(path.dirname(FILE), { recursive: true });
-    fs.writeFileSync(FILE, `${JSON.stringify(load(), null, 2)}\n`);
-  } catch (err) {
-    log.warn(`心情没能存下来:${err.message}`);
-  }
+  // 原子写（先写 `.tmp` 再改名）：掉电/崩溃不会留下半截 JSON —— 见 store.cjs
+  const err = store.writeJson(FILE, load());
+  if (err) log.warn(`心情没能存下来:${err.message}`);
 }
 
 /** 动一下就写太频繁（戳一下也是一次）：攒几秒。`unref` 免得吊住自检的进程退出。 */

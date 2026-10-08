@@ -7,7 +7,7 @@
 
 ![大肥鱼](DeepSeekPet/preview.png)
 
-> 界面、台词、文档都是中文。台词语料 265 条、自检 175 项，**离线可用**。
+> 界面、台词、文档都是中文。台词语料 302 条、自检 219 项，**离线可用**。
 
 ## 它有什么
 
@@ -47,7 +47,7 @@ powershell -ExecutionPolicy Bypass -File tools\setup-tts.ps1       # 本地语�
 
 - **想让它用大模型说话**：装 [Ollama](https://ollama.com) → `ollama pull qwen2.5:3b-instruct-q4_K_M`
   → 右键它或点托盘图标打开「设置」，把地址填 `http://127.0.0.1:11434/v1`、模型填上面那个名字。
-  不接也能用，它会说内置的 265 条台词。
+  不接也能用，它会说内置的 302 条台词。
 - **想换音色**：`node tools\set-voice.cjs` 看有哪些；`setup-tts.ps1 -Voice fanchen-c` 可以装第二套
   （那套的许可没有明确标注，自己确认）。语音那步需要 Python 或 bzip2 来解 `.tar.bz2`，
   没有的话脚本会告诉你怎么手动解开。
@@ -65,7 +65,7 @@ powershell -ExecutionPolicy Bypass -File tools\setup-tts.ps1       # 本地语�
    ├─ BlueFishDeskpet.exe                官方 Electron 44.4.4 改名而来，setup-runtime.ps1 装的
    ├─ resources/app/                     代码与美术：pet.cjs 行为 · lines.cjs 台词 · memory.cjs 记忆
    │                                     · llm.cjs 模型 · tts*.cjs 语音 · web/ 页面与鲸鱼模型
-   ├─ test/smoke.cjs                     自检 175 项（纯 Node，不需要 Electron）
+   ├─ test/smoke.cjs                     自检 219 项（纯 Node，不需要 Electron）
    └─ tools/                             装配与重建脚本（纯 ASCII 的 PowerShell）
       ├─ setup-runtime.ps1               下官方 Electron → 改名 → 自动调 patch-exe
       ├─ patch-exe.ps1                   把名字与图标盖到 exe 上（rcedit）
@@ -79,7 +79,7 @@ powershell -ExecutionPolicy Bypass -File tools\setup-tts.ps1       # 本地语�
 自检随时可跑（不需要装运行时）：
 
 ```powershell
-node DeepSeekPet\test\smoke.cjs      # 175 项：台词库、设置、模型链路（假端点）、记忆、图标…
+node DeepSeekPet\test\smoke.cjs      # 219 项：台词库、设置、模型链路（假端点）、记忆、图标…
 ```
 
 ## 许可与出处

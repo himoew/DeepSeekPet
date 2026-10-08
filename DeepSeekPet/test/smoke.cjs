@@ -28,6 +28,7 @@ const { startServer } = require(path.join(app, 'server.cjs'));
 const pet = require(path.join(app, 'pet.cjs'));
 const lines = require(path.join(app, 'lines.cjs'));
 const llm = require(path.join(app, 'llm.cjs'));
+const store = require(path.join(app, 'store.cjs'));
 const { WebSocket } = require(path.join(app, 'node_modules', 'ws'));
 
 let passed = 0;
@@ -478,6 +479,24 @@ function stubModel() {
     ok('配置能存能读', llm.load().model === 'round-trip');
     ok('存局部字段不会丢别的', llm.load().persona.length > 20 && llm.load().baseUrl.length > 0);
     ok('配置写在临时目录里', llm.CONFIG_FILE.startsWith(CONFIG_DIR));
+
+    /* ---------- 3b. 配置损坏不能把用户的东西静默顶掉（2026-10-08 的守卫） ---------- */
+    // 这条守的是一个真事故：读配置失败 → 退回默认值 → 紧接着一次保存就把用户的 Key/人设
+    // 覆盖掉（HANDOVER 第 8 节 18）。现在的规矩是：坏文件先留一份，再写新的；而且写入是原子的。
+    {
+      const keep = llm.load();
+      fs.writeFileSync(llm.CONFIG_FILE, '{"apiKey":"SECRET","person');     // 写一半崩掉的样子
+      ok('配置坏了会退回默认值（不抛）', llm.load().apiKey === '');
+      llm.save({ model: 'after-broken' });
+      const bads = fs.readdirSync(CONFIG_DIR).filter((f) => f.startsWith('settings.json.bad-')).sort();
+      ok('坏掉的配置会先留一份（settings.json.bad-*）', bads.length >= 1);
+      ok('留档里用户的数据还在', bads.length > 0 && fs.readFileSync(path.join(CONFIG_DIR, bads.at(-1)), 'utf8').includes('SECRET'));
+      ok('坏文件之后还能正常保存', llm.load().model === 'after-broken');
+      ok('原子写没有留下 .tmp', !fs.existsSync(`${llm.CONFIG_FILE}.tmp`));
+      llm.save(keep);
+      ok('store.readJson 读不到就给 null', store.readJson(path.join(CONFIG_DIR, 'nope.json')) === null);
+      ok('store.writeJson 失败返回 Error（不抛）', store.writeJson(path.join(llm.CONFIG_FILE, 'x.json'), { a: 1 }) instanceof Error);
+    }
 
     /* ---------- 4. 拿假端点跑一遍模型调用 ---------- */
     llm.save({ enabled: true, baseUrl: stub.url, apiKey: 'test-key', model: 'test-model', maxTokens: 64, persona: '你是测试用的人设。' });
