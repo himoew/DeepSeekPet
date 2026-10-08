@@ -46,6 +46,13 @@ foreach ($f in 'README.md', 'preview.png', 'settings.png', 'LICENSE', 'THIRD_PAR
   $from = Join-Path $root $f
   if (Test-Path $from) { Copy-Item $from $To -Force; Write-Host "  $f" }
 }
+# The hand-over notes live one level above this tree (the workspace root, next to CHANGES.md).
+# They travel with the deploy, renamed with a .ROOT.md suffix so they cannot collide with the
+# app's own README.md -- otherwise the runnable folder has no record of which build it holds.
+foreach ($pair in @(@('..\HANDOVER.md', 'HANDOVER.ROOT.md'), @('..\CHANGES.md', 'CHANGES.ROOT.md'))) {
+  $from = Join-Path $root $pair[0]
+  if (Test-Path $from) { Copy-Item $from (Join-Path $To $pair[1]) -Force; Write-Host ("  {0} -> {1}" -f (Split-Path $from -Leaf), $pair[1]) }
+}
 # The launcher has a Chinese file name, and this file must stay ASCII (PowerShell 5.1 reads
 # a BOM-less .ps1 as ANSI, so a hard-coded Chinese name here would silently never match and
 # the target's launcher would keep pointing at an executable that no longer exists).
