@@ -1593,6 +1593,7 @@ stage.addEventListener('pointerdown', (e) => {
   // **球优先**：点在球上就是拨球，不惊动她（她自己碰到球才算踢）
   if (ball.hitTest(e.clientX, e.clientY)) {
     ballDrag.on = true;
+    ball.setDragging(true);        // 拖球期间按 60fps（否则静止帧率 30fps，抓着像卡住）
     stage.setPointerCapture(e.pointerId);
     e.preventDefault();
     return;
@@ -1611,7 +1612,7 @@ stage.addEventListener('pointerdown', (e) => {
   } : null;
   if (ctl.pointerDown({ x: e.clientX, y: e.clientY }, { grab })) { stage.setPointerCapture(e.pointerId); e.preventDefault(); }
 });
-const up = () => { ballDrag.on = false; ctl.pointerUp(); stage.style.cursor = ''; };
+const up = () => { ballDrag.on = false; ball.setDragging(false); ctl.pointerUp(); stage.style.cursor = ''; };
 /**
  * Most milliseconds a drop on another display waits for the page to take the window's new size
  * (within a pixel: fractional scales round it). The size normally arrives a frame or two after
@@ -1861,7 +1862,7 @@ function frame(now) {
     stepBackdrop(dt);
     stepTools();
     layout();
-    full = prefs.lockFrameRate || ctl.moving;
+    full = prefs.lockFrameRate || ctl.moving || ball.busy;   // 球在滚/在飞/被拖着也按 60fps
   } catch (err) {
     frameFails += 1;
     if (frameFails === 1 || now - frameFailAt > 60_000) {

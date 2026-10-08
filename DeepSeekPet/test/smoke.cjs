@@ -398,6 +398,25 @@ function stubModel() {
       !/fxG\.innerHTML\s*=/.test(coreSrc) && /fxCore\.innerHTML\s*=/.test(coreSrc));
     ok('玩具球挂在 #fx 下（跟粒子同一层但不同子节点）',
       /fxG\.appendChild/.test(fs.readFileSync(path.join(app, 'web', 'ball.js'), 'utf8')));
+    /**
+     * **静止之后不许再弹**（这条是为用户实测到的"静止时一直有弹地面异响"加的）。
+     *
+     * 老写法：`if (st.vy > 40) 反弹`，而弹起速度是 `40 × 0.55 = 22` —— 22px/s 不到一帧就被
+     * 重力拉回地面，于是**每帧都判成一次撞地**，音效限流之后仍变成每秒 8 次的连续闷响。
+     * 修法有三件，缺一不可：① 能弹的门槛（110）远高于静止门槛（45）；
+     * ② 够慢就**一次性趴下**并进 `resting`；③ `resting` 状态**直接跳过物理**（不受重力、不出声）。
+     */
+    const ballSrc = fs.readFileSync(path.join(app, 'web', 'ball.js'), 'utf8');
+    const num = (name) => Number((ballSrc.match(new RegExp(`const ${name} = ([\\d.]+)`)) || [])[1]);
+    ok('玩具球：能弹的门槛远高于静止门槛（否则会每帧弹一次）',
+      num('BOUNCE_MIN_VY') > num('REST_VY') * 1.5 && num('REST_VY') > 0);
+    ok('玩具球：静止状态直接跳过物理（不受重力、不出声）',
+      /if \(st\.resting\) \{[\s\S]{0,900}?kickIfTouching\(\);[\s\S]{0,60}?return;/.test(ballSrc));
+    ok('玩具球：够慢就一次性趴下（vy 归零 + resting）',
+      /else if \(Math\.abs\(st\.vy\) <= REST_VY/.test(ballSrc) && /st\.resting = true;/.test(ballSrc));
+    // 帧率：球在动 / 正被拖着时必须按 60fps（原来只有 30fps，抓着像卡住）
+    ok('玩具球：在动或被拖着时按 60fps（"抓球很卡"的修法）',
+      /ball\.busy/.test(appSrc) && /get busy\(\)/.test(ballSrc) && /ball\.setDragging\(true\)/.test(appSrc));
 
     /* ---------- 2h. 页面代码里的"跨函数引用"（纯 Node 也能盯住的致命笔误） ---------- */
     /**

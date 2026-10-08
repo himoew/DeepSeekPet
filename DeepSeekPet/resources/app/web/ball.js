@@ -22,6 +22,19 @@
 const GRAVITY = 1500;
 /** 撞地保留多少速度：0.55 大约弹两三下就停。 */
 const BOUNCE = 0.55;
+/**
+ * 落地时**大于这个速度才弹**，否则直接趴下。
+ *
+ * ⚠️ **这两个数字（还有 `REST_VY`）是本会话一个真 bug 的修法，别随手改回去**：
+ * 原来门槛是 40、而弹起速度是 `40 × 0.55 = 22`，22 px/s 的上升**不到一帧就被重力拉回地面**，
+ * 于是每帧都判成"撞地" → 弹地音效限流后仍变成**每秒 8 次的连续闷响**
+ * （用户实测："静止的时候一直有弹地面类似的异响"）。所以现在：
+ * **能弹的门槛（110）远高于一次性静止门槛（45）**，中间那一段直接判定静止。
+ */
+const BOUNCE_MIN_VY = 110;
+/** 慢到这个速度以内就算静止（不再受重力、也不出声）。 */
+const REST_VY = 45;
+const REST_VX = 14;
 /** 每次落地后水平速度乘这个（地面摩擦）。 */
 const GROUND_FRICTION = 0.86;
 /** 空气阻力（每秒衰减比例）。 */
@@ -50,6 +63,7 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
     spin: 0, spinV: 0,
     resting: true,
     hover: false,          // 鼠标是不是停在球上
+    dragging: false,       // 正被拖着（帧率要靠它：不然"抓球"只有 30fps，看着很卡）
     lastKick: 0,
     since: 0,              // 上一次被踢到现在（秒）：用来决定"要不要过去找它玩"
   };
@@ -125,7 +139,24 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
     if (!st.on) return;
     const dt = Math.min(Math.max(dtRaw, 0), 0.05);   // 切回窗口时别一次算一大步
     const b = (box = stage.bounds());
+    const floorY = b.floorY - R;                       // 球心贴地时的高度
     st.since += dt;
+
+    /**
+     * **静止 = 完全不动**：不受重力、不出声、位置锁在地面上。
+     * 只有被踢 / 被拨 / 被点（`drag`）才会重新 awake。
+     * 这一条是"静止还在弹"的根治 —— 光调门槛不够，静止状态必须真的跳过物理。
+     */
+    if (st.resting) {
+      st.y = floorY;
+      st.x += st.vx * dt;
+      if (st.x < b.minX + R) { st.x = b.minX + R; st.vx = 0; }
+      if (st.x > b.maxX - R) { st.x = b.maxX - R; st.vx = 0; }
+      st.spinV = st.vx / R;
+      st.spin += st.spinV * dt;
+      kickIfTouching();                                // 停着的球照样能被她撞走
+      return;
+    }
 
     // 重力 + 空气阻力
     st.vy += GRAVITY * dt;
@@ -143,20 +174,28 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
     st.spin += st.spinV * dt;
     st.spinV *= Math.max(0, 1 - 2.2 * dt);            // 滚动慢慢停
 
-    const floorY = b.floorY - R;                       // 球心贴地时的高度
     if (st.y >= floorY) {
       st.y = floorY;
-      if (st.vy > 40) {
+      if (st.vy > BOUNCE_MIN_VY) {
+        // 真·落下：弹一次（音效由 `bounce()` 限流）
         st.vy = -st.vy * BOUNCE;
         st.vx *= GROUND_FRICTION;
         st.spinV = st.vx / R;                          // 落地后开始滚
         bounce(Math.min(1, Math.abs(st.vy) / 400));
+        st.resting = false;
+      } else if (Math.abs(st.vy) <= REST_VY && Math.abs(st.vx) <= REST_VX) {
+        // 够慢了：**一次性趴下**，之后由上面的 `st.resting` 分支接管（不再弹、不再响）
+        st.vy = 0; st.vx = 0;
+        st.spinV = 0;
+        st.resting = true;
+        st.since = 0;                                  // 从"停稳"开始重新计时（她要玩球靠它）
       } else {
+        // 中间那一段（45~110）：既不弹也不停，就贴着地面耗掉这点速度
         st.vy = 0;
-        if (Math.abs(st.vx) < 6) st.vx = 0;             // 停下来，不然会永远微动
+        st.vx *= GROUND_FRICTION;
         st.spinV = st.vx / R;
+        st.resting = false;
       }
-      st.resting = st.vy === 0;
     } else {
       st.resting = false;
     }
@@ -223,6 +262,8 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
   /** 拖着球走：跟手，速度从手的位移算出来（松手就飞出去）。dt 由这里自己算（调用处拿不到帧的 dt）。 */
   function drag(x, y) {
     if (!st.on) return;
+    st.resting = false;                    // 一拖就"醒过来"（静止分支会跳过物理）
+    st.dragging = true;
     const now = performance.now();
     const dt = Math.min(.05, Math.max(1 / 240, (now - lastDragAt) / 1000));
     lastDragAt = now;
@@ -287,7 +328,15 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
     get x() { return st.x; },
     get y() { return st.y; },
     get resting() { return st.resting; },
+    /**
+     * 球"正在动"（给页面决定帧率用）。
+     * **为什么需要它**：页面静止时按 30fps 跑，而"球在滚/在飞/正被拖着"都不算她的
+     * `ctl.moving`，于是**抓球的时候只有 30fps**——手很跟手、画面却是半速的，用户实感就是"卡"。
+     */
+    get busy() { return st.on && (st.dragging || !st.resting); },
+    /** 拖着球的状态由页面设置（它知道指针按下/松开）。 */
+    setDragging(on) { st.dragging = !!on; },
     /** 给调试/日志用。 */
-    get state() { return { on: st.on, x: Math.round(st.x), y: Math.round(st.y), vx: Math.round(st.vx), vy: Math.round(st.vy), resting: st.resting }; },
+    get state() { return { on: st.on, x: Math.round(st.x), y: Math.round(st.y), vx: Math.round(st.vx), vy: Math.round(st.vy), resting: st.resting, dragging: st.dragging }; },
   };
 };
