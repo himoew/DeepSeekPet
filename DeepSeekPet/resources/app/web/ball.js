@@ -38,6 +38,11 @@ const KICK_COOL_MS = 420;
  */
 const HIT = { front: 52, back: 40, low: 52 };
 
+/** 上报一句给主进程（写进 `data\pet-host.log`）。页面报错通道见 `web/diag.js`。 */
+const report = (msg) => {
+  try { globalThis.petHost?.report?.(String(msg).slice(0, 600)); } catch { /* 报告失败就算了 */ }
+};
+
 export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
   const st = {
     on: false,
@@ -51,6 +56,16 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
 
   let box = null;          // { W, H, floorY }，每帧问 stage 要
   let root = null, shadow = null, ballEl = null;
+  /** 球弹地的音效限流：`ballBounce` 一秒最多响 8 次（防"嗡嗡"的异响）。 */
+  let lastBounceAt = 0;
+  /** 被挤出 `#fx` 后只自动补挂一次（见 `draw()`）。 */
+  let remountTried = false;
+  const bounce = (k) => {
+    const now = performance.now();
+    if (now - lastBounceAt < 110) return;
+    lastBounceAt = now;
+    sfx?.ballBounce?.(k);
+  };
 
   /* ---------- 开关 ---------- */
 
@@ -69,6 +84,13 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
     root.appendChild(shadow);
     root.appendChild(ballEl);
     fxG.appendChild(root);
+    /**
+     * 首次挂载报一句给主进程（写进 `data\pet-host.log`）。
+     * **为什么**：球曾经因为"和她的粒子抢同一层、被整层重写"而完全看不见，
+     * 而日志里一点线索都没有（页面没抛错、World 那边一切正常）。
+     * 有这一行，下次至少能立刻分清"根本没挂上去"还是"挂上去又被抹了"。
+     */
+    report(`[玩具球] 已挂到 #fx · 父节点=${fxG.id || fxG.tagName} · 同层子节点=${fxG.children.length}`);
   }
 
   function place({ fromLeft } = {}) {
@@ -109,6 +131,12 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
     st.vy += GRAVITY * dt;
     const drag = Math.max(0, 1 - AIR_DRAG * dt);
     st.vx *= drag; st.vy *= drag;
+    // 万一出现非有限值（某个 bounds 坏了、或者被甩得离谱），当场复位：
+    // **别让 NaN 进物理** —— 它会永久留在球的状态里，还可能让音效每帧响一次。
+    if (!Number.isFinite(st.x) || !Number.isFinite(st.y) || !Number.isFinite(st.vx) || !Number.isFinite(st.vy)) {
+      place({ fromLeft: Math.random() < .5 });
+      return;
+    }
 
     st.x += st.vx * dt;
     st.y += st.vy * dt;
@@ -122,7 +150,7 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
         st.vy = -st.vy * BOUNCE;
         st.vx *= GROUND_FRICTION;
         st.spinV = st.vx / R;                          // 落地后开始滚
-        sfx?.ballBounce?.(Math.min(1, Math.abs(st.vy) / 400));
+        bounce(Math.min(1, Math.abs(st.vy) / 400));
       } else {
         st.vy = 0;
         if (Math.abs(st.vx) < 6) st.vx = 0;             // 停下来，不然会永远微动
@@ -133,10 +161,10 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
       st.resting = false;
     }
 
-    // 撞墙回弹
+    // 撞墙回弹（同样限流：贴着墙抖动时不让它连成"嗡嗡"）
     const left = b.minX + R, right = b.maxX - R;
-    if (st.x < left) { st.x = left; if (st.vx < 0) { st.vx = -st.vx * 0.7; sfx?.ballBounce?.(.35); } }
-    if (st.x > right) { st.x = right; if (st.vx > 0) { st.vx = -st.vx * 0.7; sfx?.ballBounce?.(.35); } }
+    if (st.x < left) { st.x = left; if (st.vx < 0) { st.vx = -st.vx * 0.7; bounce(.35); } }
+    if (st.x > right) { st.x = right; if (st.vx > 0) { st.vx = -st.vx * 0.7; bounce(.35); } }
 
     // 掉出画面（比如她把球踢飞了）：过一会儿从边上再滚一个进来
     if (st.y > b.floorY + 400) place({ fromLeft: Math.random() < .5 });
@@ -211,19 +239,37 @@ export const createBall = ({ fxG, sfx, stage, onEvent } = {}) => {
 
   /* ---------- 绘制 ---------- */
 
+  /**
+   * 画出来。**外面包一层 try/catch**：这个函数在帧循环里被调，抛一次就会连累整帧
+   * （帧循环自己有兜底，但那样球就永远不画了，而且没人知道为什么）。出一次错就上报一次。
+   */
+  let drawFailed = false;
   function draw() {
     if (!st.on || !root) return;
-    const b = (box = stage.bounds());
-    const floorY = b.floorY;
-    // 影子：球越高越小越淡
-    const h = Math.max(0, floorY - R - st.y);
-    const k = Math.max(.35, 1 - h / 320);
-    shadow.setAttribute('cx', st.x.toFixed(1));
-    shadow.setAttribute('cy', floorY.toFixed(1));
-    shadow.setAttribute('rx', (R * 1.1 * k).toFixed(1));
-    shadow.setAttribute('ry', (R * .42 * k).toFixed(1));
-    shadow.setAttribute('opacity', (.34 * k).toFixed(2));
-    ballEl.setAttribute('transform', `translate(${st.x.toFixed(1)} ${st.y.toFixed(1)}) rotate(${(st.spin * 57.2958).toFixed(1)})`);
+    try {
+      const b = (box = stage.bounds());
+      const floorY = b.floorY;
+      // 影子：球越高越小越淡
+      const h = Math.max(0, floorY - R - st.y);
+      const k = Math.max(.35, 1 - h / 320);
+      shadow.setAttribute('cx', st.x.toFixed(1));
+      shadow.setAttribute('cy', floorY.toFixed(1));
+      shadow.setAttribute('rx', (R * 1.1 * k).toFixed(1));
+      shadow.setAttribute('ry', (R * .42 * k).toFixed(1));
+      shadow.setAttribute('opacity', (.34 * k).toFixed(2));
+      ballEl.setAttribute('transform', `translate(${st.x.toFixed(1)} ${st.y.toFixed(1)}) rotate(${(st.spin * 57.2958).toFixed(1)})`);
+      // 球被整层重写抹掉时（比如别人写了 `#fx.innerHTML`）自己挂回去：只试一次，避免死循环
+      if (!remountTried && root.parentNode !== fxG) {
+        remountTried = true;
+        fxG.appendChild(root);
+        report('[玩具球] 被从 #fx 里挤掉了，已重新挂上（检查有没有人重写 #fx.innerHTML）');
+      }
+    } catch (err) {
+      if (!drawFailed) {
+        drawFailed = true;
+        report(`[玩具球] 绘制抛错：${err && (err.stack || err.message)}`);
+      }
+    }
   }
 
   /* ---------- 她要过去玩 ---------- */

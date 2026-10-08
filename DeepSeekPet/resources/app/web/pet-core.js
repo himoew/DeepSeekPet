@@ -581,6 +581,11 @@ const MOVING_MODES = new Set(['drag', 'air', 'crouch', 'land', 'walk', 'run']);
  */
 export function createPet(els, opts) {
   const { petG, shadowEl, fxG } = els;
+  /**
+   * 粒子（爱心、眼泪、z、灰尘）写在 `fxG` 的**子层** `fxCore` 里，`fxG` 本身留给别的绘制者
+   * （玩具球就画在 `fxG` 里的另一个子节点）。老调用方只给 `fxG` 时退化成直接用它自己。
+   */
+  const fxCore = fxG?.querySelector?.(':scope > #fxCore') || fxG;
   /** 上一帧写进 `#fx` 的那串 SVG（`#fx` 这个元素是页面里固定的，不会被换掉）。 */
   let lastFx = '';
   let custom = opts.figure || null;
@@ -1160,7 +1165,12 @@ export function createPet(els, opts) {
     }
     // 没有粒子时 `s` 是空串：**别每帧都写一次 innerHTML**（那是每帧一次 DOM 解析 + 布局失效）。
     // 同一个缓存手法在 `whale/figure.js` 的 drawFx 里已经有了，这里原来漏了。
-    if (s !== lastFx) { fxG.innerHTML = s; lastFx = s; }
+    //
+    // ⚠️ **只写 `fxCore` 那一层，绝不写 `#fx` 本身**：`innerHTML = …` 会把那个元素里的
+    // **所有子节点换掉**，而玩具球（`web/ball.js`）画的是 `#fx` 里的另一个子节点 ——
+    // 实测症状就是"球开了但看不见"（球刚画上就被这一行抹掉；它是脏检查，所以偶尔才闪一下）。
+    // 以后再有"画进 #fx 的新东西"，请同样放进自己的子节点，别让任何人重写 `#fx`。
+    if (s !== lastFx) { fxCore.innerHTML = s; lastFx = s; }
     return fname;
   }
 

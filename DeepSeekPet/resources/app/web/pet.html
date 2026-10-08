@@ -22,7 +22,9 @@
     </defs>
     <ellipse id="shadow" class="shadow" cx="0" cy="0" rx="0" ry="0"/>
     <g id="pet"></g>
-    <g id="fx"></g>
+    <!-- #fx 是"特效那一层"：#fxCore 装她的粒子（爱心/z/眼泪/灰尘，pet-core 会整层重写它），
+         其余子节点留给别的绘制者（玩具球就挂在这里），**互不干扰** -->
+    <g id="fx"><g id="fxCore"></g></g>
   </svg>
 </div>
 <div class="trail" id="trail" hidden aria-hidden="true"><i></i><i></i><i></i></div>

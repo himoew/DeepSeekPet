@@ -383,6 +383,21 @@ function stubModel() {
     ok('玩具球：开关存进配置（重启后还在）',
       fs.readFileSync(path.join(app, 'llm.cjs'), 'utf8').includes('ball: false')
       && fs.readFileSync(path.join(app, 'pet.cjs'), 'utf8').includes('llm.save({ ball: on })'));
+    /**
+     * **特效那一层不许被整层重写**（这条是为一次真实翻车加的）。
+     *
+     * `pet-core` 的粒子原来写 `fxG.innerHTML = …` —— 那是**把 `#fx` 里所有子节点换掉**。
+     * 玩具球也挂在 `#fx` 下，于是"球刚画上就被抹掉"：球开了却看不见，
+     * 而页面不抛错、World 那边一切正常（对话、表情、闹脾气全都有）。
+     * 现在粒子写自己的子层 `#fxCore`，`#fx` 留给别的绘制者。
+     */
+    const htmlSrc = fs.readFileSync(path.join(app, 'web', 'pet.html'), 'utf8');
+    const coreSrc = fs.readFileSync(path.join(app, 'web', 'pet-core.js'), 'utf8');
+    ok('特效层分成两层：#fx 里装 #fxCore（她的粒子）', /id="fx"[\s\S]{0,120}id="fxCore"/.test(htmlSrc));
+    ok('pet-core 的粒子只写 #fxCore，不整层重写 #fx（否则会把球抹掉）',
+      !/fxG\.innerHTML\s*=/.test(coreSrc) && /fxCore\.innerHTML\s*=/.test(coreSrc));
+    ok('玩具球挂在 #fx 下（跟粒子同一层但不同子节点）',
+      /fxG\.appendChild/.test(fs.readFileSync(path.join(app, 'web', 'ball.js'), 'utf8')));
 
     /* ---------- 2h. 页面代码里的"跨函数引用"（纯 Node 也能盯住的致命笔误） ---------- */
     /**
@@ -395,7 +410,6 @@ function stubModel() {
      * 所以这里做一条**静态作用域检查**：把 pet-core 里 `render()` 的函数体切出来，
      * 断言它不引用那些"只在别的函数里声明"的名字。
      */
-    const coreSrc = fs.readFileSync(path.join(app, 'web', 'pet-core.js'), 'utf8');
     /** 从 `function name(` 起，按大括号配对切出函数体。 */
     const bodyOf = (src, name) => {
       const at = src.indexOf(`function ${name}(`);
