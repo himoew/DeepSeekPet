@@ -14,7 +14,7 @@
  *   - 球进谁的网，**对面得一分**；球从"失球那一边"的门前重新开出来
  *     （用户要的："我方进球，球会默认在对方脚底下出现"）；
  *   - 她在自己半场时会主动把球踢向对面的门；**踢的力度随机**，偶尔**蓄力飞踢**（×1.7）；
- *   - 高球她**30%** 概率**跳起来用头顶**回去（太高的够不到）；
+ *   - 高球她**50%** 概率**跳起来用头顶**回去（只要进了她跳起来够得到的范围；太高的够不到）；
  *   - 你随时可以把球直接丢进她的门、或者把她拎到另一边 —— 那是**整蛊玩法**，规则不拦着。
  */
 import { HEAD_REACH } from './ball.js';
@@ -28,7 +28,11 @@ import { HEAD_REACH } from './ball.js';
 const GOAL_W = 0.06;          // 球门宽度（占窗口宽度的比例，约 77px @1280）
 const GOAL_H = 96;            // 球门高度（px，≈ 她的身高）
 const ZONE = 0.5;             // 中线：她的半场 / 你的半场
-const HEAD_CHANCE = 0.30;     // 高球跳起来顶回去的概率（用户指定）
+/**
+ * 头球概率：**只要球进了她"跳起来够得到"的范围，就 50% 触发**
+ * （用户实测后定的：先按 50% 看看手感，太高接不到的球不在范围内、不参与判定）。
+ */
+const HEAD_CHANCE = 0.50;
 const CHARGE_CHANCE = 0.18;   // 蓄力飞踢的概率
 const CHARGE_POWER = 1.7;     // 蓄力时的力度系数
 /** 球高过地面这么多以内她跳得够到（**跟球那边的头球盒子对齐**，见 ball.js 的 HEAD_REACH）。 */
@@ -36,7 +40,9 @@ const REACH_JUMP = HEAD_REACH;
 const HEAD_X = 150;           // 横向差这么多以内才去顶
 const WALK_EVERY_MS = 320;    // 两次改走路目标的间隔（要跟得上球，但不能每帧喊）
 const WALK_EPS = 26;          // 离目标这么近就不喊了
-const DEFEND_X = 0.86;        // 回防站位（相对她那个半场的边线：越靠门越保守）
+const CHASE_OPP_MAX = 0.16;   // 球离对面门这么近（占窗口宽）就不追了 —— 追不上，回去防守
+const CHASE_SELF_MAX = 0.34;  // 自己离球这么远也不追了（回防）
+const DEFEND_X = 0.30;        // 回防站位：在自己半场这条线上等（不贴墙，留反应距离）
 
 /** 球往哪个门踢：她守 0（左）就踢右边（1.0），反之踢左边（0.0）。 */
 const targetFor = (defence) => (defence === 0 ? 1 : 0);
@@ -174,7 +180,8 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     if (releasedAt !== g.lastRelease) { g.lastRelease = releasedAt; g.scoredThisRelease = false; }
 
     // 1) 进球：球心进了门框（横梁以下、门柱之间），而且是"往里飞"
-    if (!s.dragging && s.y >= goalRect(0).yTop - 6) {
+    const grTop = goalRect(0).yTop;
+    if (!s.dragging && s.y >= grTop - 6) {
       for (const side of [0, 1]) {
         const gr = goalRect(side);
         if (s.x < gr.x0 || s.x > gr.x1) continue;
@@ -230,13 +237,23 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     }
     if (herZone) { goTo(s.x, false, true); void netX; return; }   // 她半场的球：**跑**过去踢
     /**
-     * 球在对面：**立刻回防**（用户要的："当球不在自己区域会立刻选择返回防守"）。
-     * 站位在门前方一点（`DEFEND_X`），不是杵在门里 —— 那样才有反应距离。
+     * 球在对面半场。用户实测的问题是："进攻到快进球了就停止了" —— 老写法一到对面就整段回防，
+     * 于是**球都快进门了她却掉头往回走**。
+     *
+     * 现在分三种情况（按球离对面球门有多近）：
+     *   · 球还在对面中场、自己也离得不远 → **继续追**（这一脚还可能进）；
+     *   · 球已经贴到对面门口 → 追不上了，回防；
+     *   · 球深在对面、自己又远 → 回防。
+     * 回防也保持一个下限（只在己方 70% 区域内活动），不至于贴到墙上。
      */
+    const oppGoalX = g.defence === 0 ? b.maxX : b.minX;            // 对面那个门
+    const dOpp = Math.abs(s.x - oppGoalX);
+    const dSelf = Math.abs(s.x - pet.x);
+    if (dOpp > b.W * CHASE_OPP_MAX && dSelf < b.W * CHASE_SELF_MAX) { goTo(s.x, false, true); return; }
     const backX = g.defence === 0
-      ? b.minX + gr.w * DEFEND_X
-      : b.maxX - gr.w * DEFEND_X;
-    goTo(backX, false, true);                                    // 回防也跑
+      ? b.minX + b.W * DEFEND_X
+      : b.maxX - b.W * DEFEND_X;
+    goTo(backX, false, true);                                      // 回防（不贴墙、留反应距离）
     void netX;
   }
 

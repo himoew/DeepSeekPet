@@ -402,11 +402,13 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     const power = base * (aim.power || 1);
     let dirX, dirY;
     if (aim.x !== null && aim.x !== undefined) {
-      // 瞄准：横向朝目标、纵向固定仰角（好接），再归一化成方向
+      // 瞄准：横向朝目标、纵向给一个**比较平的**仰角。
+      // 原来 -0.45 是高抛：球慢、还容易飘过门框 —— 用户实测"放着不管她也踢不进"。
+      // 压到 -0.30 之后球更快更直，她踢出去的才有威胁。
       const targetX = b.minX + aim.x * (b.maxX - b.minX);
       let dx = targetX - st.x;
       if (Math.abs(dx) < 8) dx = (dx < 0 ? -8 : 8);
-      const dy = -0.45;
+      const dy = -0.30;
       const n = Math.hypot(dx, 1) || 1;                   // 横向先化成"每 1 单位纵向"的比例
       dirX = dx / n; dirY = dy;
       const m = Math.hypot(dirX, dirY) || 1;
