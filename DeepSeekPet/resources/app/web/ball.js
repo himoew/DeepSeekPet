@@ -48,11 +48,18 @@ const KICK_MIN = 300, KICK_MAX = 520;
 const KICK_COOL_MS = 280;
 /** 头球单独的冷却：跳起来顶一次就够，别在空中连着顶。 */
 const HEAD_COOL_MS = 320;
-/** 她跳起来时，头顶那一片的碰撞范围：**相对脚底**算（她跳多高，头就升多高）。 */
-const HEAD_ABOVE_FEET = 112;
-const HEAD_BOX_H = 50;
-/** 她跳起来时**够得到**的高度（px，球离地多高以内她会去顶）——跟上面的盒子对齐。 */
-export const HEAD_REACH = 150;
+/**
+ * 她跳起来时，头顶那一片的碰撞范围：**相对脚底**算（她跳多高，头就升多高）。
+ *
+ * 数值是量出来的：她**身高 ≈96px**；`pet-core` 里起跳速度 720、空中重力 2300，
+ * 所以跳一次最高抬升 `720² / (2×2300) ≈ 113px` —— 跳到最高时**头顶约在离地 200px**。
+ * 原来盒子只到 150px，于是 150~200 这一段飞过去的球**她完全碰不到**（用户实测："每次
+ * 都从头顶飞过去"）。`HEAD_ABOVE_FEET` 也按 96px 身高重新校准过。
+ */
+const HEAD_ABOVE_FEET = 92;
+const HEAD_BOX_H = 60;
+/** 她跳起来时**够得到**的高度（px，球离地多高以内她会去顶）——≈ 2 个小肥鱼高。 */
+export const HEAD_REACH = 200;
 /**
  * 她的碰撞盒（以她脚下中心为原点，单位 px）：front 是朝向那一侧、
  * 大一点；back 是背对那一侧、小一点。**刻意比她的身体略小**（宁可漏判也别误判成"踢到空气"）。
@@ -551,14 +558,16 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
       st.vy = Number(opts.vy) || 0;
       st.spinV = 0;
       /**
-       * ⚠️ **放到半空时不能让它是"静止"**：静止分支会跳过重力，球就**悬在那儿不掉**
-       * （实测：球卡在空中不动）。只要不在贴地位置，就让它落下去。
+       * ⚠️ **放到半空的球绝不能是"静止"**：静止分支会把球**直接按到地面上**（`st.y = floorY`），
+       * 于是"往上扔一颗高球"根本不存在 —— 球一放手就贴地。
+       * （用户实测"每次都从头顶飞过去"的另一半原因就在这里：球压根没在空中待过。）
+       * 所以按**位置**定 resting，不按速度：只要离地就让它落。
        */
       const inAir = st.y < floorAt - 0.5;
-      if (inAir && st.vy === 0) st.vy = 1;
-      st.resting = !inAir && !st.vx && !st.vy;
+      if (inAir && st.vy === 0) st.vy = 1;              // 给一点初速，让物理接手
+      st.resting = !inAir && st.vx === 0 && st.vy === 0;
       st.dragging = false;
-      st.lastKick = -Infinity;                          // 放到新位置后允许立刻被踢（见上面 time 那句注释）
+      st.lastKick = -Infinity;                          // 放到新位置后允许立刻被踢
       st.since = opts.since === undefined ? 0 : opts.since;
       return { x: st.x, y: st.y };
     },

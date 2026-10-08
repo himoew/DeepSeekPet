@@ -37,6 +37,8 @@ const CHARGE_CHANCE = 0.18;   // 蓄力飞踢的概率
 const CHARGE_POWER = 1.7;     // 蓄力时的力度系数
 /** 球高过地面这么多以内她跳得够到（**跟球那边的头球盒子对齐**，见 ball.js 的 HEAD_REACH）。 */
 const REACH_JUMP = HEAD_REACH;
+/** 低于这个高度就算"贴地球"，走"跑过去踢"那条路（不跳）。 */
+const REACH_MIN = 40;
 const HEAD_X = 150;           // 横向差这么多以内才去顶
 const WALK_EVERY_MS = 320;    // 两次改走路目标的间隔（要跟得上球，但不能每帧喊）
 const WALK_EPS = 26;          // 离目标这么近就不喊了
@@ -226,16 +228,34 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
       control.walkTo(want / b.W, !!run);
     };
 
-    // 高球：站到球下面一点，然后跳起来用头顶（30%）
-    if (herZone && !s.resting && high > 40 && high < REACH_JUMP && Math.abs(s.x - pet.x) < HEAD_X) {
+    /**
+     * 高球：**只要球进了她跳起来够得到的范围，不管在哪半边，她都去顶**（50%）。
+     *
+     * ⚠️ 之前这一段写在 `if (herZone)` 里面，是个真 bug（用户实测："每次都会从头顶飞过去"）：
+     * 她守左边时，从对面飞来的弧线球很容易落到她**身后**（右半边），于是整段被跳过、她站着看球飞过。
+     * **头球是防守动作** —— 它该看"球在不在她够得到的范围内"，不是"球在她的半场"。
+     * 只有贴地（<40px）的球才按半场决定追不追，那种球是要去踢的。
+     */
+    const canHead = !s.resting && high > REACH_MIN && high < REACH_JUMP && Math.abs(s.x - pet.x) < HEAD_X;
+    if (canHead || (herZone && !s.resting && high < REACH_MIN)) {
       if (now - g.lastHeadAt > 700 && Math.random() < HEAD_CHANCE) {
         g.lastHeadAt = now;
-        goTo(s.x + (s.x < pet.x ? 16 : -16), true, true);
+        goTo(s.x + (s.x < pet.x ? 10 : -10), true, true);
         control.jump();
+        /**
+         * 报一句给主进程（限流 1.2 秒一条）：**"头球有没有触发"的唯一实锤**。
+         * 页面里没法打断点，日志里能直接看到"球多高、离她多远、她起没起跳"。
+         */
+        if (now - (g.lastJumpLog || 0) > 1200) {
+          g.lastJumpLog = now;
+          try {
+            globalThis.petHost?.report?.(`[弹弹乐] 起跳顶球：球离地 ${Math.round(high)}px（够得到 ${REACH_MIN}~${REACH_JUMP}）· 横向差 ${Math.round(Math.abs(s.x - pet.x))}px`);
+          } catch { /* 报告失败就算了 */ }
+        }
       }
-      return;
+      if (canHead) return;                  // 够得到的高球：这一帧就去顶，不再管走位
     }
-    if (herZone) { goTo(s.x, false, true); void netX; return; }   // 她半场的球：**跑**过去踢
+    if (herZone) { goTo(s.x, false, true); void netX; return; }   // 她半场的地滚球：**跑**过去踢
     /**
      * 球在对面半场。用户实测的问题是："进攻到快进球了就停止了" —— 老写法一到对面就整段回防，
      * 于是**球都快进门了她却掉头往回走**。
