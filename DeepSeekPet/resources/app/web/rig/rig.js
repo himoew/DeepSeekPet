@@ -75,6 +75,8 @@ export function createRig(canvas, model) {
   const chainOf = id => { const c = []; for (let d = id; d; d = defs[d].parent) c.push(d); return c; };
 
   let prog, loc, meshes = [];
+  /** 画序：z 序是常量，所以在 `buildGL` 里排一次（见 render 里的注释）。 */
+  let order = [];
   let shaders = [];
   /** Builds every GL resource; called again on `webglcontextrestored`, where the old ones died with the context. */
   function buildGL() {
@@ -125,6 +127,8 @@ export function createRig(canvas, model) {
       return { part: p, rest, out: new Float32Array(rest.length), vao, pos, uvb, ib, count: idx.length };
     });
     meshes.forEach(m => { m.chain = chainOf(m.part.parent); });
+    // 画序只跟各部件的固定 z 有关，排一次就够（`figure.js` 从不写 `st.z`）
+    order = meshes.map(m => ({ m, z: m.part.z })).sort((a, b) => a.z - b.z);
   }
 
   // a lost context blanks the canvas; unless the loss is preventDefault-ed the browser never
@@ -162,13 +166,24 @@ export function createRig(canvas, model) {
     }
   }
 
-  /** Moves a rest point through deformer `id` and its ancestors, with this frame's states. */
-  function applyChain(chain, st, x, y) {
+  /**
+   * Moves a rest point through deformer `id` and its ancestors, with this frame's states.
+   *
+   * `out`（可选）是一个**可复用的两点数组**：渲染时每个顶点都调用这里，返回新数组等于
+   * 每帧上千个短命对象（约 1000 顶点 × 1~2 个），所以热路径传 `out`，别的地方不传、照旧拿数组。
+   */
+  function applyChain(chain, st, x, y, out) {
     for (const id of chain) {
       const d = defs[id], s = st[id];
       if (!s) continue;
       if (d.kind === 'rot') {
-        const [px, py] = d.pivot, a = (s.a || 0) * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
+        const [px, py] = d.pivot;
+        const a = (s.a || 0) * Math.PI / 180;
+        // **同一帧里同一个 deformer 的角度只算一次 cos/sin**：`s` 就是这一帧的状态对象，
+        // 角度没变就一直复用（`figure.js` 每帧给每个部件写一次 `a`）。原来每个顶点都重算
+        // 一遍三角函数 —— 约 1000 顶点 × 链上两三个 rot ≈ 每帧几千次 sin/cos。
+        if (s._a !== a) { s._a = a; s._c = Math.cos(a); s._sn = Math.sin(a); }
+        const c = s._c, sn = s._sn;
         const sx = s.sx ?? s.s ?? 1, sy = s.sy ?? s.s ?? 1;
         const lx = (x - px) * sx, ly = (y - py) * sy;
         x = px + (s.tx || 0) + lx * c - ly * sn;
@@ -180,8 +195,12 @@ export function createRig(canvas, model) {
         x += r[0]; y += r[1];
       }
     }
+    if (out) { out[0] = x; out[1] = y; return out; }
     return [x, y];
   }
+
+  /** 热路径复用的两点数组（见 `applyChain` 的 `out`）。 */
+  const tmpXY = [0, 0];
 
   function render(st, opts = {}) {
     if (lost || gl.isContextLost()) return;
@@ -196,13 +215,18 @@ export function createRig(canvas, model) {
     gl.uniform1i(loc.uTex, 0);
     gl.uniform1i(loc.uTex2, 1);
     const mixK = Math.min(1, Math.max(0, st.mix || 0));
-    const order = meshes.map(m => ({ m, z: st.z?.[m.part.id] ?? m.part.z })).sort((a, b) => a.z - b.z);
+    // 画序沿用 `buildGL` 里排好的那份；只有调用方真的给了 `st.z`（本 fork 里没有任何地方给）
+    // 才每帧重排 —— 原来无条件 filter+map+sort，等于每帧白做 26 个包装对象和一次排序。
+    if (st.z) order = meshes.map(m => ({ m, z: st.z[m.part.id] ?? m.part.z })).sort((a, b) => a.z - b.z);
+    // 无 tint 的部件共用一个 uniform：着色器在 `uTint.a == 0` 时直接返回原色，
+    // 所以"有没有 tint"切换时才需要再设一次（原来是每个部件都重设 26 次）。
+    let lastTint = null;
     for (const { m } of order) {
       const p = m.part, alpha = st.alpha?.[p.id] ?? p.alpha ?? 1;
       const tex = textures.get(p.tex);
       if (!tex || alpha <= 0.001) continue;
       for (let i = 0; i < m.rest.length; i += 2) {
-        const q = applyChain(m.chain, st, m.rest[i], m.rest[i + 1]);
+        const q = applyChain(m.chain, st, m.rest[i], m.rest[i + 1], tmpXY);
         m.out[i] = q[0]; m.out[i + 1] = q[1];
       }
       gl.bindBuffer(gl.ARRAY_BUFFER, m.pos);
@@ -215,7 +239,11 @@ export function createRig(canvas, model) {
       gl.uniform1f(loc.uMix, tex2 ? mixK : 0);
       gl.uniform1f(loc.uAlpha, alpha);
       const tint = st.tint?.[p.id];
-      gl.uniform4f(loc.uTint, ...(tint || [1, 1, 1, 0]));
+      if (tint !== lastTint) {
+        lastTint = tint;
+        if (tint) gl.uniform4f(loc.uTint, tint[0], tint[1], tint[2], tint[3]);
+        else gl.uniform4f(loc.uTint, 1, 1, 1, 0);
+      }
       gl.bindVertexArray(m.vao);
       gl.drawElements(gl.TRIANGLES, m.count, gl.UNSIGNED_SHORT, 0);
     }

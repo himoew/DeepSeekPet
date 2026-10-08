@@ -49,8 +49,16 @@
         const b = c.getBoundingClientRect();
         return `${c.width}x${c.height}@${Math.round(b.x)},${Math.round(b.y)}:${Math.round(b.width)}x${Math.round(b.height)}`;
       });
-      let gl = '?';
-      try { const c = document.createElement('canvas'); gl = c.getContext('webgl2') ? 'gl2' : (c.getContext('webgl') ? 'gl1' : 'GLNONE'); } catch (e) { gl = 'glthrow'; }
+      // ⚠️ 探针**不要每秒新建一个 canvas 再要一个 WebGL 上下文**：Chromium 每页只给约 16 个
+      // 活动上下文（见 rig/rig.js 的 dispose 注释），这个自检本身会把它耗光 ——
+      // 于是读出来的 `GLNONE` 反而是**自检造成的假象**（排查时最误导人的一种）。
+      // 现在只复用页面里已有的那块 canvas：它已经有 webgl2 上下文，`getContext` 只会把它取回来。
+      let gl = 'GLNONE';
+      try {
+        const c = document.querySelector('#pet canvas');
+        const ctx = c && c.getContext('webgl2');
+        gl = !ctx ? 'GLNONE' : (ctx.isContextLost() ? 'gl2:LOST' : 'gl2');
+      } catch (e) { gl = 'glthrow'; }
       document.title = `DIAG ${tag} ready=${document.readyState} kids=${petG ? petG.childElementCount : -1}`
         + ` inner=${petG ? petG.innerHTML.length : -1} tf=${petG ? petG.getAttribute('transform') : null}`
         + ` svg=${r ? [r.x, r.y, r.width, r.height].map(Math.round).join(',') : null}`

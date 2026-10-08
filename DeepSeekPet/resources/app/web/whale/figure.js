@@ -25,6 +25,13 @@ const smooth = (a, b, x) => { const k = clamp((x - a) / (b - a), 0, 1); return k
 const SVGNS = 'http://www.w3.org/2000/svg';
 
 // the face texture covers this rect of the master drawing, one texel per master pixel
+//
+// ★ **两套真相的警告**：`FACE` / `HEAD` / `CHEEKS` / `INK` 以及下面 `parts.push` 里两个手写的部件
+//   （`faceFx`、`brows_through` 的 z 与 alpha）都是**按 master 像素写在这里的常量**，而
+//   `model.json` 里同样描述这张脸的字段（`units.DS` / `units.featDS` / `pivots.head` /
+//   `pivots.waist` / `feat.blush` / `feat.skin`）**没有任何代码读它们**。
+//   所以**重导美术资源（改 `X0` / `FEET` / `S` / 贴图尺寸）时，这里必须一起改** ——
+//   否则嘴唇、腮红、眼睛会静默错位，而不会报任何错。详见 HANDOVER 第 1.24 节。
 const FACE = { x: 520, y: 578, w: 390, h: 252 };
 // the head's parallax warps act over this rect (rig units); the long hair below it stays put
 const HEAD = [30, 12, 215, 168];
@@ -236,6 +243,23 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     try { paintFaceBody(fc, face, o, t); } finally { fg.restore(); }
   }
 
+  /**
+   * 这一帧的脸"指纹"，用来跳过没必要的重画与重传（见 `drawNow` 里那段注释）。
+   *
+   * 返回 `null` = **这张脸每帧都在变，别缓存**。判据必须覆盖 `paintFaceBody` 读到的每一样东西：
+   * 脸名、眉毛、腮红、瞳孔位置、眼睛的每个形状与偏移、嘴的开合；还有 **`t`** ——
+   * 说话时嘴的开合、拖拽脸的"眼睛缩放"都随时间走，所以这几种情况一律不缓存。
+   */
+  function faceStamp(fc, face, o) {
+    if ((o.talk || 0) > .02 || (o.blink || 0) > .02 || (o.eyeClose || 0) > .02) return null;
+    if (face === 'dragged' || face === 'dizzy' || face === 'sleepy' || face === 'waking') return null;
+    if (fc.eyes.some((e) => e.shape === 'gt' || e.shape === 'lt')) return null;
+    const eyes = fc.eyes.map((e) => `${e.shape}${e.rx || 0},${e.ry || 0},${e.dx || 0},${e.dy || 0},${e.rot || 0},${e.s || 0}`).join(';');
+    return `${face}|${fc.brows || ''}|${fc.blush || 0}|`
+      + `${(o.look[0] || 0).toFixed(3)},${(o.look[1] || 0).toFixed(3)}|`
+      + `${(fc.gap[0] || 0).toFixed(2)},${(fc.gap[1] || 0).toFixed(2)}|${eyes}`;
+  }
+
   function paintFaceBody(fc, face, o, t) {
     fg.setTransform(1, 0, 0, 1, 0, 0);
     fg.clearRect(0, 0, FACE.w, FACE.h);
@@ -296,6 +320,8 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     // 换了新的 fxG：`fx` 那个"上一帧写过的特效串"缓存必须作废，不然不随时间变化的特效
     // （比如感叹号）在重挂之后不会重画，会一直到状态变化为止都不见。
     fx = '';
+    // 同理：新挂的 rig 还没有 `faceFx` 贴图，所以下一帧**必须**重画并重传一次脸
+    lastFaceSig = undefined;
     // ★ **挂载本身可能抛**（`createRig` 里 `webgl2 unavailable`、上下文耗尽…）。
     // 关键不是"接住它"，而是**别让下一帧又重来一遍**：`mountedIn` 在下面才赋值，
     // 一抛就还是 null，于是每一帧都 `petG.textContent = ''` + 新建 canvas + 再抛，
@@ -360,6 +386,8 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     ahoge: spring(140, 6, 38), head: spring(70, 10, 16), armN: spring(60, 9, 95), armF: spring(60, 9, 95),
   };
   let lastT = null, prevTilt = 0, prevLow = 0, headTilt = 0, fx = '';
+  /** 上一帧那张脸的指纹（见 `faceStamp`）。`undefined` = 必须重画一次。 */
+  let lastFaceSig;
   /** 绘制抛错的次数与上一次上报的时刻（见 `draw` 外面那层 try/catch）。 */
   let drawFails = 0, drawFailAt = -1e9;
   // pet-core tips Coo's whole round body to listen, nod, doze or wobble; she keeps her feet on the floor and
@@ -575,8 +603,15 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     st.finNear = { a: fins + Math.sin(t * 1.7) * 4.5 };
     st.finFar = { a: -fins * .8 - Math.sin(t * 1.9 + 1.1) * 4 };   // 两片不同频，看着才不像一个整体
 
-    paintFace(fc, face, o, t);
-    rig.upload('faceFx', faceCv);
+    // **脸只在真的变了的时候重画 + 重传**：390×252 的 RGBA 每帧 `texImage2D` 并重建整条
+    // mipmap 链，是这个文件里最贵的单个 GL 操作，而大多数时候（站着、发呆、没说话）
+    // 它一个像素都没变。会随时间自己变的那几种脸由 `faceStamp` 返回 null → 照旧每帧重画。
+    const faceSig = faceStamp(fc, face, o);
+    if (faceSig === null || faceSig !== lastFaceSig) {
+      lastFaceSig = faceSig;
+      paintFace(fc, face, o, t);
+      rig.upload('faceFx', faceCv);
+    }
     st.mix = 0;
     if (fade) {
       if (fade.t0 == null) fade.t0 = t;
@@ -591,7 +626,9 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
       } finally {
         img = own; fg = ownFg;
       }
+      // 交叉淡化只有 0.45 秒：这段时间两张脸都照旧每帧重传，不值得为它做脏检查
       rig.upload('faceFx@mix', faceCv2);
+      lastFaceSig = undefined;         // 淡化结束后第一帧要把新配色的脸重画一次
     }
     rig.render(st);
     if (fade && st.mix >= 1) endFade();

@@ -69,6 +69,20 @@
 > 只删"零引用的导出与死开关"；上游那些**从不触发但活着**的功能路径（语音输入、屏幕取色…）
 > 一律保留 —— 理由见 `HANDOVER.md` 第 4 节（动它们等于自己维护一个 fork）。
 
+## 2026-10-08 补充性修复（渲染热路径 · 可用性 · 两套真相）
+
+行为不变，只把每帧都在白做/做不到的地方做对：
+
+| 改了什么 | 落在哪 |
+|---|---|
+| 画序只排一次（z 序是常量，原来每帧 `map+sort`）· 无 tint 的部件共用一次 `uTint` · 顶点变换复用输出数组（不再每顶点造一个 `[x,y]`）· 同一帧的 `cos/sin` 只算一次 | `web/rig/rig.js` |
+| **脸贴图脏检查**：站着/发呆/没说话时不再每帧重画 390×252 的 canvas 并重建整条 mipmap 链（说话、眨眼、闭眼、拖拽、晕眩、睡着仍照旧每帧重画） | `web/whale/figure.js` |
+| `#fx` 不再每帧写空 `innerHTML`（同项目另一处早就做了缓存） | `web/pet-core.js` |
+| **服装页能用键盘**：卡片改成 `<button>` + `aria-current` / `aria-disabled` / `:focus-visible`；设置页·音色页·服装页的结果提示加 `role="status" aria-live="polite"`；三页补 viewport meta | `web/dress.html` · `web/settings.html` · `web/voice.html` |
+| `maxTokens` 真的夹在 16–8192（原来手输 `-5` / `1e9` 会原样写进配置） | `web/settings.html` |
+| `?diag=1` 的探针不再每秒新建 WebGL 上下文（它会自己耗光每页约 16 个的配额，读出假的 `GLNONE`） | `web/pet.html` |
+| 标注"两套真相"：`figure.js` 里的 `FACE`/`HEAD`/`CHEEKS`/`INK` 与 `model.json` 里**没人读**的 `units.DS`/`featDS`/`pivots.head`/`feat.blush`/`feat.skin` 必须一起改 | `web/whale/figure.js` |
+
 ## 功能上相对上游桌宠的改动
 
 - **互动**：戳 / 抚摸 / 拖拽 × **7 个部位**（头·肚子·手·鳍·尾巴·裙子·脚）各自反应；

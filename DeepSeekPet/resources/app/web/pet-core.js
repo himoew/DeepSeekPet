@@ -567,6 +567,8 @@ const MOVING_MODES = new Set(['drag', 'air', 'crouch', 'land', 'walk', 'run']);
  */
 export function createPet(els, opts) {
   const { petG, shadowEl, fxG } = els;
+  /** 上一帧写进 `#fx` 的那串 SVG（`#fx` 这个元素是页面里固定的，不会被换掉）。 */
+  let lastFx = '';
   let custom = opts.figure || null;
   const sfx = opts.sfx;
   const onEvent = opts.onEvent || (() => {});
@@ -1140,7 +1142,9 @@ export function createPet(els, opts) {
         s += `<path class="tearf" transform="translate(${f(p.x)} ${f(p.y)}) scale(${f(.9 * sc)})" d="${DROP}"/>`;
       }
     }
-    fxG.innerHTML = s;
+    // 没有粒子时 `s` 是空串：**别每帧都写一次 innerHTML**（那是每帧一次 DOM 解析 + 布局失效）。
+    // 同一个缓存手法在 `whale/figure.js` 的 drawFx 里已经有了，这里原来漏了。
+    if (s !== lastFx) { fxG.innerHTML = s; lastFx = s; }
     return fname;
   }
 

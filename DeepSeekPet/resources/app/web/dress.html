@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Blue Fish Deskpet · 服装</title>
 <style>
   :root { color-scheme: dark; }
@@ -14,11 +15,14 @@
   .sub { margin: 0 0 18px; color: #9aa7bd; font-size: 13px; }
   .card { background: #171c26; border: 1px solid #263043; border-radius: 10px; padding: 16px; margin-bottom: 14px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  /* 卡片是 <button>（键盘也能换装）：把 button 的默认外观清掉，看起来跟原来的 div 一样 */
   .item {
     position: relative; text-align: center; padding: 14px 10px 12px; border-radius: 10px;
     border: 1px solid #2b3648; background: #1c2230; cursor: pointer; transition: .15s;
+    font: inherit; color: inherit; width: 100%;
   }
   .item:hover { border-color: #4d6bfe; transform: translateY(-1px); }
+  .item:focus-visible { outline: 2px solid #7f9bff; outline-offset: 2px; }
   .item.on { border-color: #4d6bfe; background: #1e2740; }
   .item.locked { cursor: not-allowed; opacity: .55; }
   .item.locked:hover { border-color: #2b3648; transform: none; }
@@ -50,7 +54,8 @@
   <section class="card">
     <div class="grid" id="grid"></div>
     <div class="row" style="margin-top:14px">
-      <span class="status" id="status"></span>
+      <!-- role=status + aria-live：换装结果（"换好了" / "还没有贴图"）读屏也要能听到 -->
+      <span class="status" id="status" role="status" aria-live="polite"></span>
     </div>
   </section>
 
@@ -75,13 +80,17 @@
 
   function render(d) {
     $('file').textContent = d.file;
+    // **卡片是按钮**：键盘能 Tab 到、回车/空格能穿；"在穿"用 aria-current、"还没贴图"用 aria-disabled
+    // 说出来（原来只有一个颜色 + 一句 tag，读屏和键盘用户都拿不到）。
     $('grid').innerHTML = (d.outfits || []).map((o) => `
-      <div class="item ${o.id === d.current ? 'on' : ''} ${o.ready ? '' : 'locked'}" data-id="${esc(o.id)}" data-ready="${o.ready ? '1' : '0'}">
+      <button type="button" class="item ${o.id === d.current ? 'on' : ''} ${o.ready ? '' : 'locked'}"
+        data-id="${esc(o.id)}" data-ready="${o.ready ? '1' : '0'}"
+        ${o.id === d.current ? 'aria-current="true"' : ''} ${o.ready ? '' : 'aria-disabled="true"'}>
         ${o.id === d.current ? '<span class="tag">在穿</span>' : ''}
-        <div class="thumb">${o.ready ? '🐳' : '＋'}</div>
-        <div class="name">${esc(o.label)}</div>
-        <div class="note">${esc(o.note || '')}</div>
-      </div>`).join('');
+        <span class="thumb" aria-hidden="true">${o.ready ? '🐳' : '＋'}</span>
+        <span class="name">${esc(o.label)}</span>
+        <span class="note">${esc(o.note || '')}</span>
+      </button>`).join('');
   }
 
   async function refresh() {

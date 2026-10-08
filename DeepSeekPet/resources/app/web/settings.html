@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Blue Fish Deskpet · 设置</title>
 <style>
   :root { color-scheme: dark; --accent: #4d6bfe; --line: #262c38; --ink: #e8ecf4; --dim: #8b95a8; }
@@ -104,7 +105,9 @@
   <div class="row">
     <button class="ghost" id="probe">测试连接</button>
     <button class="primary" id="save">保存</button>
-    <span class="status" id="status"></span>
+    <!-- role=status + aria-live：保存/测试/清空的结果是这一页唯一的反馈通道，读屏也要能听到
+         （pet.html 的两个气泡本来就是这么写的，这里原来漏了） -->
+    <span class="status" id="status" role="status" aria-live="polite"></span>
   </div>
 
   <section class="card" id="memoryCard">
@@ -112,11 +115,11 @@
       <em>它自己记着的事。**平时不显示任何数字**——只偶尔把里面的一件说出来（每天最多两句）。
         这里给你看，不满意可以清空。</em>
     </label>
-    <p><b>现在的心情</b> <span id="moodNow">…</span></p>
+    <p><b>现在的心情</b> <span id="moodNow" role="status" aria-live="polite">…</span></p>
     <div class="mem" id="mem"></div>
     <div class="row">
       <button class="ghost" id="forget">忘掉一切</button>
-      <span class="status" id="memStatus"></span>
+      <span class="status" id="memStatus" role="status" aria-live="polite"></span>
     </div>
     <p>存在：<code id="memFile"></code></p>
   </section>
@@ -136,7 +139,9 @@
     baseUrl: $('baseUrl').value.trim(),
     apiKey: $('apiKey').value,
     model: $('model').value.trim(),
-    maxTokens: Number($('maxTokens').value) || 128,
+    // 表单里的 min/max 只是提示，不会拦住手输的值；这里**真的夹一下**，免得把 -5 或 1e9
+    // 写进配置（本地模型跑一晚上都出不来一句话，还看不出是谁干的）。
+    maxTokens: Math.min(8192, Math.max(16, Math.round(Number($('maxTokens').value) || 128))),
     keepAlive: $('keepAlive').value.trim(),
     prewarm: $('prewarm').checked,
     persona: $('persona').value,
