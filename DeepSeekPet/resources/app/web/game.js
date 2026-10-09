@@ -40,10 +40,16 @@ const REACH_JUMP = HEAD_REACH;
 /** 低于这个高度就算"贴地球"，走"跑过去踢"那条路（不跳）。 */
 const REACH_MIN = 40;
 /**
- * **提前量**：她从起跳到最高点要约 `720 / 2300 ≈ 0.31s`（见 pet-core 的空中重力），
- * 所以"球还有 ≤0.8 秒到她身上"时就该跳了 —— 这就是用户说的"在她头前面那道判断墙"。
+ * **提前量**：她从起跳到最高点要约 `720 / 2300 ≈ 0.31s`（见 pet-core 的空中重力）。
+ *
+ * ⚠️ 这个数**必须贴着"到最高点的时间"**（用户实测"跑步时她不会触发头球"）：
+ * 老写法 `tHit > 0.1` 会在球只差 0.1~0.2 秒时才起跳 —— 那时头还没抬起来，球早过去了，
+ * 看起来就是"她根本没顶到"。反过来 0.33~0.48 秒那一档本来是最理想的窗口，却被 `tHit < 0.1` 漏掉。
+ * 现在：**只在这个"够时间跳到最高点"的窗口里起跳**（下限略早于顶点、上限放宽给慢球）。
  */
-const JUMP_LEAD = 0.8;
+const JUMP_APEX = 0.31;
+const JUMP_LEAD_MIN = 0.18;
+const JUMP_LEAD = 0.85;
 const HEAD_X = 150;           // 横向差这么多以内才去顶
 const WALK_EVERY_MS = 260;    // 两次改走路目标的间隔（要跟得上球，但不能每帧喊）
 const WALK_EPS = 26;          // 离目标这么近就不喊了
@@ -352,13 +358,27 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     const sinceYou = now - (ball.lastRelease || 0);
     const toward = Math.sign(pet.x - s.x) === Math.sign(s.vx || 0) && Math.abs(s.vx) > 40;
     const tHit = toward ? Math.abs(s.x - pet.x) / Math.max(1, Math.abs(s.vx)) : Infinity;
-    /** 她该不该现在起跳：球朝她来、还有 0.1~0.8 秒到（球速越快越早跳）。 */
-    const shouldJump = s.vx !== 0 && s.vy > 0 && tHit > 0.1 && tHit < JUMP_LEAD
+    /** 她该不该现在起跳：球朝她来、而且**来得及跳到最高点**（窗口贴着 `JUMP_APEX`）。 */
+    const shouldJump = s.vx !== 0 && s.vy > 0 && tHit > JUMP_LEAD_MIN && tHit < JUMP_LEAD
       && high > REACH_MIN && high < REACH_JUMP + 60
       && Math.abs(s.x - pet.x) < Math.abs(s.vx) * JUMP_LEAD + 40;
     /** 球就在她头顶那一片（已经来不及预判了）：也跳一下碰运气。 */
     const above = !s.resting && high > REACH_MIN && high < REACH_JUMP && Math.abs(s.x - pet.x) < HEAD_X;
     const canHead = (sinceYou < HEAD_WINDOW) && (shouldJump || above);
+    /**
+     * **诊断：高球来了但没跳的原因**（`DSP_DEBUG=1` 时才记，1 秒最多一条）。
+     * 用户实测"跑步时她不会触发头球" —— 这一行能分清是
+     *   ① 条件没满足（球超出可达范围 / 不是"她丢过来的"）、
+     *   ② 概率没中、还是 ③ 跳了但被跑动打断。
+     */
+    if (DEBUG && !s.resting && high > REACH_MIN && Math.abs(s.x - pet.x) < HEAD_X + 80
+      && now - (g.headLogAt || 0) > 1000) {
+      g.headLogAt = now;
+      try {
+        const mv = control.move ? control.move() : null;
+        globalThis.petHost?.report?.(`[弹弹乐·头球] 高度=${Math.round(high)} 离她=${Math.round(Math.abs(s.x - pet.x))} 球速=${Math.round(Math.abs(s.vx || 0))} 还有=${tHit === Infinity ? '—' : tHit.toFixed(2)}s 是来球=${toward} 她=${mv ? mv.mode : '?'} → 可跳=${canHead}（预判=${shouldJump} 头顶=${above}）`);
+      } catch { /* ignore */ }
+    }
     if (canHead || (herZone && !s.resting && high < REACH_MIN)) {
       // "从来没跳过"也算可以跳（跟 goTo 一个道理：别让时间轴起点决定第一次能不能动）
       if (!(g.lastHeadAt > 0) || now - g.lastHeadAt > 900) {

@@ -411,20 +411,22 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
       const wantSign = Math.sign(b.minX + aim.x * (b.maxX - b.minX) - st.x) || 1;
       if (inOwnHalf && Math.sign(ux) !== wantSign) ux = wantSign * Math.abs(ux);
     }
-    st.vx = ux * power;
     /**
      * **高度按力度分档**（见 `KICK_LIFT`）：轻扫到她的脖子、中扫到 1.5 倍她、全力过顶。
      * 老写法是 `dirY * power * .5 - 120`（永远只有 120~200 的抬升）→ 用户实测"球踢得太低了"。
+     *
+     * **横向**只由扫动方向决定；**纵向完全由力度分档 + 高度上限决定**。
+     * ⚠️ 老写法把扫动的纵向分量也加进去（`+ dirY * power * .25`）—— 那是个 bug：
+     * 往下扫时 `dirY` 为负，它会**抵消甚至压过抬升**，于是"快速扫反而只飞一个小肥鱼高"，
+     * 而慢扫又莫名飞到 3 个她那么高（用户实测："最高处感觉有 3 个小肥鱼，有时快速扫又只有 1 个"）。
+     * 现在：**扫得越快 → 一定飞得越高**（同档位内 65%~100% 抬升），不再受扫动角度影响。
      */
-    /**
-     * **高度按力度分档，再按"球当前离地多高"压上限**（见 `LIFT_CEIL`）：
-     * 轻扫到她的脖子、中扫到 1.5 倍她、全力过顶 —— 但**球已经在空中时，能踢出的高度上限会降**
-     * （离地半个她 → 减半；一个她 → 三分之一；超过 1.5 个她 → 只剩四分之一）。
-     * 这样玩家没法"把空中的球再顶到很高"，反复挑高会越来越难。
-     */
+    const ux2 = Math.abs(ux) < 0.25 ? (ux < 0 ? -0.25 : 0.25) : ux;   // 极竖的扫动也保留一点横向
+    st.vx = ux2 * power;
     const ballHigh = Math.max(0, b.floorY - st.y);
-    const lift = liftFor(power) * liftCeil(ballHigh);
-    st.vy = Math.min(-140, -lift + Math.min(0, (dirY / n) * power * .25));
+    const lift = liftFor(power) * liftCeil(ballHigh)
+      * (0.65 + 0.35 * Math.min(1, Math.max(0, speed) / PADDLE_FULL_SPEED) ** 0.8);
+    st.vy = Math.min(-140, -lift);
     st.spinV = (st.vx / R) * 1.6;
     st.resting = false;
     st.dragging = false;
