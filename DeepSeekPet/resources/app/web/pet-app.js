@@ -1661,11 +1661,20 @@ host?.onCursor?.((p) => {
     return;
   }
   const el = document.elementFromPoint(p.x, p.y);
-  // 球拍模式下 `ball.hitTest` 会返回 false（不能抓），所以这里多问一句"在球附近吗" ——
-  // 不然鼠标移到球上时窗口不接收事件，"打一拍"永远接不到
-  const hit = ctl.hitPet(p) || ball.hitTest(p.x, p.y) || (flags.gameMode && ball.near(p.x, p.y));
+  /**
+   * **球要用坐标直接判，不能靠 `elementFromPoint`。**
+   *
+   * ⚠️ 这里踩过一个死锁（用户实测"鼠标没办法拍球"）：窗口"点击穿透"时
+   * `pointer-events: none` 让 `elementFromPoint` **永远返回 null**，
+   * 于是"鼠标在球上 → 让窗口接收事件"这个判断永远不成立 —— 窗口不接收事件，
+   * 就永远发现不了鼠标在球上。球的坐标它自己知道（不依赖 DOM 命中），所以直接算。
+   */
+  const ballHover = (() => {
+    try { return ball.near(p.x, p.y); } catch { return false; }   // 球还没造好时（极早期）当 false
+  })();
+  const hit = ctl.hitPet(p) || ballHover;
   const ui = !!el?.closest?.(UI_SELECTOR);
-  diag.poll = { at: performance.now(), x: p.x, y: p.y, hit, ui };
+  diag.poll = { at: performance.now(), x: p.x, y: p.y, hit, ballHover, ui };
   setInteractive(ctl.pressing || hit || ui, 'poll');
 });
 stage.addEventListener('pointerdown', (e) => {
