@@ -593,15 +593,46 @@ function stubModel() {
       ballStub.x = (gr.x0 + gr.x1) / 2;
       const inGoal = gr.yTop + 10;                      // 门框以内的高度
       for (let i = 0; i < 180; i += 1) {
-        // 合成测试跑得比真实时间快得多：每帧把"开球冷静期"和"本次松手"标志重置，
-        // 才是**真的在测"球停在门里会不会被反复判进球"**（否则它只是被冷静期挡着）
+        /**
+         * 合成测试跑得比真实时间快得多：每帧把"开球冷静期"和"计分冷却"重置，
+         * 才是**真的在测"球停在门里会不会被反复判进球"**（否则它只是被冷静期挡着）。
+         * ⚠️ 注意别再重置 `scoredThisRelease` —— 那个字段已经不用了，
+         * 而它**正是"第一次进球之后再也不计分"那个 bug 的载体**（见下面第二条断言）。
+         */
         game.debug.noGoal = 0;
-        game.debug.scoredThisRelease = false;
+        game.debug.scoreCool = 0;
         frame(inGoal);
       }
       const goals = events.filter((e) => e.k === 'goal').length;
       ok('弹弹乐：把球塞进门里只算一个球（不会每帧都判进球 → 卡死）', goals === 1);
-      const gr2 = game.goalRect(game.defence);
+      /**
+       * ★ **第二个球也必须算**（用户实测："依旧没有复位功能"）。
+       * 上一版用一个"本次松手只算一次"的标志防连算，可比赛模式是**扫球、不松手**，
+       * 于是那个标志**第一次进球后就永远是 true**，后面的球一个都不算 —— 球自然也不复位。
+       * 这条断言专门盯这个：把球挪出去、再塞进来一次，比分必须再涨一分。
+       */
+      {
+        /**
+         * 三段写清楚，别让"球刚被自动开走"的那一帧混进来：
+         *   ① 先把球挪到**远离两个门**的中场（这一帧不该算分）
+         *   ② 再塞进她守的那个门 → 第二个球（`goals2 === 2`）
+         */
+        const scoredSide = events.filter((e) => e.k === 'goal').slice(-1)[0].d.side;
+        const grAway = game.goalRect(1 - scoredSide);
+        ballStub.x = B.W * 0.5;                       // 中场：离两个门都很远
+        game.debug.noGoal = 0; game.debug.scoreCool = 0;
+        frame(B.floorY - 13);
+        const goalsMid = events.filter((e) => e.k === 'goal').length;
+        ballStub.x = (grAway.x0 + grAway.x1) / 2;     // 塞进**另一个**门
+        game.debug.noGoal = 0; game.debug.scoreCool = 0;
+        frame(B.floorY - 13);
+        const after2 = events.filter((e) => e.k === 'goal').length;
+        if (!(goalsMid === 1 && after2 === 2)) {
+          console.log(`      [GOALFAIL] goalsMid=${goalsMid} after2=${after2} ballX=${Math.round(ballStub.x)} scoredSide=${scoredSide} score=${JSON.stringify(game.score)}`);
+        }
+        ok('弹弹乐：★第一个球之后，第二个球照样算（比分不会卡在第一次）',
+          goalsMid === 1 && after2 === 2);
+      }      const gr2 = game.goalRect(game.defence);
       ok('弹弹乐：进球后球被放到门框外面（否则下一帧又判一次）',
         ballStub.x < gr2.x0 || ballStub.x > gr2.x1);
       ok('弹弹乐：进球会通知 World（带比分）',

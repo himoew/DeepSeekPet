@@ -126,9 +126,17 @@ const PADDLE_COOL_MS = 500;
 /** 扫掠线段至少要这么长才算"一脚"：收鼠标的小幅回拉（几十像素）不该触发。 */
 const PADDLE_MIN_SWEEP = 26;
 /** 光标速度低于这个值不算"主动扫"（只是鼠标的轻微抖动）。 */
-const PADDLE_MIN_SPEED = 200;
-/** 光标速度到这个值就算满力。 */
-const PADDLE_FULL_SPEED = 1400;
+const PADDLE_MIN_SPEED = 120;
+/**
+ * 光标速度到这个值就算满力。
+ * 从 1400 提到 **2400**：用户实测"只要判定几乎就是最大力度（跳得很高）"——
+ * 1400 太容易打满，中等速度的扫动也会顶到最高那一档。
+ */
+const PADDLE_FULL_SPEED = 2400;
+/** 单帧位移的封顶（px）：防止"光标第一次进入窗口"那一下的过期位移算出爆表速度。 */
+const PADDLE_MAX_STEP = 70;
+/** 力度曲线指数：>1 让"中速"明显弱于"全速"（不然中间档手感糊在一起）。 */
+const PADDLE_POWER_CURVE = 1.35;
 /** 没在扫（只是贴着球）时的默认方向分量：朝"远离她"那一侧 + 一点点上抬。 */
 const PADDLE_IDLE_LIFT = 0.25;
 
@@ -351,7 +359,9 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
    */
   function playerKick(dirX, dirY, speed) {
     const b = stage.bounds();
-    const power = KICK_MIN + (KICK_MAX - KICK_MIN) * Math.min(1, speed / PADDLE_FULL_SPEED);
+    /** 力度：用曲线压一下，中速不会直接顶到满力（见 `PADDLE_POWER_CURVE`）。 */
+    const k = Math.min(1, Math.max(0, speed) / PADDLE_FULL_SPEED) ** PADDLE_POWER_CURVE;
+    const power = KICK_MIN + (KICK_MAX - KICK_MIN) * k;
     const n = Math.hypot(dirX, dirY) || 1;
     let ux = dirX / n;
     /**
@@ -401,23 +411,40 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
   function paddleIfTouching() {
     if (!st.on || grab.ok || !cur.ok) return;
     if (performance.now() - (st.lastPaddle || -Infinity) < PADDLE_COOL_MS) return;
-    const ax = cur.lastAt ? cur.lastX : cur.x;
-    const ay = cur.lastAt ? cur.lastY : cur.y;
-    const swept = Math.hypot(cur.x - ax, cur.y - ay);
+    const rawAx = cur.lastAt ? cur.lastX : cur.x;
+    const rawAy = cur.lastAt ? cur.lastY : cur.y;
+    const rawDx = cur.x - rawAx, rawDy = cur.y - rawAy;
+    const rawLen = Math.hypot(rawDx, rawDy);
+    /**
+     * **单帧位移封顶**：光标"第一次进入窗口"时，上一点可能是很久以前的旧位置，
+     * 那一帧的位移会横跨很大一段 → 算出来的速度爆表 → **每次接触都是满力**（用户实测）。
+     * 封顶之后，线段方向不变、速度按封顶值算，既不会漏接触也不会打出满力。
+     */
+    const k = rawLen > PADDLE_MAX_STEP ? PADDLE_MAX_STEP / rawLen : 1;
+    const ax = cur.x - rawDx * k, ay = cur.y - rawDy * k;
+    const swept = rawLen * k;
     /**
      * 太短的扫掠不算一脚（只有"贴着球时鼠标的微小抖动"那么长）：
      * 用户实测的问题之一就是"收鼠标回来"时被当成反向踢。
-     * 但**静止贴着球的轻推仍然保留**（那条走下面的分支）。
+     * 注意这里**不再直接 return** —— 短位移仍然可能是一次"贴着球的轻推"（见下面那条分支）。
      */
-    if (swept > 0 && swept < PADDLE_MIN_SWEEP) return;
     const hit = sweepContact(ax, ay, cur.x, cur.y);
     if (!hit) return;
     const dt = Math.max(8, (cur.at - (cur.lastAt || cur.at)) || 16);
     const vx = (cur.x - ax) / (dt / 1000);
     const vy = (cur.y - ay) / (dt / 1000);
     const speed = Math.hypot(vx, vy);
-    if (speed >= PADDLE_MIN_SPEED) { playerKick(vx, vy, speed); return; }
-    // 没在扫：朝"远离她"那一侧轻推（球心在她哪一侧，就往那一侧推）
+    /**
+     * **扫动的判定**：位移够长（`PADDLE_MIN_SWEEP`）而且速度够快 → 按扫动方向踢。
+     *
+     * 老写法只要求速度、不要求位移，于是"轻轻扫过球"会掉进下面那条"朝远离她的方向推"，
+     * 而那个方向**跟你扫的方向无关**（球在她左边时"远离她"是往右）——
+     * 用户实测："轻轻扫过球是往反方向踢"。现在方向一律以**你的扫动方向**为准，
+     * 只有**真的几乎没动**（位移 < 8px）才走"轻推"那条兜底。
+     */
+    if (swept >= PADDLE_MIN_SWEEP && speed >= PADDLE_MIN_SPEED) { playerKick(vx, vy, speed); return; }
+    if (swept >= 8) { playerKick(rawDx, rawDy, Math.max(PADDLE_MIN_SPEED, speed)); return; }
+    // 真的几乎没动（贴着球停住）：朝"远离她"那一侧轻推一下
     const p = stage.pet();
     const bb = stage.bounds();
     playerKick(st.x >= (p?.x ?? bb.W / 2) ? 1 : -1, -PADDLE_IDLE_LIFT, PADDLE_MIN_SPEED);

@@ -62,7 +62,8 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     flash: 0,                 // 进球后网闪一下的计时
     noGoal: 0,                // 这个时刻之前不再判进球（开球后的冷静期，防死循环）
     lastRelease: 0,           // 球上一次"从手里松开"的时刻（用来给拖球进门限一次）
-    scoredThisRelease: false, // 这一次松手是否已经算过进球
+    scoredThisRelease: false, // 兼容旧字段（已不再作为"只算一次"的依据，见 onStep 里的说明）
+    scoreCool: 0,             // 这个时刻之前不再计分（防同一脚连算；不是"整局只算一次"）
     /** 紧迫度（0~1）：落后越高。影响她回防的站位（落后时押得更靠前）。 */
     urgency: 0,
     calls: 0, tickAt: 0,      // 每帧调用次数自检（见 onStep）
@@ -257,8 +258,16 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
          * 实测症状就是"球一进网就卡死"。**这条是硬保险，别删。**
          */
         if (now < (g.noGoal || 0)) continue;
-        if (g.scoredThisRelease) continue;             // 这一次"松手/这一脚"已经算过了，别重复计分
-        g.scoredThisRelease = true;
+        /**
+         * 同一脚只算一次：用**时间**兜住（不是用"松手"标志）。
+         *
+         * ⚠️ 上一版是 `scoredThisRelease`，只在球的 `releasedAt`（**松手**）变化时清掉 ——
+         * 可比赛模式是"扫球"，**根本不松手**，于是第一次进球之后那个标志永远是 true，
+         * **后面的球一个都不算**（用户实测："依旧没有复位功能"）。这就是真因。
+         * 现在改成：进一个球之后 0.7 秒内不再计分（足够球被开走、也不会漏掉真实的连击）。
+         */
+        if (now < (g.scoreCool || 0)) continue;
+        g.scoreCool = now + 700;
         const scorer = 1 - side;                       // 球进 side 的门 → 对面得分
         g.score[scorer] += 1;
         g.flash = 0.6;
