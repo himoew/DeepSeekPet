@@ -17,7 +17,7 @@
  *   - 高球她**50%** 概率**跳起来用头顶**回去（只要进了她跳起来够得到的范围；太高的够不到）；
  *   - 你随时可以把球直接丢进她的门、或者把她拎到另一边 —— 那是**整蛊玩法**，规则不拦着。
  */
-import { HEAD_REACH, GRAVITY } from './ball.js';
+import { HEAD_REACH, GRAVITY, HEAD_BOX, BALL_R } from './ball.js';
 
 /**
  * 球门尺寸 —— **两个数都按"她能不能守住"来定**（用户实测反馈："球门太大了，随便一扔就进"）：
@@ -392,7 +392,20 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
       g.headLogAt = now;
       try {
         const mv = control.move ? control.move() : null;
-        globalThis.petHost?.report?.(`[弹弹乐·头球] 高度=${Math.round(high)} 离她=${Math.round(Math.abs(s.x - pet.x))} 球速=${Math.round(Math.abs(s.vx || 0))} 她=${mv ? mv.mode : '?'} → 可跳=${canHead}（预测=${willHead} 头顶=${above}）`);
+        /**
+         * **几何核对**：她真的腾空时，把"她的头箱"和"球箱"的**实际区间**都算出来。
+         * 用户实测"看见她跳了，但头球事件一次都没有"——只有把两个盒子摆在一起看，
+         * 才知道是"跳晚了"还是"盒子错开了"。数字直接照搬 ball.js 的常量。
+         */
+        const feet = mv ? (mv.feetY ?? b.floorY) : b.floorY;
+        const head = { y0: feet - HEAD_BOX.above, y1: feet - HEAD_BOX.above + HEAD_BOX.h };
+        const ball = { y0: s.y - BALL_R, y1: s.y + BALL_R };
+        const overlap = Math.min(head.y1, ball.y1) - Math.max(head.y0, ball.y0);
+        globalThis.petHost?.report?.(`[弹弹乐·几何] 球离地=${Math.round(high)} 她脚底离地=${Math.round(b.floorY - feet)}`
+          + ` · 头箱 ${Math.round(b.floorY - head.y1)}~${Math.round(b.floorY - head.y0)}(离地)`
+          + ` · 球箱 ${Math.round(b.floorY - ball.y1)}~${Math.round(b.floorY - ball.y0)}(离地)`
+          + ` → 纵向重叠=${Math.round(overlap)}px ${overlap > 0 ? '能碰到' : '错开!'}`
+          + ` · 横向差=${Math.round(Math.abs(s.x - pet.x))} · 她=${mv ? mv.mode : '?'}`);
       } catch { /* ignore */ }
     }
     if (canHead || (herZone && !s.resting && high < REACH_MIN)) {

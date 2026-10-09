@@ -1338,7 +1338,12 @@ export function createPet(els, opts) {
      * 只读：她当前的移动模式与速度（`mode` 是 `walk` / `run` / …，`speed` 是 px/s）。
      * 弹弹乐用它做诊断："球在天上时她是不是只在走（`walk`）而不是跑（`run`）"。
      */
-    get move() { return { mode: pet.mode, speed: pet.speed, target: pet.target }; },
+    /**
+     * 只读：她当前的移动模式、速度、目标，**以及脚底的位置**（`feetY`）。
+     * 弹弹乐用 `feetY` 做头球的几何诊断："她跳起来了却顶不到球"时，
+     * 必须把"她的头箱"和"球箱"摆在一起算，才知道是跳晚了还是盒子错开了。
+     */
+    get move() { return { mode: pet.mode, speed: pet.speed, target: pet.target, feetY: pet.fy }; },
     setSkin(s) { skin = s; },
     /** Swaps the body's drawing: a custom figure (see `opts.figure`) or null for the built-in Coo. */
     setFigure(fig) {

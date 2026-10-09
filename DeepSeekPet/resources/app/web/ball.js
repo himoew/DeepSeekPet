@@ -41,6 +41,8 @@ const GROUND_FRICTION = 0.86;
 const AIR_DRAG = 0.06;
 /** 球半径（舞台像素）。 */
 const R = 13;
+/** 球的半径，导出给 `game.js` 的诊断用（算"球箱"和"头箱"有没有重叠）。 */
+export const BALL_R = R;
 /** 踢出去的速度范围（px/s）。上限从 520 提到 700：用户要"距离再增加 0.3 倍左右"。 */
 const KICK_MIN = 300, KICK_MAX = 700;
 /**
@@ -129,6 +131,8 @@ const HEAD_COOL_MS = 320;
  */
 const HEAD_ABOVE_FEET = 60;
 const HEAD_BOX_H = 90;
+/** 导出给 `game.js` 做几何诊断（"她跳了却顶不到"时要把两个盒子摆一起看）。 */
+export const HEAD_BOX = { above: HEAD_ABOVE_FEET, h: HEAD_BOX_H };
 /** 她跳起来时**够得到**的高度（px，球离地多高以内她会去顶）——≈ 2 个小肥鱼高。 */
 export const HEAD_REACH = 230;
 /**
@@ -533,10 +537,17 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
      * 方向用上面**阻尼过的 `dirX/dirY`**（不是原始的 `rawDx/rawDy`），这样上下抖动不会带偏。
      */
     if (swept >= PADDLE_MIN_SWEEP) { playerKick(dirX, dirY, Math.max(PADDLE_MIN_SPEED, speed)); return; }
-    // 扫得太短：**不当一脚**，但当"贴着球的轻推"（朝远离她那一侧），避免"点了没反应"
-    const p = stage.pet();
-    const bb = stage.bounds();
-    playerKick(st.x >= (p?.x ?? bb.W / 2) ? 1 : -1, -PADDLE_IDLE_LIFT, PADDLE_MIN_SPEED);
+    /**
+     * ★ **扫得太短（轻轻拍）：方向要朝"你鼠标所在的那一侧"**。
+     *
+     * ⚠️ 老写法用的是"**远离她**"的方向 —— 那条跟你的鼠标在哪、往哪扫**完全无关**，
+     * 于是"轻轻拍一下球就往回走"（用户实测反复报过三次）。
+     * 现在按直觉来：**球往你的手那边去**（鼠标在球的右边 → 球被推向右边）。
+     * `hit` 是这一帧的接触点，"鼠标 → 球"的方向就是"推出去"的方向。
+     */
+    const side = Math.sign(cur.x - st.x) || (st.x >= (stage.pet()?.x ?? 0) ? 1 : -1);
+    playerKick(side, -PADDLE_IDLE_LIFT, PADDLE_MIN_SPEED);
+    void hit;
   }
 
   /**
