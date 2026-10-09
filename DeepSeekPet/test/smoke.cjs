@@ -513,7 +513,7 @@ function stubModel() {
           game: { onStep: (s) => s.setAim({ x: 1, power: 1 }), onKick: () => {} },
         });
         b2.setOn(true, { fromLeft: false });
-        b2.placeAt(640 / B2.W, B2.floorY - 40 - 112 + 20, { since: 0 });   // 塞进头顶那片
+        b2.placeAt(640 / B2.W, B2.floorY - 40 - 60 + 30, { since: 0 });   // 塞进头顶那片（盒子在脚底上方 60~160）
         for (let i = 0; i < 3; i += 1) b2.step(1 / 60);
         /**
          * 判据要写对：头球是**朝踢腿的反方向**顶出去的（她朝左 → 球被顶向右）。

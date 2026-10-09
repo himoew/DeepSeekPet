@@ -1592,6 +1592,40 @@ let lastInteractiveLog = 0;
  * time the pointerType of the moves changes.
  */
 const POINTER_DIAG = new URLSearchParams(location.search).has('diag');
+/**
+ * 帧耗时诊断（同 `?diag=1`）：每 3 秒报一次"帧循环里各段花了多少毫秒"。
+ * 用来回答"为什么越来越卡"—— 见帧循环里 `mark()` 的用法。
+ */
+const FRAME_DIAG = POINTER_DIAG;
+const frameCost = {
+  marks: [], acc: new Map(), frames: 0, at: 0, worst: 0,
+  push(t0, marks) {
+    let prev = t0;
+    let total = 0;
+    for (const [name, t] of marks) {
+      const d = t - prev; prev = t;
+      if (name === '总') { total = d; break; }
+      this.acc.set(name, (this.acc.get(name) || 0) + d);
+    }
+    this.frames += 1;
+    if (total > this.worst) this.worst = total;
+  },
+};
+/** 每 3 秒把各段平均耗时（毫秒/帧）报给主进程。 */
+function reportFrameCost(now) {
+  if (!frameCost.at) { frameCost.at = now; return; }
+  if (now - frameCost.at < 3000 || frameCost.frames < 10) return;
+  const n = frameCost.frames;
+  const parts = [...frameCost.acc.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k}=${(v / n).toFixed(2)}`);
+  report(`[性能] 每帧 ${n} 帧 · ${parts.join(' ')} · 最差一帧=${frameCost.worst.toFixed(1)}ms · fps≈${(n / ((now - frameCost.at) / 1000)).toFixed(0)}`);
+  frameCost.acc.clear();
+  frameCost.frames = 0;
+  frameCost.worst = 0;
+  frameCost.at = now;
+}
+
 const diag = { move: null, poll: null, type: '', types: new Set(), skipped: 0, lastAt: -Infinity, timer: 0, held: null };
 /**
  * Fewest milliseconds between two lines; the lines in between are counted into the next one, and
@@ -2023,6 +2057,16 @@ function frame(now) {
   if (now < dueAt - gap / 4) { requestAnimationFrame(frame); return; }
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   let full = false;
+  /**
+   * **帧耗时分段测量**（只在 `?diag=1` 时跑，几乎没有开销）。
+   *
+   * 为什么要它：用户反馈"运行似乎越来越卡"，而"卡"可能是帧循环里任何一段
+   * （她自己的身体、球的物理、粒子、球门重绘、气泡布局、背景采样）。
+   * 猜不出来，只能量 —— 每 3 秒报一次各段的**平均毫秒**。
+   */
+  const t0 = FRAME_DIAG ? performance.now() : 0;
+  const marks = FRAME_DIAG ? (frameCost.marks.length = 0, frameCost.marks) : null;
+  const mark = (name) => { if (FRAME_DIAG) marks.push([name, performance.now()]); };
   try {
     stepActs();
     stepDialog(dt);
@@ -2032,6 +2076,7 @@ function frame(now) {
     stepDrag();            // 拎起来：拎久了吭一声
     stepStroke();          // 抚摸的连续反馈：爬"舒服程度"、续呼噜/爱心、判"够了"
     ctl.step(dt);
+    mark('她');
     /**
      * **球拍（持续接触）**：每帧把光标位置喂给球，再把"窗口还要不要拿鼠标"重算一次。
      *
@@ -2051,13 +2096,24 @@ function frame(now) {
       setInteractive(take, 'paddle');
     }
     ball.step(dt);         // 玩具球：物理 + 碰到她就踢（球在 #fx 那一层，不碰她的身体）
+    mark('球');
     ctl.render();
+    mark('画她');
     ball.draw();
+    mark('画球');
     game.draw();           // 弹弹乐的球门（只在游戏模式下画）
+    mark('画门');
     stepBackdrop(dt);
+    mark('背景');
     stepTools();
     layout();
+    mark('布局');
     full = prefs.lockFrameRate || ctl.moving || ball.busy;   // 球在滚/在飞/被拖着也按 60fps
+    if (FRAME_DIAG) {
+      marks.push(['总', performance.now()]);
+      frameCost.push(t0, marks);
+      reportFrameCost(now);
+    }
   } catch (err) {
     frameFails += 1;
     if (frameFails === 1 || now - frameFailAt > 60_000) {

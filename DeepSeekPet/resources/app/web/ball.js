@@ -99,6 +99,17 @@ function liftCeil(height) {
   for (const [from, v] of LIFT_CEIL) if (height >= from) k = v;
   return k;
 }
+/**
+ * 判"球算不算已经离地"时，**把球往上飞的那点速度也算进去**（等价于再多飞 8px 的高度）。
+ *
+ * 为什么要这样：球**刚落地/刚开球**的那一帧高度是 0，`liftCeil(0)` 给的是"不限制"，
+ * 于是"初始那一下拍出去出奇地高"（用户实测）。可那一帧它其实正在往上走。
+ * 加一点等效高度之后，"刚离地"的球也吃到第一个档位，不会再出奇地高。
+ */
+function liftCeilFor(y, floorY, vy) {
+  const h = Math.max(0, floorY - y) + Math.max(0, -(vy || 0)) * 0.02;
+  return liftCeil(h);
+}
 /** 同一帧里最多踢一次：给碰撞一个"冷却"，免得贴着球时每帧都踢（球会抖）。
  *  **别调太大**：她追到球边上时冷却还没好就踢不到 —— 实测会变成"球重置了她不踢过来"。 */
 const KICK_COOL_MS = 280;
@@ -107,13 +118,17 @@ const HEAD_COOL_MS = 320;
 /**
  * 她跳起来时，头顶那一片的碰撞范围：**相对脚底**算（她跳多高，头就升多高）。
  *
- * 数值是量出来的：她**身高 ≈96px**；`pet-core` 里起跳速度 720、空中重力 2300，
- * 所以跳一次最高抬升 `720² / (2×2300) ≈ 113px` —— 跳到最高时**头顶约在离地 200px**。
- * 原来盒子只到 150px，于是 150~200 这一段飞过去的球**她完全碰不到**（用户实测："每次
- * 都从头顶飞过去"）。`HEAD_ABOVE_FEET` 也按 96px 身高重新校准过。
+ * 数值是量出来的：她**身高 ≈96px**；`pet-core` 起跳速度 720、空中重力 2300，
+ * 跳一次最高抬升 `720²/(2×2300) ≈ 113px`，最高点脚底在离地 ~92px（地面 758 时 fy≈718）。
+ *
+ * ⚠️ **盒子不能挂太高**（用户实测："1.2~1.5 甚至 1.8 个她那么高的球全部没接到过"）：
+ * 老盒是脚底上方 96~196 → 离地 188~288 —— 而 1.2~1.8 个她 = **115~173px**，
+ * 全在盒子**下面**的盲区里，于是"判定说能接、头却永远碰不到"。
+ * 现在挂在脚底上方 **60~160** → 最高点时覆盖**离地 152~252**、起跳初段覆盖**离地 60~160**，
+ * 整个过程把 **40~250** 这一段都扫过一遍，跟球的 1.2~2 倍她完全重叠。
  */
-const HEAD_ABOVE_FEET = 92;
-const HEAD_BOX_H = 60;
+const HEAD_ABOVE_FEET = 60;
+const HEAD_BOX_H = 100;
 /** 她跳起来时**够得到**的高度（px，球离地多高以内她会去顶）——≈ 2 个小肥鱼高。 */
 export const HEAD_REACH = 200;
 /**
@@ -150,9 +165,11 @@ const SWAT_SLOW = 110;
  * 球拍圆盘的半径（px）。**这是让"扫过去就踢"成立的关键**：
  * 光标本身是一个点，而球只有 13px 半径 —— 用点去戳球，快速移动时每 100ms 的采样
  * （主进程的光标轮询）之间会跳过 80px 以上，**整段从球外面飞过去**。
- * 给它一个圆盘半径之后，接触判定从"点"变成"面"，再配上每帧的**线段扫掠**，就不会漏了。
+ *
+ * ⚠️ 从 40 **缩到 30**（用户实测："拍球范围太大了，不需要所有挥动都能拍，先调小四分之一"）。
+ * 40 的时候球周围一大圈都算碰到，"随便挥一下"就踢到了，没有瞄准感。
  */
-const PADDLE_R = 40;
+const PADDLE_R = 30;
 /**
  * 两次"玩家用球拍踢到球"之间的最小间隔。
  * 从 200ms 提到 **500ms**（用户实测："收回来再踢容易误触成反向踢球"）——
@@ -423,8 +440,7 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
      */
     const ux2 = Math.abs(ux) < 0.25 ? (ux < 0 ? -0.25 : 0.25) : ux;   // 极竖的扫动也保留一点横向
     st.vx = ux2 * power;
-    const ballHigh = Math.max(0, b.floorY - st.y);
-    const lift = liftFor(power) * liftCeil(ballHigh)
+    const lift = liftFor(power) * liftCeilFor(st.y, b.floorY, st.vy)
       * (0.65 + 0.35 * Math.min(1, Math.max(0, speed) / PADDLE_FULL_SPEED) ** 0.8);
     st.vy = Math.min(-140, -lift);
     st.spinV = (st.vx / R) * 1.6;
@@ -480,14 +496,14 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     const vy = (cur.y - ay) / (dt / 1000);
     const speed = Math.hypot(vx, vy);
     /**
-     * **扫动的判定**：位移够长（`PADDLE_MIN_SWEEP`）而且速度够快 → 按扫动方向踢。
+     * ★ **只要碰到球就按"你扫的方向"踢**（用户实测："初始那一下拍球出奇地高"）。
      *
-     * 老写法只要求速度、不要求位移，于是"轻轻扫过球"会掉进下面那条"朝远离她的方向推"，
-     * 而那个方向**跟你扫的方向无关**（球在她左边时"远离她"是往右）——
-     * 用户实测："轻轻扫过球是往反方向踢"。现在方向一律以**你的扫动方向**为准，
-     * 只有**真的几乎没动**（位移 < 8px）才走"轻推"那条兜底。
+     * 老写法分了两级：位移 ≥26 且速度 ≥120 才算"扫"，否则掉进最后那条
+     * "朝远离她的方向轻推"。问题是**扫得短一点就会掉进兜底那条**，
+     * 而兜底用的是 `PADDLE_MIN_SPEED` 当力度、方向跟你的扫动无关 ——
+     * 结果就是"第一下/刚落地的那一下"莫名其妙飞得很高，而且方向也不对。
+     * 现在合并成一条：**碰到就按你的方向踢，力度看你扫多快**（下限 `PADDLE_MIN_SPEED`）。
      */
-    if (swept >= PADDLE_MIN_SWEEP && speed >= PADDLE_MIN_SPEED) { playerKick(vx, vy, speed); return; }
     if (swept >= 8) { playerKick(rawDx, rawDy, Math.max(PADDLE_MIN_SPEED, speed)); return; }
     // 真的几乎没动（贴着球停住）：朝"远离她"那一侧轻推一下
     const p = stage.pet();
@@ -767,7 +783,7 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
      * 现在两边都到她脖子/1.5 倍她/过顶三档，而且**球在空中时上限一样会降**。
      */
     const ballHighHer = Math.max(0, b.floorY - st.y);
-    st.vy = Math.min(-140, -liftFor(power) * liftCeil(ballHighHer) + Math.min(0, dirY * power * .25));
+    st.vy = Math.min(-140, -liftFor(power) * liftCeilFor(st.y, b.floorY, st.vy) + Math.min(0, dirY * power * .25));
     st.spinV = (st.vx / R) * 1.6;
     st.lastKick = now;
     st.since = 0;
