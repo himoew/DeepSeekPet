@@ -1570,6 +1570,33 @@ function overTools(p) {
   // the gaps between the buttons and a little margin count too
   return p.x >= r.left - 6 && p.x <= r.right + 6 && p.y >= r.top - 6 && p.y <= r.bottom + 6;
 }
+/**
+ * ★ **"窗口要不要拿鼠标"的唯一定义**（用户实测：光标在箭头/手指之间闪、按钮点不开）。
+ *
+ * 为什么必须只有一处：这个状态原来有**三个地方**在写，判断还各不相同 ——
+ *   · `pointermove`：`hitPet || ball.hitTest`（球拍模式下 `hitTest` **恒为 false**）
+ *   · `onCursor` 轮询：`hitPet || ballHover`（用 `near`，可能 true）
+ *   · 帧循环（我新加的）：`hitPet || ball.near || paddleKeep`（**漏了悬停按钮**）
+ * 于是鼠标停在按钮上时，三个条件给出不同答案，每帧互相覆盖 →
+ * **指针在箭头/手指之间闪烁、点击被丢**（这就是"开关点不开、对话按钮也点不开"的真因）。
+ *
+ * 现在：她 / 球拍范围 / 悬停按钮 / 点着不放 —— 四个条件 OR 在一起，只由这里决定。
+ */
+function wantsMouse(p) {
+  if (!p) return false;
+  try {
+    if (ctl.pressing) return true;
+    if (ctl.hitPet(p)) return true;
+    if (ball.near(p.x, p.y)) return true;          // 球拍模式要"近球就收鼠标"
+    if (performance.now() < paddleKeep.until) return true;
+    if (overTools(p)) return true;                 // ← 悬停按钮：少了这条，按钮就永远点不动
+  } catch { /* 极早期（球/她还没建好）当 false */ }
+  return false;
+}
+/** 用唯一的判定去切窗口状态（`by` 只用于诊断日志）。 */
+function syncInteractive(by) {
+  setInteractive(wantsMouse(cursor.at), by);
+}
 function stepTools() {
   // shown while the cursor is on the pet or on the buttons, and a moment after it leaves; decided
   // from where the cursor is now, not from the last move event, which may be stale
@@ -1590,24 +1617,14 @@ function setInteractive(on, by) {
   interactive = on;
   host.setInteractive(on);
   /**
-   * **两侧都留痕**：页面这一侧判成"该收鼠标"了没有，一眼可见。
-   * （用户实测"球完全没法互动"时，光看结果分不清是"判定没触发"还是"主进程没收鼠标"。）
-   * 限流 1.2 秒一条，只记会翻成 `true` 的那种（那是"要拿鼠标"的时刻）。
+   * 两侧都留痕（限流 1.2 秒一条）：用户实测"开关点不开"时，
+   * 这一行能看出**每一次翻转到"拿鼠标"**是不是发生了、以及有没有**反复翻转**（闪烁）。
    */
   if (on && performance.now() - (lastInteractiveLog || 0) > 1200) {
     lastInteractiveLog = performance.now();
     const p = cursor.at;
-    const near = p ? (() => { try { return ball.near(p.x, p.y); } catch { return '?'; } })() : '?';
-    const onHer = p ? (() => { try { return ctl.hitPet(p); } catch { return '?'; } })() : '?';
-    report(`[输入] 页面把鼠标收回（by=${by}）· 光标 ${p ? Math.round(p.x) + ',' + Math.round(p.y) : '?'}`
-      + ` · 在她身上=${onHer} · 在球附近=${near}`
-      + ` · host=${!!host} · 通道=${typeof host?.setInteractive}`);
-    /**
-     * **再强制发一次**：这条日志是为了验证"页面 → 主进程"的通道本身通不通。
-     * 如果页面说发了、主进程那边却没有对应日志，那问题就在通道（preload / ipcMain），
-     * 不在判定逻辑 —— 用户实测"球完全没法互动"就卡在这里。
-     */
-    try { host?.setInteractive(true); } catch (err) { report(`[输入] 发 IPC 失败：${err && err.message}`); }
+    const over = p ? (() => { try { return overTools(p); } catch { return '?'; } })() : '?';
+    report(`[输入] 窗口收回鼠标（by=${by}）· 光标 ${p ? Math.round(p.x) + ',' + Math.round(p.y) : '?'} · 在按钮上=${over}`);
   }
   logPointer('flip', by);
 }
@@ -1740,7 +1757,7 @@ document.addEventListener('pointermove', (e) => {
     diag.type = e.pointerType;
     if (!first) logPointer('type', 'move');
   }
-  setInteractive(ctl.pressing || hit || ui, 'move');
+  syncInteractive('move');     // 唯一判定（见 wantsMouse）：别再在这里另写一套条件
   followDrag(p);
 });
 /**
@@ -1754,22 +1771,16 @@ host?.onCursor?.((p) => {
   ctl.setGaze(p);
   if (!p) {
     diag.poll = { at: performance.now(), off: true };
-    if (!ctl.pressing) setInteractive(false, 'poll');
+    if (!ctl.pressing) syncInteractive('poll');
     return;
   }
-  const el = document.elementFromPoint(p.x, p.y);
   /**
-   * **球要用坐标直接判，不能靠 `elementFromPoint`。**
-   *
-   * ⚠️ 这里踩过一个死锁（用户实测"鼠标没办法拍球"）：窗口"点击穿透"时
-   * `pointer-events: none` 让 `elementFromPoint` **永远返回 null**，
-   * 于是"鼠标在球上 → 让窗口接收事件"这个判断永远不成立 —— 窗口不接收事件，
-   * 就永远发现不了鼠标在球上。球的坐标它自己知道（不依赖 DOM 命中），所以直接算。
+   * 球拍模式的"唤醒余量"：光标还没贴到球、但已经很近时，**提前**把鼠标收回来。
+   * 主进程发现光标位置有延迟，等真的压到球上再收，那一下点击就漏给桌面了。
    */
   const ballHover = (() => {
     try {
       if (!ball.near(p.x, p.y)) {
-        // 还没贴到球：再放宽一圈，用"唤醒余量"提前把鼠标收回来（不然那一下点击会漏给桌面）
         const withinWake = Math.hypot(p.x - ball.x, p.y - ball.y) <= 13 + PADDLE_WAKE;
         if (ball.paddleMode && withinWake) paddleKeep.until = performance.now() + PADDLE_KEEP_MS;
         return performance.now() < paddleKeep.until;
@@ -1778,10 +1789,8 @@ host?.onCursor?.((p) => {
       return true;
     } catch { return false; }   // 球还没造好时（极早期）当 false
   })();
-  const hit = ctl.hitPet(p) || ballHover;
-  const ui = !!el?.closest?.(UI_SELECTOR);
-  diag.poll = { at: performance.now(), x: p.x, y: p.y, hit, ballHover, ui };
-  setInteractive(ctl.pressing || hit || ui, 'poll');
+  diag.poll = { at: performance.now(), x: p.x, y: p.y, ballHover };
+  syncInteractive('poll');      // 唯一判定（见 wantsMouse）
 });
 stage.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
@@ -2116,14 +2125,11 @@ function frame(now) {
      */
     if (cursor.at) ball.setCursor(cursor.at.x, cursor.at.y, performance.now());
     else ball.clearCursor();
-    if (!ctl.pressing) {
-      const p = cursor.at;
-      let take = false;
-      try {
-        take = !!(p && (ctl.hitPet(p) || ball.near(p.x, p.y) || performance.now() < paddleKeep.until));
-      } catch { take = false; }
-      setInteractive(take, 'paddle');
-    }
+    /**
+     * 窗口拿不拿鼠标：**只由 `wantsMouse()` 决定**（把 `overTools` 也算进去）。
+     * 这里每帧同步一次，光标停着不动时也不会因为"过期"把鼠标放过去。
+     */
+    if (!ctl.pressing) syncInteractive('frame');
     ball.step(dt);         // 玩具球：物理 + 碰到她就踢（球在 #fx 那一层，不碰她的身体）
     mark('球');
     ctl.render();
