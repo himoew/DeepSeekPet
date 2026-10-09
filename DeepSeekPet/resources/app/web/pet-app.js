@@ -237,12 +237,27 @@ syncGameFlag();
  * `fromServer` 时不再回发（那是 World 同步过来的，回发会绕成环）。
  */
 function setBallMode(mode, { fromServer = false, fromUser = false } = {}) {
-  prefs.ballMode = mode;
-  prefs.ballModeKnown = true;
-  game.setMode(mode);
-  syncGameFlag();
-  refreshButtons();
-  if (!fromServer) send({ t: 'ballMode', mode, fromUser });
+  /**
+   * ⚠️ **整段包在 try 里，失败要留痕**。
+   *
+   * 用户实测"浮窗开关已经失效，启动不了比赛模式"—— 这个函数是整个开关的唯一入口，
+   * 中间任何一步抛错（`game.setMode` / 球门绘制 / 按钮刷新）都会让**点击看起来完全没反应**，
+   * 而页面异常通道只会报一行栈、看不出"是哪一步"。这里逐步记日志，一次就能定。
+   */
+  const before = prefs.ballMode;
+  try {
+    prefs.ballMode = mode;
+    prefs.ballModeKnown = true;
+    game.setMode(mode);
+    syncGameFlag();
+    refreshButtons();
+    if (!fromServer) send({ t: 'ballMode', mode, fromUser });
+    try { report(`[弹弹乐] 开关：${before} → ${mode}${fromUser ? '（用户点的）' : fromServer ? '（World 同步）' : ''} · game.mode=${game.mode}`); } catch { /* ignore */ }
+  } catch (err) {
+    try { report(`[弹弹乐] 开关失败：${before} → ${mode} · 卡在 game.mode=${game.mode} · ${err && (err.stack || err.message)}`); } catch { /* ignore */ }
+    // 抛回去让误用能看见（上层是按钮/连接消息，各自有兜底）
+    throw err;
+  }
 }
 
 /* ---------- connection ---------- */
@@ -1489,7 +1504,21 @@ function renderTools() {
       b.type = 'button'; b.className = 'tool'; b.dataset.action = id;
       b.innerHTML = '<span class="ic"></span>';
       if (id === 'voice') wireVoiceTool(b);
-      else b.addEventListener('click', () => { sfx.tick(); if (!ACTIONS[id].keep) toolsUntil = 0; ACTIONS[id].run(); refreshButtons(); });
+      else b.addEventListener('click', () => {
+        sfx.tick();
+        if (!ACTIONS[id].keep) toolsUntil = 0;
+        /**
+         * 按钮点击**包一层 try + 留痕**：用户实测"浮窗开关失效"时，
+         * 点了没反应的原因可能是这里抛错（`ACTIONS[id]` 不存在、`run()` 里某一步炸了）。
+         * 不记的话外面只看到"点了没反应"，根本分不清是"事件没到"还是"抛错了"。
+         */
+        try {
+          ACTIONS[id].run();
+        } catch (err) {
+          try { report(`[按钮] ${id} 点击抛错：${err && (err.stack || err.message)}`); } catch { /* ignore */ }
+        }
+        refreshButtons();
+      });
       tools.appendChild(b);
     }
   }
