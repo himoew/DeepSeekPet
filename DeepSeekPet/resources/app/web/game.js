@@ -17,7 +17,7 @@
  *   - 高球她**50%** 概率**跳起来用头顶**回去（只要进了她跳起来够得到的范围；太高的够不到）；
  *   - 你随时可以把球直接丢进她的门、或者把她拎到另一边 —— 那是**整蛊玩法**，规则不拦着。
  */
-import { HEAD_REACH } from './ball.js';
+import { HEAD_REACH, GRAVITY } from './ball.js';
 
 /**
  * 球门尺寸 —— **两个数都按"她能不能守住"来定**（用户实测反馈："球门太大了，随便一扔就进"）：
@@ -48,8 +48,7 @@ const REACH_MIN = 40;
  * 现在：**只在这个"够时间跳到最高点"的窗口里起跳**（下限略早于顶点、上限放宽给慢球）。
  */
 const JUMP_APEX = 0.31;
-const JUMP_LEAD_MIN = 0.18;
-const JUMP_LEAD = 0.85;
+
 const HEAD_X = 150;           // 横向差这么多以内才去顶
 const WALK_EVERY_MS = 260;    // 两次改走路目标的间隔（要跟得上球，但不能每帧喊）
 const WALK_EPS = 26;          // 离目标这么近就不喊了
@@ -354,17 +353,31 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
      * 另外**只接"你丢/踢过来的球"**：她自己踢出去又反弹回来的球不算来球，
      * 否则她等于凭空多出一次顶球机会（`ball.lastRelease` 就是干这个的）。
      */
-    const HEAD_WINDOW = 3000;                  // 你丢/踢的球，3 秒内算"来球"
-    const sinceYou = now - (ball.lastRelease || 0);
-    const toward = Math.sign(pet.x - s.x) === Math.sign(s.vx || 0) && Math.abs(s.vx) > 40;
-    const tHit = toward ? Math.abs(s.x - pet.x) / Math.max(1, Math.abs(s.vx)) : Infinity;
-    /** 她该不该现在起跳：球朝她来、而且**来得及跳到最高点**（窗口贴着 `JUMP_APEX`）。 */
-    const shouldJump = s.vx !== 0 && s.vy > 0 && tHit > JUMP_LEAD_MIN && tHit < JUMP_LEAD
-      && high > REACH_MIN && high < REACH_JUMP + 60
-      && Math.abs(s.x - pet.x) < Math.abs(s.vx) * JUMP_LEAD + 40;
-    /** 球就在她头顶那一片（已经来不及预判了）：也跳一下碰运气。 */
+    /**
+     * **她该不该现在起跳：直接算"跳到最高点那一刻，球会在哪、多高"**。
+     *
+     * ⚠️ 为什么不用"球还有多久到"（`tHit`）：那个量对**快球**会算出很小的值
+     * （球速 625px/s、离她 50px 时只有 0.08s），于是"来不及跳到最高点"的判断会把快球全部排除，
+     * 表现就是**快球来了她不跳**（用户实测"跑步时她不会触发头球"）。
+     * 现在换成预测：把球按当前速度外推 `JUMP_APEX`（0.31s）——
+     * 那一瞬间球的高度落在可顶范围、横向也在她头顶那一片，就起跳。
+     * 这样**快球慢球用同一把尺子**，而且完全不需要"上一个人是不是丢过球"这种上下文。
+     *
+     * @returns {boolean} 现在起跳的话，到最高点时能不能顶到球
+     */
+    const willHead = (() => {
+      if (s.resting) return false;
+      const t = JUMP_APEX;
+      const hx = s.x + (s.vx || 0) * t;
+      const hy = s.y + (s.vy || 0) * t + 0.5 * GRAVITY * t * t;
+      const hHigh = b.floorY - hy;
+      const shift = Math.abs((s.vx || 0) * t);
+      return hHigh > REACH_MIN - 20 && hHigh < REACH_JUMP
+        && Math.abs(hx - pet.x) < HEAD_X + shift;
+    })();
+    /** 球就在她头顶那一片（来不及了）：也跳一下碰运气。 */
     const above = !s.resting && high > REACH_MIN && high < REACH_JUMP && Math.abs(s.x - pet.x) < HEAD_X;
-    const canHead = (sinceYou < HEAD_WINDOW) && (shouldJump || above);
+    const canHead = willHead || above;
     /**
      * **诊断：高球来了但没跳的原因**（`DSP_DEBUG=1` 时才记，1 秒最多一条）。
      * 用户实测"跑步时她不会触发头球" —— 这一行能分清是
@@ -376,7 +389,7 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
       g.headLogAt = now;
       try {
         const mv = control.move ? control.move() : null;
-        globalThis.petHost?.report?.(`[弹弹乐·头球] 高度=${Math.round(high)} 离她=${Math.round(Math.abs(s.x - pet.x))} 球速=${Math.round(Math.abs(s.vx || 0))} 还有=${tHit === Infinity ? '—' : tHit.toFixed(2)}s 是来球=${toward} 她=${mv ? mv.mode : '?'} → 可跳=${canHead}（预判=${shouldJump} 头顶=${above}）`);
+        globalThis.petHost?.report?.(`[弹弹乐·头球] 高度=${Math.round(high)} 离她=${Math.round(Math.abs(s.x - pet.x))} 球速=${Math.round(Math.abs(s.vx || 0))} 她=${mv ? mv.mode : '?'} → 可跳=${canHead}（预测=${willHead} 头顶=${above}）`);
       } catch { /* ignore */ }
     }
     if (canHead || (herZone && !s.resting && high < REACH_MIN)) {
@@ -388,12 +401,13 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
         control.jump();
         /**
          * 报一句给主进程（限流 1.2 秒一条）：**"头球有没有触发"的唯一实锤**。
-         * 页面里没法打断点，日志里能直接看到"球多高、多快、还有多久到她"。
+         * 页面里没法打断点，日志里能直接看到"球多高、多快、她当时在跑还是在走"。
          */
         if (!(g.lastJumpLog > 0) || now - g.lastJumpLog > 1200) {
           g.lastJumpLog = now;
           try {
-            globalThis.petHost?.report?.(`[弹弹乐] 起跳接球：球高 ${Math.round(high)}px · 离她 ${Math.round(Math.abs(s.x - pet.x))}px · 速度 ${Math.round(Math.abs(s.vx))} · 还有 ${tHit === Infinity ? '—' : tHit.toFixed(2)}s 到 · ${shouldJump ? '预判' : '头顶'}`);
+            const mv = control.move ? control.move() : null;
+            globalThis.petHost?.report?.(`[弹弹乐] 起跳接球：球高 ${Math.round(high)}px · 离她 ${Math.round(Math.abs(s.x - pet.x))}px · 速度 ${Math.round(Math.abs(s.vx))} · 她=${mv ? mv.mode : '?'} · ${willHead ? '预测到点' : '头顶范围'}`);
           } catch { /* 报告失败就算了 */ }
         }
         }

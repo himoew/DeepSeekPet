@@ -19,7 +19,7 @@
  */
 
 /** 重力（px/s²）。视口 800px 高时，球从她腰那么高掉下来约 0.5 秒落地。 */
-const GRAVITY = 1500;
+export const GRAVITY = 1500;
 /** 撞地保留多少速度：0.55 大约弹两三下就停。 */
 const BOUNCE = 0.55;
 /**
