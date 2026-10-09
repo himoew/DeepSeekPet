@@ -66,6 +66,39 @@ function liftFor(power) {
   for (const [from, v] of KICK_LIFT) if (power >= from) vy = v;
   return vy;
 }
+
+/** 她的身高（px）—— 高度限制全都以它为尺子（用户就是按"几个小肥鱼"描述的）。 */
+const PET_H = 96;
+/**
+ * **球越高，能踢出的上限越低**（用户实测后定的规则）。
+ *
+ * 原话："球离开地面越远，用户能踢出的高度越低 ——
+ * 离地半个小肥鱼，踢球高度减半；离地一个小肥鱼，减三分之二左右；
+ * 超过 1.5 个小肥鱼，始终限制在四分之一跳跃高度。"
+ *
+ * 所以这是一条**上限曲线**（占"满力抬升 800"的比例），按球离地高度分段：
+ *   0 ~ 0.5H  → 100%（不限制）
+ *   0.5H ~ H  → 50%
+ *   H ~ 1.5H  → 33%（"减三分之二左右"）
+ *   > 1.5H    → 25%
+ * **力度分档不变**：轻/中/猛仍然是 475 / 660 / 800，只是各自再乘这个比例。
+ */
+const LIFT_CEIL = [
+  [0.00 * PET_H, 1.00],
+  [0.50 * PET_H, 1.00],
+  [0.50 * PET_H, 0.50],
+  [1.00 * PET_H, 0.50],
+  [1.00 * PET_H, 0.33],
+  [1.50 * PET_H, 0.33],
+  [1.50 * PET_H, 0.25],
+  [Infinity, 0.25],
+];
+/** 球现在离地多高时，抬升最多只能到满力的百分之多少（分段，取区间左端）。 */
+function liftCeil(height) {
+  let k = LIFT_CEIL[0][1];
+  for (const [from, v] of LIFT_CEIL) if (height >= from) k = v;
+  return k;
+}
 /** 同一帧里最多踢一次：给碰撞一个"冷却"，免得贴着球时每帧都踢（球会抖）。
  *  **别调太大**：她追到球边上时冷却还没好就踢不到 —— 实测会变成"球重置了她不踢过来"。 */
 const KICK_COOL_MS = 280;
@@ -383,7 +416,14 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
      * **高度按力度分档**（见 `KICK_LIFT`）：轻扫到她的脖子、中扫到 1.5 倍她、全力过顶。
      * 老写法是 `dirY * power * .5 - 120`（永远只有 120~200 的抬升）→ 用户实测"球踢得太低了"。
      */
-    const lift = liftFor(power);
+    /**
+     * **高度按力度分档，再按"球当前离地多高"压上限**（见 `LIFT_CEIL`）：
+     * 轻扫到她的脖子、中扫到 1.5 倍她、全力过顶 —— 但**球已经在空中时，能踢出的高度上限会降**
+     * （离地半个她 → 减半；一个她 → 三分之一；超过 1.5 个她 → 只剩四分之一）。
+     * 这样玩家没法"把空中的球再顶到很高"，反复挑高会越来越难。
+     */
+    const ballHigh = Math.max(0, b.floorY - st.y);
+    const lift = liftFor(power) * liftCeil(ballHigh);
     st.vy = Math.min(-140, -lift + Math.min(0, (dirY / n) * power * .25));
     st.spinV = (st.vx / R) * 1.6;
     st.resting = false;
@@ -720,11 +760,12 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     }
     st.vx = dirX * power;
     /**
-     * 高度跟玩家那套**统一**（`KICK_LIFT` 按力度分档）：
-     * 以前她踢的球只有 120~200 的抬升，用户实测"球踢得太低了"。
-     * 现在她的球也到她脖子/1.5 倍她/过顶三档，两边手感一致。
+     * 高度跟玩家那套**统一**（`KICK_LIFT` 分档 + `liftCeil` 按球离地高度压上限）：
+     * 以前她踢的球只有 120~200 的抬升，用户实测"球踢得太低了"；
+     * 现在两边都到她脖子/1.5 倍她/过顶三档，而且**球在空中时上限一样会降**。
      */
-    st.vy = Math.min(-140, -liftFor(power) + Math.min(0, dirY * power * .25));
+    const ballHighHer = Math.max(0, b.floorY - st.y);
+    st.vy = Math.min(-140, -liftFor(power) * liftCeil(ballHighHer) + Math.min(0, dirY * power * .25));
     st.spinV = (st.vx / R) * 1.6;
     st.lastKick = now;
     st.since = 0;

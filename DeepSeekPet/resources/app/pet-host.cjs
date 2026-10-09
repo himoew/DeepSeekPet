@@ -295,7 +295,13 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
     diag(`BrowserWindow 建好了 · bounds=${JSON.stringify(win.getBounds())} · visible=${win.isVisible()}`);
     // `DSP_DIAG=1` 时给页面加 `?diag=1`：页面会把自己的绘制状态持续写进标题，
     // 于是从窗口外面就能看到"她到底画了没有"（见 web\pet.html 末尾那段）。
-    win.loadURL(process.env.DSP_DIAG === '1' ? `${url}${url.includes('?') ? '&' : '?'}diag=1` : url);
+    // `DSP_DEBUG=1` 再加 `?debug=1`：弹弹乐的低频 trace / 开球跟踪（平时关着，免得淹日志）。
+    {
+      const q = [];
+      if (process.env.DSP_DIAG === '1') q.push('diag=1');
+      if (process.env.DSP_DEBUG === '1') q.push('debug=1');
+      win.loadURL(q.length ? `${url}${url.includes('?') ? '&' : '?'}${q.join('&')}` : url);
+    }
     win.webContents.on('did-finish-load', () => diag('页面加载完成(did-finish-load)'));
     win.webContents.on('render-process-gone', (_e, d2) => diag(`渲染进程没了：${JSON.stringify(d2)}`));
     // **心跳**：每 2 秒记一次它到底可见不可见、被摆到哪儿、还是不是置顶。

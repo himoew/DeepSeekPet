@@ -212,6 +212,8 @@ const game = createGame({
     walkTo: (x, run) => { ctl.holdRoam(6); ctl.walkTo(Math.min(1, Math.max(0, x)) * innerWidth, !!run); },
     jump: () => ctl.act(['jump']),
     act: (a) => ctl.act([a]),
+    /** 只读：她当前的移动模式与速度（诊断"球在天上她就只会走"用）。 */
+    move: () => ctl.move,
   },
   onEvent: (kind, d) => {
     if (kind === 'goal') send({ t: 'ballGoal', scorer: d.scorer, score: d.score, defence: d.defence });

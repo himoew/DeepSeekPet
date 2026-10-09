@@ -50,6 +50,13 @@ const WALK_EPS = 26;          // 离目标这么近就不喊了
 const CHASE_OPP_MAX = 0.16;   // 球离对面门这么近（占窗口宽）就不追了 —— 追不上，回去防守
 const CHASE_SELF_MAX = 0.34;  // 自己离球这么远也不追了（回防）
 const DEFEND_X = 0.30;        // 回防站位：在自己半场这条线上等（不贴墙，留反应距离）
+/**
+ * 详细诊断开关：`DSP_DEBUG=1` 启动时，页面 URL 会带 `?debug=1`（见 pet-host.cjs）。
+ * 平时关着 —— 一场球下来这些行会把日志淹掉。
+ */
+const DEBUG = (() => {
+  try { return new URLSearchParams(location.search).has('debug'); } catch { return false; }
+})();
 
 /** 球往哪个门踢：她守 0（左）就踢右边（1.0），反之踢左边（0.0）。 */
 const targetFor = (defence) => (defence === 0 ? 1 : 0);
@@ -175,6 +182,7 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     // 记号：这次开球之后她多久才踢到（用来诊断"球复位了她不去踢"）
     g.kickoffAt = performance.now();
     g.kickoffKicked = false;
+    g.kickoffTicks = 0;
     g.lastWant = 0;                                    // 目标失效 → 下一帧一定重新下达
   }
 
@@ -377,10 +385,18 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
      * 用户实测"球复位了她不知道去踢" —— 这一行能分清是
      *   ① 她没往球那边走（走位问题）还是 ② 走到了却没踢到（碰撞/冷却问题）。
      */
-    if (g.kickoffAt && !g.kickoffKicked && now - g.kickoffAt > 1500) {
-      g.kickoffAt = 0;
+    if (DEBUG && g.kickoffAt && !g.kickoffKicked && now - g.kickoffAt > 1500) {
+      /**
+       * 连报几笔（每 0.8 秒一次，最多 4 笔），这样能看出**她有没有在往球那边移动** ——
+       * 只报一笔的话分不清"她没动"和"她动得慢"。
+       */
+      g.kickoffAt = now;
+      g.kickoffTicks = (g.kickoffTicks || 0) + 1;
+      if (g.kickoffTicks > 4) { g.kickoffAt = 0; }
       try {
-        globalThis.petHost?.report?.(`[弹弹乐] 开球后 1.5 秒还没踢到：球在 ${Math.round(s.x)}（离她 ${Math.round(Math.abs(s.x - pet.x))}px）· 她在 ${Math.round(pet.x)} · 球离地 ${Math.round(high)}px`);
+        const why = plan(s.x, pet.x, g.defence, g.urgency || 0).why;
+        const hz = g.defence === 0 ? s.x < b.minX + ZONE * b.W : s.x > b.maxX - ZONE * b.W;
+        globalThis.petHost?.report?.(`[弹弹乐] 开球后第 ${g.kickoffTicks} 次检查：球在 ${Math.round(s.x)}（离她 ${Math.round(Math.abs(s.x - pet.x))}px）· 她在 ${Math.round(pet.x)} · 球离地 ${Math.round(high)}px · herZone=${hz} 分支=${why} 目标=${g.lastWant ? Math.round(g.lastWant) : 0}`);
       } catch { /* ignore */ }
     }
     if (herZone) { goTo(s.x, false, true); void netX; return; }   // 她半场的球：**跑**过去抢
@@ -390,6 +406,18 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
      * `urgency` 由比分算：落后越多越靠前压。
      */
     const p = plan(s.x, pet.x, g.defence, g.urgency || 0);
+    /**
+     * 低频 trace（1.2 秒一条）：**排查"她为什么不追球"时把 `DSP_DEBUG=1` 打开**。
+     * 平时不刷（日志会淹），只在需要诊断时开。
+     */
+    if (DEBUG && now - (g.traceAt || 0) > 1200) {
+      g.traceAt = now;
+      try {
+        // 连她的**移动模式与速度**一起记：排查"球在天上她就只会走"时这是关键
+        const mv = control.move ? control.move() : null;
+        globalThis.petHost?.report?.(`[弹弹乐·trace] herZone=${herZone} 分支=${p.why} 目标=${Math.round(p.x)} 她在=${Math.round(pet.x)} 球=${Math.round(s.x)} 球离地=${Math.round(high)} 她在跑=${mv ? mv.mode : '?'} 速度=${mv ? Math.round(mv.speed) : '?'}`);
+      } catch { /* ignore */ }
+    }
     goTo(p.x, false, true);
     void netX;
   }

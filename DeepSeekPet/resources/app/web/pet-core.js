@@ -739,6 +739,19 @@ export function createPet(els, opts) {
     const target = clamp(x, minX(), maxX());
     pet.expr = null;
     if (Math.abs(target - pet.x) < 2) { onEvent('arrived', { walkId, x: Math.round(pet.x) }); return true; }
+    /**
+     * ⚠️ **同一个方向上换目标时，不要重置移动模式**。
+     *
+     * 为什么要这一条：`setMode` 会把 `mt`（进入这个模式后的时间）清零，而跑步的起步斜坡是
+     * `min(1, mt / .35)` —— 比赛里她每 260ms 就更新一次走位目标，
+     * 每次都 `setMode('run')` 就把斜坡**永远按回起点**，速度卡在 45~80（走路级），
+     * 实感就是"球在天上时她只会慢悠悠地走"（用户实测报的）。
+     * 现在：目标还在同一侧（没跨过她）时，**只改 target、保留加速**。
+     */
+    const sameWay = (pet.mode === 'run' || pet.mode === 'walk')
+      && Math.sign(target - pet.x) === Math.sign(pet.target - pet.x)
+      && Math.abs(target - pet.x) > 2;
+    if (sameWay) { pet.target = target; return true; }
     setMode(run ? 'run' : 'walk', { target, walkId });
     return true;
   }
@@ -864,11 +877,18 @@ export function createPet(els, opts) {
          * 加了下限之后，只要距离够远就**一步到位用跑的**，最后再减速进站。
          */
         const vT = Math.min(vMax, run ? Math.max(dist * 4 + 20, vMax * .65) : dist * 3 + 14);
+        // 动画节奏跟着"跑还是走"定（这几行别删：步伐长短、抬腿高度、身体前倾都靠它们）
         strideT = run ? 17 : 10; liftT = run ? 15 : 8; bobT = run ? 7 : 3; rate = run ? 4.4 : 2.1;
         leanT = run ? (dist < 50 && pet.speed > 120 ? -6 : 11) : 4;
         if (leanT < 0 && !pet.skid) { pet.skid = true; sfx.skid(); }
+        /**
+         * 起步斜坡：跑的时候**别从 0 开始**（地板 0.6）。
+         * 斜坡本来是为了"起步有个加速过程"，但比赛里目标一变就可能重启斜坡，
+         * 从 0 开始就会看到她"慢慢地起步"—— 给个地板，起步直接是走路的 1.5 倍以上。
+         */
         const ramp = Math.min(1, mt / (run ? .35 : .25));
-        pet.speed = lerp(pet.speed, vT * smooth(ramp), ease(run ? 6 : 9, dt));
+        const k0 = run ? .6 + .4 * smooth(ramp) : smooth(ramp);
+        pet.speed = lerp(pet.speed, vT * k0, ease(run ? 6 : 9, dt));
         pet.x += dir * Math.min(dist, pet.speed * dt);
         const k = clamp(pet.speed / vMax, 0, 1);
         strideT *= .4 + .6 * k; liftT *= .4 + .6 * k;
@@ -1314,6 +1334,11 @@ export function createPet(els, opts) {
      * 只暴露这三个数，**不暴露可写句柄**，免得外面的模块把她搬走。
      */
     get where() { return { x: pet.x, faceVis: pet.faceVis, feetY: pet.fy }; },
+    /**
+     * 只读：她当前的移动模式与速度（`mode` 是 `walk` / `run` / …，`speed` 是 px/s）。
+     * 弹弹乐用它做诊断："球在天上时她是不是只在走（`walk`）而不是跑（`run`）"。
+     */
+    get move() { return { mode: pet.mode, speed: pet.speed, target: pet.target }; },
     setSkin(s) { skin = s; },
     /** Swaps the body's drawing: a custom figure (see `opts.figure`) or null for the built-in Coo. */
     setFigure(fig) {
