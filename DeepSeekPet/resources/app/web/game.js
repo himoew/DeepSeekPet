@@ -379,7 +379,6 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
       return hHigh > REACH_MIN - 20 && hHigh < REACH_JUMP
         && Math.abs(hx - pet.x) < HEAD_X + shift;
     })();
-    /** 球就在她头顶那一片（来不及了）：也跳一下碰运气。 */
     const above = !s.resting && high > REACH_MIN && high < REACH_JUMP && Math.abs(s.x - pet.x) < HEAD_X;
     const canHead = willHead || above;
     /**
