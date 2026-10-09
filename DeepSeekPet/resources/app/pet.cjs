@@ -1493,7 +1493,9 @@ function attach(ws) {
       case 'ballKick': {
         // 页面判定"她踢到球了"（物理在 web/ball.js），`at` 是球的横向比例（0..1）。
         // 记下来，好让她下次知道往哪走；然后说一句踢球的台词。
+        // **`dir` 也记进日志**：排查"她怎么把球踢进自己网里"时，这是唯一能看清方向的线索。
         if (typeof m.at === 'number' && m.at >= 0 && m.at <= 1) state.ballX = m.at;
+        if (state.ballMode === 'game') log.info(`踢球：位置 ${(m.at * 100).toFixed(0)}% · 方向 ${m.dir > 0 ? '右' : '左'}（${m.dir}）`);
         if (state.paused || state.card) break;
         reactor.reply('react', 'ballKick', [next(lines.ballKick)]);
         break;

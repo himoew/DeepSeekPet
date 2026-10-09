@@ -183,7 +183,11 @@ const ball = createBall({
   onEvent: (kind, d) => {
     // 踢到球 → 告诉 World 选一句台词。**报的是横向比例（0..1）**，World 不用知道窗口多大；
     // 它拿这个数决定"下次走过去找球"时的目标位置。
-    if (kind === 'ballKick') send({ t: 'ballKick', at: +(d.x / Math.max(1, innerWidth)).toFixed(4) });
+    if (kind === 'ballKick') {
+      // 报的是横向比例（0..1）**和这一脚的方向**：World 用它决定"下次走过去找球"，
+      // 也是排查"她怎么把球踢进自己网里"的关键线索
+      send({ t: 'ballKick', at: +(d.x / Math.max(1, innerWidth)).toFixed(4), dir: d.dir });
+    }
   },
   game: { onStep: (s) => hooks.step?.(s), onKick: (i) => hooks.kick?.(i) },
 });
@@ -1677,7 +1681,16 @@ stage.addEventListener('pointerdown', (e) => {
     const vx = swat.seen ? (e.clientX - swat.px) / (dt / 1000) : 0;
     const vy = swat.seen ? (e.clientY - swat.py) / (dt / 1000) : 0;
     const hit = ball.swat({ x: vx, y: vy }, Math.hypot(vx, vy));
-    if (hit) report(`[弹弹乐] 打了一拍：力度 ${Math.round(hit)}（鼠标 ${Math.round(Math.hypot(vx, vy))}px/s）`);
+    /**
+     * 报给主进程（限流 0.8 秒一条）：**"点在球上到底有没有被接住"的唯一实锤**。
+     * 用户实测"鼠标移到球身上无反应"时，这一行能直接分出是
+     * ① 事件没进到这个分支（`gameMode`/`near` 不对）、还是 ② 进来了但力度不够（`hit=0`）。
+     */
+    if (performance.now() - (swat.reportedAt || 0) > 800) {
+      swat.reportedAt = performance.now();
+      report(`[弹弹乐] 点在球上：力度=${hit} 鼠标速度=${Math.round(Math.hypot(vx, vy))} · 球在 ${Math.round(ball.x)},${Math.round(ball.y)} · 点到 ${Math.round(e.clientX)},${Math.round(e.clientY)}`);
+    }
+    if (hit) sfx?.kick?.(.6);
     e.preventDefault();
     return;
   }

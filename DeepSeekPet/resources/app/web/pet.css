@@ -199,6 +199,11 @@ body.desk .floor{display:none}
 .toy-goal-frame{fill:rgba(120,190,255,.10); stroke:rgba(160,210,255,.55); stroke-width:2}
 .toy-goal-grid{fill:none; stroke:rgba(160,210,255,.28); stroke-width:1}
 .toy-goal-flash .toy-goal-frame{stroke:#fff}
+/**
+ * 她守的那一侧门顶上的小圆点。
+ * ⚠️ **必须给 fill**：不给的话 SVG 默认填黑，看上去就是"网上多了个黑点"（用户实测报过）。
+ */
+.toy-goal-mark{fill:#8fe3ff; stroke:rgba(255,255,255,.9); stroke-width:1.5}
 
 /* context menu: the bot and its run controls on top, the actions as icon tiles below */
 .menu{

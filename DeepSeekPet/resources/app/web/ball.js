@@ -452,17 +452,29 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     const power = base * (aim.power || 1);
     let dirX, dirY;
     if (aim.x !== null && aim.x !== undefined) {
-      // 瞄准：横向朝目标、纵向给一个**比较平的**仰角。
-      // 原来 -0.45 是高抛：球慢、还容易飘过门框 —— 用户实测"放着不管她也踢不进"。
-      // 压到 -0.30 之后球更快更直，她踢出去的才有威胁。
+      /**
+       * 瞄准：横向朝目标、纵向给一个**比较平的**仰角（原来 -0.45 是高抛，球慢还容易飘过门框）。
+       *
+       * ⚠️ **不能把球踢向自己的门**：如果球已经跑到她**自己门前**（离门线只剩窗口的 ~18%），
+       * 还照直瞄准对面的门，球会先穿过她自己的网区 —— 用户实测就是"把小人拖过来，她往自己网里踢"。
+       * 这时候改成**先把球踢出去（朝对面、而且方向强制向外）**，别在自家门口纠缠。
+       */
       const targetX = b.minX + aim.x * (b.maxX - b.minX);
+      const ownGoalX = b.maxX - targetX + b.minX;                // 目标门的对面 = 她自己的门
+      const nearOwnGoal = Math.abs(st.x - ownGoalX) < b.W * 0.18;
       let dx = targetX - st.x;
+      if (nearOwnGoal) dx = (targetX > st.x ? 1 : -1) * Math.max(Math.abs(dx), b.W * 0.4);
       if (Math.abs(dx) < 8) dx = (dx < 0 ? -8 : 8);
       const dy = -0.30;
       const n = Math.hypot(dx, 1) || 1;                   // 横向先化成"每 1 单位纵向"的比例
       dirX = dx / n; dirY = dy;
       const m = Math.hypot(dirX, dirY) || 1;
       dirX /= m; dirY /= m;
+      // 最后一层保险：无论如何别朝**球门一侧**踢（踢出去必须是"往外"的）
+      if (Math.sign(dirX) !== 0 && Math.sign(dirX) === Math.sign(ownGoalX - st.x)
+        && Math.abs(st.x - ownGoalX) < b.W * 0.18) {
+        dirX = -dirX;
+      }
     } else {
       let dx = st.x - hb.cx;
       const dy = st.y - hb.cy;
@@ -477,7 +489,12 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     st.since = 0;
     st.resting = false;
     sfx?.kick?.();
-    onEvent?.('ballKick', { x: Math.round(st.x), power: Math.round(power), at: +(st.x / Math.max(1, b.W)).toFixed(4) });
+    onEvent?.('ballKick', {
+      x: Math.round(st.x),
+      power: Math.round(power),
+      at: +(st.x / Math.max(1, b.W)).toFixed(4),
+      dir: Math.round(dirX * 100) / 100,               // 这一脚的横向方向（-1 左 / +1 右）
+    });
     game?.onKick?.({ x: st.x, power });
   }
 
