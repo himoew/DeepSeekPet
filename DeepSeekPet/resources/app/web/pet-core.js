@@ -855,7 +855,15 @@ export function createPet(els, opts) {
         // 后跟，差得多就像穿溜冰鞋。步伐的节奏是从
         // `pet.speed / vMax` 算出来的，所以缩放 `vMax` 一起变——不会出现"滑步"。
         const vMax = (run ? 250 : 78) * mood.speed;
-        const vT = Math.min(vMax, run ? dist * 4 + 20 : dist * 3 + 14);
+        /**
+         * 跑起来的**目标速度**有一个下限（`vMax` 的 65%）。
+         *
+         * ⚠️ 原来是 `run ? dist * 4 + 20 : …`：距离近时目标速度被压到很低
+         * （距离 50px 时只有 220、距离 100px 时 250 才刚好满），
+         * 再加上 `.35s` 的起步斜坡 —— 实感就是"**跑之前先慢速溜达几步**"（用户实测报的）。
+         * 加了下限之后，只要距离够远就**一步到位用跑的**，最后再减速进站。
+         */
+        const vT = Math.min(vMax, run ? Math.max(dist * 4 + 20, vMax * .65) : dist * 3 + 14);
         strideT = run ? 17 : 10; liftT = run ? 15 : 8; bobT = run ? 7 : 3; rate = run ? 4.4 : 2.1;
         leanT = run ? (dist < 50 && pet.speed > 120 ? -6 : 11) : 4;
         if (leanT < 0 && !pet.skid) { pet.skid = true; sfx.skid(); }

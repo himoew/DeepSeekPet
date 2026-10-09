@@ -29,10 +29,10 @@ const GOAL_W = 0.06;          // 球门宽度（占窗口宽度的比例，约 7
 const GOAL_H = 96;            // 球门高度（px，≈ 她的身高）
 const ZONE = 0.5;             // 中线：她的半场 / 你的半场
 /**
- * 头球概率：**只要球进了她"跳起来够得到"的范围，就 50% 触发**
- * （用户实测后定的：先按 50% 看看手感，太高接不到的球不在范围内、不参与判定）。
+ * 头球概率：**只要球进了她"跳起来够得到"的范围，就 80% 触发**
+ * （用户实测后从 50% 提到 80%："头球概率还是小，直接改到 80%"）。
  */
-const HEAD_CHANCE = 0.50;
+const HEAD_CHANCE = 0.80;
 const CHARGE_CHANCE = 0.18;   // 蓄力飞踢的概率
 const CHARGE_POWER = 1.7;     // 蓄力时的力度系数
 /** 球高过地面这么多以内她跳得够到（**跟球那边的头球盒子对齐**，见 ball.js 的 HEAD_REACH）。 */
@@ -66,6 +66,10 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     scoreCool: 0,             // 这个时刻之前不再计分（防同一脚连算；不是"整局只算一次"）
     /** 紧迫度（0~1）：落后越高。影响她回防的站位（落后时押得更靠前）。 */
     urgency: 0,
+    /** 上一次下达的走位目标（用来判断"目标变化够大就立刻改"，见 goTo）。 */
+    lastWant: 0,
+    /** 开球之后等这么久还没踢到，就报一句（诊断"球复位了她不去踢"）。 */
+    kickoffAt: 0,
     calls: 0, tickAt: 0,      // 每帧调用次数自检（见 onStep）
     /**
      * 冷却时间戳初值 `0` = "**从来没做过**"（`goTo` 里显式判 `!(x > 0)`）。
@@ -168,6 +172,10 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     const near = side === 0 ? gr.x1 + b.W * 0.10 : gr.x0 - b.W * 0.10;
     ball.placeAt(Math.min(0.94, Math.max(0.06, near / b.W)), 'floor', { since: 0 });
     g.noGoal = performance.now() + 350;
+    // 记号：这次开球之后她多久才踢到（用来诊断"球复位了她不去踢"）
+    g.kickoffAt = performance.now();
+    g.kickoffKicked = false;
+    g.lastWant = 0;                                    // 目标失效 → 下一帧一定重新下达
   }
 
   /* ---------- 每帧：判进球 + 她的行动 ---------- */
@@ -305,8 +313,15 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
        * 所以这里**显式判断"从来没走过"**（`0` 就是没走过），再谈间隔。
        */
       const never = !(g.lastWalkAt > 0);
-      if (!force && !never && now - g.lastWalkAt < WALK_EVERY_MS) return;
+      /**
+       * **目标变化够大就直接改**（不等节流）。
+       * 开球之后球会跳到很远的地方，而 260ms 的节流会把新目标吞掉 ——
+       * 用户实测的现象就是"**球复位了她不知道去踢**"（她还照旧走向旧目标点）。
+       */
+      const far = !(g.lastWant > 0) || Math.abs(want - g.lastWant) > b.W * 0.08;
+      if (!force && !never && !far && now - g.lastWalkAt < WALK_EVERY_MS) return;
       g.lastWalkAt = now;
+      g.lastWant = want;
       control.walkTo(want / b.W, !!run);
     };
 
@@ -357,6 +372,17 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
       }
       if (canHead) return;                  // 够得到的来球：这一帧就去接，不再管走位
     }
+    /**
+     * **开球后的自检**：1.5 秒还没踢到就报一句。
+     * 用户实测"球复位了她不知道去踢" —— 这一行能分清是
+     *   ① 她没往球那边走（走位问题）还是 ② 走到了却没踢到（碰撞/冷却问题）。
+     */
+    if (g.kickoffAt && !g.kickoffKicked && now - g.kickoffAt > 1500) {
+      g.kickoffAt = 0;
+      try {
+        globalThis.petHost?.report?.(`[弹弹乐] 开球后 1.5 秒还没踢到：球在 ${Math.round(s.x)}（离她 ${Math.round(Math.abs(s.x - pet.x))}px）· 她在 ${Math.round(pet.x)} · 球离地 ${Math.round(high)}px`);
+      } catch { /* ignore */ }
+    }
     if (herZone) { goTo(s.x, false, true); void netX; return; }   // 她半场的球：**跑**过去抢
     /**
      * 球在对面半场：**走 `plan()` 的四档决策**（追 / 压上 / 回防），
@@ -369,8 +395,11 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
   }
 
   /** 她踢到球了：偶尔**蓄力飞踢**（力度 ×1.7，并吼一声）。 */
-  function onKick() {
+  function onKick(info) {
     if (g.mode !== 'game') return;
+    // 玩家踢的那一脚不算"她踢到了"（否则开球自检会误判成她踢到了）
+    if (info && info.by === 'player') return;
+    g.kickoffKicked = true;
     if (Math.random() < CHARGE_CHANCE) {
       ball.setAim({ x: targetFor(g.defence), power: CHARGE_POWER });
       sfx?.whoosh?.();
