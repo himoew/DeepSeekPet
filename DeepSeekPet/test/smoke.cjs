@@ -683,17 +683,22 @@ function stubModel() {
       ok('球拍模式：抓不住，但仍然"够得着"（不然打不着）', ball.near(cx, cy) === true);
       ball.placeAt(0.5, B.floorY - 300, { since: 0 });
       const beforeX = ball.x;
-      const slow = ball.swat({ x: 40, y: 0 }, 40);         // 慢慢推：不该给力
       /**
-       * 判据用**横向**：摆球的高度在门框以上，它本来就会自由落体（`vy` 自己会变大），
-       * 所以不能拿 `resting` 当判据 —— 要看"推了之后横向动没动"。
+       * **轻点也要能打**（用户实测：他只是"点"了一下球、鼠标速度 2px/s，
+       * 我最初判"推不动" → 完全没反应）。所以现在的判据是"轻点给一个**小**力度"，
+       * 而不是"给 0"。真正防赖皮靠的是 `hitTest` 永远不通过（球拖不走），不是靠"推不动"。
        */
-      ok('球拍模式：慢慢推球推不动（这条路必须断，否则还是能带球）',
-        slow === 0 && ball.state.vx === 0 && ball.state.x === beforeX);
+      const tap = ball.swat({ x: 40, y: 0 }, 2);
+      ok('球拍模式：轻轻点一下也能把球推出去（实测两轮定下来的手感）',
+        tap >= 300 && ball.state.vx !== 0);
+      // 而且球**不能被拖着走**：拖动接口在球拍模式下不生效（grabable=false 时 drag 也只当没抓住）
+      ball.placeAt(0.5, B.floorY - 300, { since: 0 });
+      ok('球拍模式：球不会被"抓住拖着走"（防赖皮的真正保障）',
+        ball.grabable === false && ball.hitTest(ball.x, ball.y) === false && Math.abs(ball.x - beforeX) < 1);
       ball.placeAt(0.5, B.floorY - 300, { since: 0 });
       const fast = ball.swat({ x: 1, y: -0.2 }, 1200);     // 用力抽：球飞出去
-      ok('球拍模式：甩得快球就被打出去（有力度）',
-        fast > 0 && ball.state.vx > 0 && ball.state.resting === false);
+      ok('球拍模式：甩得快球就被打出去（而且比轻点更猛）',
+        fast > 300 && fast > tap && ball.state.vx > 0 && ball.state.resting === false);
       game.setMode('ball');
       ok('球拍模式：回到自由玩球时又能抓了', ball.grabable === true);
       game.setMode('off');

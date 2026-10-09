@@ -1548,8 +1548,30 @@ function setInteractive(on, by) {
   if (!host || interactive === on) return;
   interactive = on;
   host.setInteractive(on);
+  /**
+   * **两侧都留痕**：页面这一侧判成"该收鼠标"了没有，一眼可见。
+   * （用户实测"球完全没法互动"时，光看结果分不清是"判定没触发"还是"主进程没收鼠标"。）
+   * 限流 1.2 秒一条，只记会翻成 `true` 的那种（那是"要拿鼠标"的时刻）。
+   */
+  if (on && performance.now() - (lastInteractiveLog || 0) > 1200) {
+    lastInteractiveLog = performance.now();
+    const p = cursor.at;
+    const near = p ? (() => { try { return ball.near(p.x, p.y); } catch { return '?'; } })() : '?';
+    const onHer = p ? (() => { try { return ctl.hitPet(p); } catch { return '?'; } })() : '?';
+    report(`[输入] 页面把鼠标收回（by=${by}）· 光标 ${p ? Math.round(p.x) + ',' + Math.round(p.y) : '?'}`
+      + ` · 在她身上=${onHer} · 在球附近=${near}`
+      + ` · host=${!!host} · 通道=${typeof host?.setInteractive}`);
+    /**
+     * **再强制发一次**：这条日志是为了验证"页面 → 主进程"的通道本身通不通。
+     * 如果页面说发了、主进程那边却没有对应日志，那问题就在通道（preload / ipcMain），
+     * 不在判定逻辑 —— 用户实测"球完全没法互动"就卡在这里。
+     */
+    try { host?.setInteractive(true); } catch (err) { report(`[输入] 发 IPC 失败：${err && err.message}`); }
+  }
   logPointer('flip', by);
 }
+/** 限流用：上一次"收回鼠标"的日志时间。 */
+let lastInteractiveLog = 0;
 
 /**
  * Pointer diagnostics, one console line `[pointer] {json}` that reaches the run log: each time the
@@ -1680,6 +1702,17 @@ host?.onCursor?.((p) => {
 stage.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
   closeMenu();
+  /**
+   * **每按一次都记一笔（限流 1 秒）**：排查"球没法互动"时，这一行能一眼分出
+   *   · 日志里**没有**这一行 → 窗口根本没收到鼠标（点击穿透没被打开）
+   *   · 有这一行、但 `进分支=false` → 事件到了、只是没判成"在球上"
+   *   · 有这一行、`进分支=true` → 进了打球逻辑（那就看 `ball.swat` 返回的力度）
+   */
+  if (performance.now() - (swat.lastDownLog || 0) > 1000) {
+    swat.lastDownLog = performance.now();
+    const near = (() => { try { return ball.near(e.clientX, e.clientY); } catch { return 'err'; } })();
+    report(`[输入] 按下 @${Math.round(e.clientX)},${Math.round(e.clientY)} · 比赛模式=${flags.gameMode} · 在球附近=${near} · 球在 ${Math.round(ball.x ?? -1)},${Math.round(ball.y ?? -1)}`);
+  }
   /**
    * **球拍模式**：球不能抓，只能打回去（用户的想法）。
    * 用"按下前 100ms 的鼠标甩动速度"当力度与方向 —— 慢慢推球**推不动**，

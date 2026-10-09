@@ -71,11 +71,22 @@ const report = (msg) => {
   try { globalThis.petHost?.report?.(String(msg).slice(0, 600)); } catch { /* 报告失败就算了 */ }
 };
 
-/** 球拍模式（比赛模式）里"打一拍"的力度：鼠标甩得越快越猛；太慢（<110px/s）不给力。 */
-const SWAT_MIN = 380;
+/**
+ * 球拍模式（比赛模式）里"打一拍"的力度。
+ *
+ * 实测调过两轮：
+ *   · 第一版要求"必须甩得快"（<110px/s 完全不给力）→ 用户点了没反应；
+ *   · 第二版"轻点也给一点力"（0.55 × 300 ≈ 165px/s）→ 能动，但**只是轻微挪一下**，手感太轻。
+ * 现在：**轻点也能把球推出去**（下限就是 `SWAT_MIN`），甩得越快越猛、上限 `SWAT_MAX`。
+ */
+const SWAT_MIN = 300;
 const SWAT_MAX = 900;
-const SWAT_MIN_SPEED = 110;
-const SWAT_FULL_SPEED = 900;
+/** 甩动速度达到这个值就算"满力"。 */
+const SWAT_FULL_SPEED = 700;
+/** 轻点时的力度系数：1.0 = 直接用 `SWAT_MIN`（300px/s，能滚过大半场）。 */
+const SWAT_CLICK_POWER = 1.0;
+/** 甩动速度低于这个值就算"没甩"（当轻点处理，方向取"远离她"那一侧）。 */
+const SWAT_SLOW = 110;
 
 export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
   const st = {
@@ -235,27 +246,40 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
   const grab = { ok: true };
   /**
    * 打一拍：按方向与力度给球一个冲量。
-   * `dir` 是 `{x, y}`（未归一化也行），`speed` 是你甩鼠标的速度（px/s）。
-   * 太慢的一下**不给力**（"慢慢推着球走"这条路必须断掉，否则等于还是能带球）。
+   *
+   * ⚠️ **轻点也要能打**（用户实测：他只是"点"了一下球，速度 2px/s，我原来判"推不动" → 完全没反应）。
+   * 现在的规则是：
+   *   · **甩了**（> `SWAT_SLOW`）→ 方向=甩动方向、力度随甩速（300~900）；
+   *   · **没甩/只点一下** → 方向 = **远离她的方向**（朝空场那边推）、力度 = 轻（`SWAT_CLICK_POWER`）。
+   *
+   * 注意这**不等于**"能用鼠标把球带进门"：`grabable` 仍然是 false，
+   * `hitTest` 永远不通过，所以球**不会被拖着走** —— 只是被推出去。
    */
   function swat(dir, speed) {
     if (!st.on || grab.ok) return 0;
-    const dx = Number(dir?.x) || 0;
-    const dy = Number(dir?.y) || 0;
-    const len = Math.hypot(dx, dy) || 0;
-    if (len < 1) return 0;
+    const b = stage.bounds();
     const sp = Math.max(0, Math.min(1600, Number(speed) || 0));
-    if (sp < SWAT_MIN_SPEED) return 0;                 // 太慢：推不动
-    const power = SWAT_MIN + (SWAT_MAX - SWAT_MIN) * Math.min(1, sp / SWAT_FULL_SPEED);
+    let dx = Number(dir?.x) || 0;
+    let dy = Number(dir?.y) || 0;
+    let power;
+    if (sp >= SWAT_SLOW && Math.hypot(dx, dy) > 0.5) {
+      power = SWAT_MIN + (SWAT_MAX - SWAT_MIN) * Math.min(1, sp / SWAT_FULL_SPEED);
+    } else {
+      // 只是点了一下：朝"远离她"的方向轻推（球心在她哪一侧，就往那一侧推）
+      const p = stage.pet();
+      dx = st.x >= (p?.x ?? b.W / 2) ? 1 : -1;
+      dy = -0.25;
+      power = SWAT_MIN * SWAT_CLICK_POWER;
+    }
+    const len = Math.hypot(dx, dy) || 1;
     st.vx = (dx / len) * power;
-    st.vy = (dy / len) * power - 60;                   // 稍微往上抬一点，像"挑"了一下
+    st.vy = (dy / len) * power - 40;                   // 稍微往上抬一点，像"挑"了一下
     st.spinV = (st.vx / R) * 1.5;
     st.resting = false;
     st.dragging = false;
     st.since = 0;
     st.lastKick = performance.now();                   // 别紧接着又被算成"她踢到了"
-    sfx?.kick?.(.6);
-    onEvent?.('ballSwat', { x: Math.round(st.x), power: Math.round(power) });
+    onEvent?.('ballSwat', { x: Math.round(st.x), power: Math.round(power), speed: Math.round(sp) });
     return power;
   }
 

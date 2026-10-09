@@ -264,6 +264,8 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
     setTimeout(() => { if (!shown) showNow('兜底：ready-to-show 没来，2.5 秒后自己显示'); }, 2500);
     // the page learns where the cursor is even when the click-through window misses its moves
     let last = '';
+    /** 限流用：上一次"收/放鼠标"的日志时间（见 `pet:interactive`）。 */
+    let lastInteractiveAt = 0;
     const cursorTimer = setInterval(() => {
       if (!win || !win.isVisible()) return;
       const pt = screen.getCursorScreenPoint(), b = win.getBounds();
@@ -318,7 +320,27 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
     dress.loadURL(target);
   };
 
-  ipcMain.on('pet:interactive', (_e, on) => { if (win) win.setIgnoreMouseEvents(!on, { forward: true }); });
+  /**
+   * 页面说"这只鼠标我收了 / 我放过去"。
+   *
+   * ⚠️ **带上诊断日志**（限流 1.2 秒一条）：用户实测"球完全没法互动"时，
+   * 页面那一侧明明记录了"已把鼠标收回"，可点击一次都没到页面 ——
+   * 所以必须看到**主进程这边到底把窗口设成了什么**。
+   * Electron 里 `setIgnoreMouseEvents(false)` 之后若被别的调用覆盖（比如窗口重建、再次 `true`），
+   * 页面那边是察觉不到的。
+   */
+  ipcMain.on('pet:interactive', (_e, on) => {
+    if (!win) return;
+    win.setIgnoreMouseEvents(!on, { forward: true });
+    const now = Date.now();
+    if (now - lastInteractiveAt > 1200) {
+      lastInteractiveAt = now;
+      let ignored = '?';
+      try { ignored = win.isIgnoreMouseEvents ? win.isIgnoreMouseEvents() : '?'; } catch { /* 旧版本没有这个 API */ }
+      const b = win.getBounds();
+      diag(`[输入] 主进程：收鼠标=${on} → 忽略鼠标=${ignored} · 窗口 ${b.width}x${b.height}@${b.x},${b.y} · 可见=${win.isVisible()}`);
+    }
+  });
   ipcMain.on('pet:focus', () => {
     if (!win) return;
     // Explicit text input activates this menu-bar process as well as its window.
