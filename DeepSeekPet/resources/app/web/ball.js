@@ -41,8 +41,28 @@ const GROUND_FRICTION = 0.86;
 const AIR_DRAG = 0.06;
 /** 球半径（舞台像素）。 */
 const R = 13;
-/** 踢出去的速度范围（px/s）。 */
-const KICK_MIN = 300, KICK_MAX = 520;
+/** 踢出去的速度范围（px/s）。上限从 520 提到 700：用户要"距离再增加 0.3 倍左右"。 */
+const KICK_MIN = 300, KICK_MAX = 700;
+/**
+ * **出脚的仰角（按力度分三档）** —— 用户实测后定的手感：
+ *
+ *   · 轻扫 → 球到她的**脖子**高（≈75px）：好接、适合贴地推进
+ *   · 中扫 → **1.5 倍她的身高**（≈145px）：正好落在她的头球区，会逼她跳起来顶
+ *   · 全力 → **略高于她能碰到的上限**（≈200px+）：过顶球，她够不到 —— 靠这个得分
+ *
+ * 为什么用"垂直初速"而不是"角度"来写：球飞多高只由 `vy` 决定（`h = vy² / 2g`），
+ * 写垂直速度可以直接对着"要飞多高"调。下面是按 `GRAVITY = 1500` 算出来的：
+ *   75px  → vy ≈ 475      145px → vy ≈ 660      210px → vy ≈ 795
+ * ⚠️ **别超过 ~800**：再高球一帧就飞出画面顶。
+ * 表里是 `[速度门槛, 垂直初速]`，速度越高用后面那档。
+ */
+const KICK_LIFT = [[0, 475], [0.55 * 700, 660], [0.85 * 700, 800]];
+/** 按出脚速度取垂直初速（分档，不插值 —— 三档手感更好认）。 */
+function liftFor(power) {
+  let vy = KICK_LIFT[0][1];
+  for (const [from, v] of KICK_LIFT) if (power >= from) vy = v;
+  return vy;
+}
 /** 同一帧里最多踢一次：给碰撞一个"冷却"，免得贴着球时每帧都踢（球会抖）。
  *  **别调太大**：她追到球边上时冷却还没好就踢不到 —— 实测会变成"球重置了她不踢过来"。 */
 const KICK_COOL_MS = 280;
@@ -97,8 +117,14 @@ const SWAT_SLOW = 110;
  * 给它一个圆盘半径之后，接触判定从"点"变成"面"，再配上每帧的**线段扫掠**，就不会漏了。
  */
 const PADDLE_R = 40;
-/** 两次"玩家踢"之间的最小间隔：避免一帧内连踢、也避免贴着球一路推着走。 */
-const PADDLE_COOL_MS = 200;
+/**
+ * 两次"玩家用球拍踢到球"之间的最小间隔。
+ * 从 200ms 提到 **500ms**（用户实测："收回来再踢容易误触成反向踢球"）——
+ * 收鼠标那一下的回拉会形成一条反向的扫掠线段，间隙太小就会立刻被当成一脚。
+ */
+const PADDLE_COOL_MS = 500;
+/** 扫掠线段至少要这么长才算"一脚"：收鼠标的小幅回拉（几十像素）不该触发。 */
+const PADDLE_MIN_SWEEP = 26;
 /** 光标速度低于这个值不算"主动扫"（只是鼠标的轻微抖动）。 */
 const PADDLE_MIN_SPEED = 200;
 /** 光标速度到这个值就算满力。 */
@@ -146,7 +172,7 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
   }
 
   let box = null;          // { W, H, floorY }，每帧问 stage 要
-  let root = null, shadow = null, ballEl = null;
+  let root = null, shadow = null, ballEl = null, paddleEl = null;
   /** 球弹地的音效限流：`ballBounce` 一秒最多响 8 次（防"嗡嗡"的异响）。 */
   let lastBounceAt = 0;
   /** 重入保护（见 `step`）。 */
@@ -205,6 +231,15 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     } catch { /* 没有 Image（离线自检的桩环境）就算了 */ }
     root = mk('g', { class: 'toy-ball', 'aria-hidden': 'true' });
     shadow = mk('ellipse', { class: 'toy-ball-shadow' });
+    /**
+     * **球拍光环**：画在鼠标位置上的一个虚线圈，半径就是真正的接触半径。
+     * 用户实测的问题："范围看不见，收回时容易踢进自己家球门" ——
+     * 看不见的判定区会让人误判"我已经离开球了"。把它画出来，手感立刻可预期。
+     * 放在最前面（画的顺序：光环 → 影子 → 球），这样球永远压在光环上面。
+     */
+    paddleEl = mk('circle', { class: 'toy-paddle', r: PADDLE_R, cx: 0, cy: 0 });
+    paddleEl.setAttribute('opacity', '0');
+    root.appendChild(paddleEl);
     ballEl = mk('g', { class: 'toy-ball-body-wrap' });
     buildBall();
     root.appendChild(shadow);
@@ -318,8 +353,25 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     const b = stage.bounds();
     const power = KICK_MIN + (KICK_MAX - KICK_MIN) * Math.min(1, speed / PADDLE_FULL_SPEED);
     const n = Math.hypot(dirX, dirY) || 1;
-    st.vx = (dirX / n) * power;
-    st.vy = Math.min(-140, (dirY / n) * power * .5 - 120);   // 和她一样：总是往上抬一点
+    let ux = dirX / n;
+    /**
+     * **在自家半场时，绝不朝自家球门踢**（用户实测："收回来再踢容易误触成反向踢球"、
+     * "容易踢进自己家球门"）。判定用"球在哪半边"而不是"球离门多近" —— 后者在门前那块会失效。
+     * 只要球在自家半场，横向分量强制朝对面；纵向照旧由仰角表决定。
+     */
+    if (aim.x !== null && aim.x !== undefined) {
+      const ownGoalX = b.minX + (1 - aim.x) * (b.maxX - b.minX);   // 对面门 → 自家门
+      const inOwnHalf = Math.abs(st.x - ownGoalX) < (b.maxX - b.minX) * 0.5;
+      const wantSign = Math.sign(b.minX + aim.x * (b.maxX - b.minX) - st.x) || 1;
+      if (inOwnHalf && Math.sign(ux) !== wantSign) ux = wantSign * Math.abs(ux);
+    }
+    st.vx = ux * power;
+    /**
+     * **高度按力度分档**（见 `KICK_LIFT`）：轻扫到她的脖子、中扫到 1.5 倍她、全力过顶。
+     * 老写法是 `dirY * power * .5 - 120`（永远只有 120~200 的抬升）→ 用户实测"球踢得太低了"。
+     */
+    const lift = liftFor(power);
+    st.vy = Math.min(-140, -lift + Math.min(0, (dirY / n) * power * .25));
     st.spinV = (st.vx / R) * 1.6;
     st.resting = false;
     st.dragging = false;
@@ -351,6 +403,13 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     if (performance.now() - (st.lastPaddle || -Infinity) < PADDLE_COOL_MS) return;
     const ax = cur.lastAt ? cur.lastX : cur.x;
     const ay = cur.lastAt ? cur.lastY : cur.y;
+    const swept = Math.hypot(cur.x - ax, cur.y - ay);
+    /**
+     * 太短的扫掠不算一脚（只有"贴着球时鼠标的微小抖动"那么长）：
+     * 用户实测的问题之一就是"收鼠标回来"时被当成反向踢。
+     * 但**静止贴着球的轻推仍然保留**（那条走下面的分支）。
+     */
+    if (swept > 0 && swept < PADDLE_MIN_SWEEP) return;
     const hit = sweepContact(ax, ay, cur.x, cur.y);
     if (!hit) return;
     const dt = Math.max(8, (cur.at - (cur.lastAt || cur.at)) || 16);
@@ -630,7 +689,12 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
       dirX = dx / n; dirY = dy / n;
     }
     st.vx = dirX * power;
-    st.vy = Math.min(-140, dirY * power * .5 - 120);
+    /**
+     * 高度跟玩家那套**统一**（`KICK_LIFT` 按力度分档）：
+     * 以前她踢的球只有 120~200 的抬升，用户实测"球踢得太低了"。
+     * 现在她的球也到她脖子/1.5 倍她/过顶三档，两边手感一致。
+     */
+    st.vy = Math.min(-140, -liftFor(power) + Math.min(0, dirY * power * .25));
     st.spinV = (st.vx / R) * 1.6;
     st.lastKick = now;
     st.since = 0;
@@ -721,6 +785,24 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
       shadow.setAttribute('ry', (R * .42 * k).toFixed(1));
       shadow.setAttribute('opacity', (.34 * k).toFixed(2));
       ballEl.setAttribute('transform', `translate(${st.x.toFixed(1)} ${st.y.toFixed(1)}) rotate(${(st.spin * 57.2958).toFixed(1)})`);
+      /**
+       * **球拍光环**：画在鼠标位置上（半径 = 真实接触半径）。
+       * 只在"球拍模式"（比赛模式，球不能抓）时显示；自由玩球是"抓住甩"，不需要它。
+       * 进入球的范围时更亮一点，扫中那一下闪一下 —— 这样"我的手离球多远"一眼可见。
+       */
+      if (paddleEl) {
+        const show = !grab.ok && cur.ok;
+        if (show) {
+          const near = Math.hypot(cur.x - st.x, cur.y - st.y) <= R + PADDLE_R;
+          const hot = performance.now() - (st.lastPaddle || -Infinity) < 120;
+          paddleEl.setAttribute('cx', cur.x.toFixed(1));
+          paddleEl.setAttribute('cy', cur.y.toFixed(1));
+          paddleEl.setAttribute('opacity', hot ? '.95' : near ? '.7' : '.3');
+          paddleEl.setAttribute('class', `toy-paddle${hot ? ' toy-paddle-hot' : near ? ' toy-paddle-near' : ''}`);
+        } else {
+          paddleEl.setAttribute('opacity', '0');
+        }
+      }
       // 球被整层重写抹掉时（比如别人写了 `#fx.innerHTML`）自己挂回去：只试一次，避免死循环
       if (!remountTried && root.parentNode !== fxG) {
         remountTried = true;

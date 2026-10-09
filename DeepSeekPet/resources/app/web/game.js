@@ -45,7 +45,7 @@ const REACH_MIN = 40;
  */
 const JUMP_LEAD = 0.8;
 const HEAD_X = 150;           // 横向差这么多以内才去顶
-const WALK_EVERY_MS = 320;    // 两次改走路目标的间隔（要跟得上球，但不能每帧喊）
+const WALK_EVERY_MS = 260;    // 两次改走路目标的间隔（要跟得上球，但不能每帧喊）
 const WALK_EPS = 26;          // 离目标这么近就不喊了
 const CHASE_OPP_MAX = 0.16;   // 球离对面门这么近（占窗口宽）就不追了 —— 追不上，回去防守
 const CHASE_SELF_MAX = 0.34;  // 自己离球这么远也不追了（回防）
@@ -63,6 +63,8 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     noGoal: 0,                // 这个时刻之前不再判进球（开球后的冷静期，防死循环）
     lastRelease: 0,           // 球上一次"从手里松开"的时刻（用来给拖球进门限一次）
     scoredThisRelease: false, // 这一次松手是否已经算过进球
+    /** 紧迫度（0~1）：落后越高。影响她回防的站位（落后时押得更靠前）。 */
+    urgency: 0,
     calls: 0, tickAt: 0,      // 每帧调用次数自检（见 onStep）
     /**
      * 冷却时间戳初值 `0` = "**从来没做过**"（`goTo` 里显式判 `!(x > 0)`）。
@@ -170,26 +172,41 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
   /* ---------- 每帧：判进球 + 她的行动 ---------- */
 
   /**
-   * **她该往哪走**（纯函数，只依赖"球在哪、她在哪、她守哪边"）。
+   * **她该往哪走**（纯函数，只依赖"球在哪、她在哪、她守哪边"，再加一个"紧迫度"）。
    *
-   * 抽出来是为了能**用纯逻辑测**：之前这段判断埋在 `onStep` 里，自检只能靠"模拟一整局"去验，
-   * 结果被进球/开球/节流搅得反复假失败（一个测试我调了十几轮）。
-   * 现在它没有副作用，测起来是确定的。
+   * 用户实测反馈："抢球逻辑与得分、回防要取得均衡，让人觉得是在比赛" ——
+   * 老写法只有"追 / 回防"两种，而且边界很硬：球一过中线就整段回防，看着像不上心。
+   * 现在分四档（**都是"立刻跑"，不站着看**）：
    *
-   * @returns {{x:number, run:boolean, why:'chase'|'defend'}}
+   *   · `intercept`：球在她半场 → 冲过去抢（这是最优先的）
+   *   · `chase`    ：球在对面但**还够得着**（离对面门还远、她自己也不远）→ 继续追，这一脚可能就进
+   *   · `press`    ：球在对面、她够不着 → **压到中线附近**（不是缩在门前），球一过来就能先抢到
+   *   · `defend`   ：球**已经贴到对面门口**（她追不上了）→ 退回自己门前
+   *
+   * `urgency`（0~1，来自比分：落后越高）会把"回防的站位"往**前**推一点 ——
+   * 落后时她会押得更靠前，看着更像在拼。
+   *
+   * @returns {{x:number, run:boolean, why:'intercept'|'chase'|'press'|'defend'}}
    */
-  function plan(x, petX, defence) {
+  function plan(x, petX, defence, urgency = 0) {
     const b = control.bounds();
+    const u = Math.min(1, Math.max(0, urgency));
     const herZone = defence === 0 ? x < b.minX + ZONE * b.W : x > b.maxX - ZONE * b.W;
-    // 球在她半场：直接去球那儿踢
-    if (herZone) return { x, run: true, why: 'chase' };
-    // 球在对面：够得着就继续追（这一脚还可能进），够不着就回自己的半场等
+    if (herZone) return { x, run: true, why: 'intercept' };      // 球在她半场：抢
     const oppGoalX = defence === 0 ? b.maxX : b.minX;
     const dOpp = Math.abs(x - oppGoalX);
     const dSelf = Math.abs(x - petX);
+    // 还够得着：继续追（这一脚有机会进）
     if (dOpp > b.W * CHASE_OPP_MAX && dSelf < b.W * CHASE_SELF_MAX) return { x, run: true, why: 'chase' };
-    const backX = defence === 0 ? b.minX + b.W * DEFEND_X : b.maxX - b.W * DEFEND_X;
-    return { x: backX, run: true, why: 'defend' };
+    // 贴到对面门口：追不上 → 回自己半场（紧迫度高时站位往前压）
+    if (dOpp <= b.W * CHASE_OPP_MAX) {
+      const line = DEFEND_X + u * 0.14;                          // 0.30 → 0.44（落后时更靠前）
+      const backX = defence === 0 ? b.minX + b.W * line : b.maxX - b.W * line;
+      return { x: backX, run: true, why: 'defend' };
+    }
+    // 够不着但球还在中场：压到中线附近等（**不是缩在门前**），球一进她的半场就能先抢到
+    const pressX = defence === 0 ? b.minX + b.W * 0.42 : b.maxX - b.W * 0.42;
+    return { x: pressX, run: true, why: 'press' };
   }
 
   function onStep(s) {
@@ -217,19 +234,30 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     const releasedAt = ball.releasedAt || 0;
     if (releasedAt !== g.lastRelease) { g.lastRelease = releasedAt; g.scoredThisRelease = false; }
 
-    // 1) 进球：球心进了门框（横梁以下、门柱之间），而且是"往里飞"
-    const grTop = goalRect(0).yTop;
-    if (!s.dragging && s.y >= grTop - 6) {
+    // 紧迫度：落后越多越拼（影响她回防的站位，见 plan()）
+    g.urgency = Math.max(0, Math.min(1, (g.score[1 - g.defence] - g.score[g.defence]) / 3));
+    /**
+     * 1) 进球判定 = **球（圆）与门框（矩形）相交**。
+     *
+     * ⚠️ 原来判的是"**球心**低于门框顶"（`s.y >= grTop - 6`），那是我把门高改成 96px 之后留下的 bug：
+     * 球心要降到离地 96px 以内才算进 —— 而从上方飞来的球，**球心还没降那么低，就先被地面反弹弹走了**，
+     * 于是判定永远不触发。用户实测："进球不触发归位了，球不会复位。"
+     * 改成"圆与矩形相交"之后，只要**球碰到门框范围**就算进（左门柱、右门柱、横梁以下）。
+     */
+    if (!s.dragging) {
+      const r = s.R || 13;
       for (const side of [0, 1]) {
         const gr = goalRect(side);
-        if (s.x < gr.x0 || s.x > gr.x1) continue;
+        const overlapX = s.x + r >= gr.x0 && s.x - r <= gr.x1;
+        const overlapY = s.y + r >= gr.yTop;
+        if (!overlapX || !overlapY) continue;
         /**
          * ★ **开球后有一小段时间不再判进球**（`g.noGoal`）。
          * 没有它就会死循环：球停在门里 → 判进球 → 开球（球还在门的横坐标范围内）→ 又判进球……
          * 实测症状就是"球一进网就卡死"。**这条是硬保险，别删。**
          */
         if (now < (g.noGoal || 0)) continue;
-        if (g.scoredThisRelease) continue;             // 这一次松手已经算过了
+        if (g.scoredThisRelease) continue;             // 这一次"松手/这一脚"已经算过了，别重复计分
         g.scoredThisRelease = true;
         const scorer = 1 - side;                       // 球进 side 的门 → 对面得分
         g.score[scorer] += 1;
@@ -320,26 +348,14 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
       }
       if (canHead) return;                  // 够得到的来球：这一帧就去接，不再管走位
     }
-    if (herZone) { goTo(s.x, false, true); void netX; return; }   // 她半场的地滚球：**跑**过去踢
+    if (herZone) { goTo(s.x, false, true); void netX; return; }   // 她半场的球：**跑**过去抢
     /**
-     * 球在对面半场。用户实测的问题是："进攻到快进球了就停止了" —— 老写法一到对面就整段回防，
-     * 于是**球都快进门了她却掉头往回走**。
-     *
-     * 现在分三种情况（按球离对面球门有多近）：
-     *   · 球还在对面中场、自己也离得不远 → **继续追**（这一脚还可能进）；
-     *   · 球已经贴到对面门口 → 追不上了，回防；
-     *   · 球深在对面、自己又远 → 回防。
-     * 回防也保持一个下限（只在己方 70% 区域内活动），不至于贴到墙上。
+     * 球在对面半场：**走 `plan()` 的四档决策**（追 / 压上 / 回防），
+     * 不再在这里重写一遍 —— 两处逻辑重复过一次，改一处忘一处就是 bug。
+     * `urgency` 由比分算：落后越多越靠前压。
      */
-    const oppGoalX = g.defence === 0 ? b.maxX : b.minX;            // 对面那个门
-    const dOpp = Math.abs(s.x - oppGoalX);
-    const dSelf = Math.abs(s.x - pet.x);
-    if (dOpp > b.W * CHASE_OPP_MAX && dSelf < b.W * CHASE_SELF_MAX) { goTo(s.x, false, true); return; }
-    const backX = g.defence === 0
-      ? b.minX + b.W * DEFEND_X
-      : b.maxX - b.W * DEFEND_X;
-    void plan;                                                     // 决策已抽成 `plan()`，这里的走位保持一致
-    goTo(backX, false, true);                                      // 回防（不贴墙、留反应距离）
+    const p = plan(s.x, pet.x, g.defence, g.urgency || 0);
+    goTo(p.x, false, true);
     void netX;
   }
 

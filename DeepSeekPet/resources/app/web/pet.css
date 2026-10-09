@@ -204,6 +204,14 @@ body.desk .floor{display:none}
  * ⚠️ **必须给 fill**：不给的话 SVG 默认填黑，看上去就是"网上多了个黑点"（用户实测报过）。
  */
 .toy-goal-mark{fill:#8fe3ff; stroke:rgba(255,255,255,.9); stroke-width:1.5}
+/**
+ * **球拍光环**：鼠标位置上的虚线圈，半径就是真实的接触半径。
+ * 用户实测"范围看不见，收回来时容易踢进自己家球门" —— 看不见的判定区没法预期。
+ * `vector-effect` 让线宽不随缩放变化（这层里可能有别的变换）。
+ */
+.toy-paddle{fill:none; stroke:rgba(150,220,255,.85); stroke-width:1.6; stroke-dasharray:5 6; vector-effect:non-scaling-stroke}
+.toy-paddle-near{stroke:rgba(190,240,255,.95)}
+.toy-paddle-hot{stroke:#fff; stroke-dasharray:none}
 
 /* context menu: the bot and its run controls on top, the actions as icon tiles below */
 .menu{

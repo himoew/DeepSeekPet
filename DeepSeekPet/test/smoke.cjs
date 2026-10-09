@@ -627,17 +627,40 @@ function stubModel() {
         const side = def === 0 ? '左' : '右';
         const herHalfX = def === 0 ? B.W * 0.25 : B.W * 0.75;   // 她半场里的一个点
         const oppHalfX = def === 0 ? B.W * 0.75 : B.W * 0.25;   // 对面半场里的一个点
-        const midBall = def === 0 ? B.W * 0.45 : B.W * 0.55;    // 对面半场、但**她够得着**（离她 < 34% 窗口）
+        const midBall = def === 0 ? B.W * 0.55 : B.W * 0.45;    // 对面半场、但**她够得着**（离她 < 34% 窗口）
         const deepBall = def === 0 ? B.W * 0.94 : B.W * 0.06;   // 贴着对面那个门（追不上）
 
         const inHer = game.plan(herHalfX, 900, def);
-        ok(`弹弹乐：球在她半场时她直接去踢（她守${side}）`, inHer.why === 'chase' && inHer.x === herHalfX);
+        ok(`弹弹乐：球在她半场时她冲过去抢（她守${side}）`, inHer.why === 'intercept' && inHer.x === herHalfX);
         const chase = game.plan(midBall, 900, def);
         ok(`弹弹乐：球在对面但够得着时她继续追（她守${side}）`, chase.why === 'chase' && chase.x === midBall);
         const back = game.plan(deepBall, 900, def);
         const myGoalX = def === 0 ? 0 : B.W;
         ok(`弹弹乐：球贴到对面门口（追不上）时她回自己半场（她守${side}）`,
           back.why === 'defend' && back.run === true && Math.abs(back.x - myGoalX) < B.W * 0.5);
+        /**
+         * **"在比赛"的三条新保证**（用户要的"抢球/得分/回防均衡"）：
+         *   · 球在对面中场、她够不着 → **压到中线附近**（不是缩在门前）
+         *   · 她**永远在跑**（没有"站着看"这一档）
+         *   · 落后时站得**更靠前**（紧迫度把回防线往前推）
+         */
+        /**
+         * "压上"这一档要**她在自己的回防位置**时才成立（在 x=900 那个位置，"够不着但球在中场"
+         * 的区间跟"追球"重叠，测不出区别）。所以这里把她放在门前：
+         * 守左 → 她 ≈0.1W；球在对面半场又不贴对面门 → 0.58W，这样 `dSelf` 足够大、`dOpp` 也足够大。
+         */
+        const guardX = def === 0 ? B.W * 0.10 : B.W * 0.90;
+        const pressBall = def === 0 ? B.W * 0.58 : B.W * 0.42;
+        const press = game.plan(pressBall, guardX, def);
+        const pressWant = def === 0 ? B.W * 0.42 : B.W * 0.58;
+        ok(`弹弹乐：够不着时她压到中线附近等（不是缩回门前，她守${side}）`,
+          press.why === 'press' && Math.abs(press.x - pressWant) < 40);
+        const calm = game.plan(deepBall, 900, def, 0);
+        const urgent = game.plan(deepBall, 900, def, 1);
+        ok(`弹弹乐：落后时她压得更靠前（紧迫度生效，她守${side}）`,
+          Math.abs(urgent.x - myGoalX) > Math.abs(calm.x - myGoalX) + 20);
+        ok(`弹弹乐：四档决策她永远在跑（没有站着看这一档，她守${side}）`,
+          [inHer, chase, back, press].every((p) => p.run === true));
       }    } catch (err) {
       // 2g-3 自己的兜底：它抛错也算一条失败（别把整份自检带崩）
       ok(`弹弹乐：进球与三态切换（不抛错）—— 实际抛了 ${err && err.message}`, false);
