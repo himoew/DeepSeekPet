@@ -39,6 +39,11 @@ const CHARGE_POWER = 1.7;     // 蓄力时的力度系数
 const REACH_JUMP = HEAD_REACH;
 /** 低于这个高度就算"贴地球"，走"跑过去踢"那条路（不跳）。 */
 const REACH_MIN = 40;
+/**
+ * **提前量**：她从起跳到最高点要约 `720 / 2300 ≈ 0.31s`（见 pet-core 的空中重力），
+ * 所以"球还有 ≤0.8 秒到她身上"时就该跳了 —— 这就是用户说的"在她头前面那道判断墙"。
+ */
+const JUMP_LEAD = 0.8;
 const HEAD_X = 150;           // 横向差这么多以内才去顶
 const WALK_EVERY_MS = 320;    // 两次改走路目标的间隔（要跟得上球，但不能每帧喊）
 const WALK_EPS = 26;          // 离目标这么近就不喊了
@@ -59,8 +64,14 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     lastRelease: 0,           // 球上一次"从手里松开"的时刻（用来给拖球进门限一次）
     scoredThisRelease: false, // 这一次松手是否已经算过进球
     calls: 0, tickAt: 0,      // 每帧调用次数自检（见 onStep）
+    /**
+     * 冷却时间戳初值 `0` = "**从来没做过**"（`goTo` 里显式判 `!(x > 0)`）。
+     * 这样既不依赖 `performance.now()` 的时间轴起点，也不会把开局第一帧的指令丢掉
+     * —— 之前拿 `0` 当"刚刚做过"的初值、又靠 `-Infinity` 打补丁，是自检偶发失败的真凶。
+     */
     lastWalkAt: 0,
     lastHeadAt: 0,
+    lastJumpLog: 0,
   };
 
   const NS = 'http://www.w3.org/2000/svg';
@@ -120,6 +131,8 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     if (want === g.mode) return g.mode;
     g.mode = want;
     mount();
+    // **球拍模式**：比赛模式里球不能抓，只能打回去（用户的想法，正好治"拎到门口放下"）
+    try { ball.setGrabable?.(want !== 'game'); } catch { /* 旧接口没有这个方法就算了 */ }
     // 报一句给主进程（`data\pet-host.log`）：切没切过去、比分多少、她守哪边，一眼可见
     try { globalThis.petHost?.report?.(`[弹弹乐] 模式=${want} 她守=${want === 'game' ? (g.defence === 0 ? '左' : '右') : '-'} 比分 你${g.score[0]}:她${g.score[1]}`); } catch { /* 报告失败就算了 */ }
     if (want === 'off') {
@@ -155,6 +168,29 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
   }
 
   /* ---------- 每帧：判进球 + 她的行动 ---------- */
+
+  /**
+   * **她该往哪走**（纯函数，只依赖"球在哪、她在哪、她守哪边"）。
+   *
+   * 抽出来是为了能**用纯逻辑测**：之前这段判断埋在 `onStep` 里，自检只能靠"模拟一整局"去验，
+   * 结果被进球/开球/节流搅得反复假失败（一个测试我调了十几轮）。
+   * 现在它没有副作用，测起来是确定的。
+   *
+   * @returns {{x:number, run:boolean, why:'chase'|'defend'}}
+   */
+  function plan(x, petX, defence) {
+    const b = control.bounds();
+    const herZone = defence === 0 ? x < b.minX + ZONE * b.W : x > b.maxX - ZONE * b.W;
+    // 球在她半场：直接去球那儿踢
+    if (herZone) return { x, run: true, why: 'chase' };
+    // 球在对面：够得着就继续追（这一脚还可能进），够不着就回自己的半场等
+    const oppGoalX = defence === 0 ? b.maxX : b.minX;
+    const dOpp = Math.abs(x - oppGoalX);
+    const dSelf = Math.abs(x - petX);
+    if (dOpp > b.W * CHASE_OPP_MAX && dSelf < b.W * CHASE_SELF_MAX) return { x, run: true, why: 'chase' };
+    const backX = defence === 0 ? b.minX + b.W * DEFEND_X : b.maxX - b.W * DEFEND_X;
+    return { x: backX, run: true, why: 'defend' };
+  }
 
   function onStep(s) {
     if (g.mode !== 'game') return;
@@ -223,37 +259,66 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     const goTo = (x, force, run) => {
       const want = Math.min(b.maxX - 24, Math.max(b.minX + 24, x));
       if (!force && Math.abs(want - pet.x) < WALK_EPS) return;
-      if (!force && now - g.lastWalkAt < WALK_EVERY_MS) return;
+      /**
+       * ⚠️ **别只写 `now - g.lastWalkAt < WALK_EVERY_MS`**：那样"从来没走过"就得靠
+       * `0` 或 `-Infinity` 编码，两种都有坑 ——
+       *   · 用 `0` 当"刚刚走过"：`performance.now()` 在页面刚起来（或自检跑得飞快）时很小，
+       *     于是 `now - 0 < 320` 成立 → **指令被静默丢掉**（自检偶发失败、真机刚开局她可能不动）；
+       *   · 用 `-Infinity` 打补丁：能跑，但意图藏起来了。
+       * 所以这里**显式判断"从来没走过"**（`0` 就是没走过），再谈间隔。
+       */
+      const never = !(g.lastWalkAt > 0);
+      if (!force && !never && now - g.lastWalkAt < WALK_EVERY_MS) return;
       g.lastWalkAt = now;
       control.walkTo(want / b.W, !!run);
     };
 
     /**
-     * 高球：**只要球进了她跳起来够得到的范围，不管在哪半边，她都去顶**（50%）。
+     * **跳起来接球（预判起跳）** —— 这是用户实测后定下来的做法。
      *
-     * ⚠️ 之前这一段写在 `if (herZone)` 里面，是个真 bug（用户实测："每次都会从头顶飞过去"）：
-     * 她守左边时，从对面飞来的弧线球很容易落到她**身后**（右半边），于是整段被跳过、她站着看球飞过。
-     * **头球是防守动作** —— 它该看"球在不在她够得到的范围内"，不是"球在她的半场"。
-     * 只有贴地（<40px）的球才按半场决定追不追，那种球是要去踢的。
+     * 用户的原话："很少触发头球，有一次触发了球已经过去很久了……除非在她的头前面加判定区域，
+     * 比如一道判断墙，球飞过 50% 触发跳跃。" —— 诊断完全正确，问题就是**时序**：
+     * 球 400px/s，150px 的反应区只有 0.37 秒，而跳起来要 ≈0.3 秒才到最高点，
+     * **等球进了那个范围再跳，头到位置时球早飞过去了**。
+     *
+     * 所以改成**算提前量**：算"球还有多久到她身上"（`tHit`），在她该起跳的时候才跳 ——
+     * 起跳后 `JUMP_APEX`（正是她抛物线到最高点的时间 `720/2300 ≈ 0.31s`）后头到最高，
+     * 那一刻球刚好到。这样"判断墙"实际上在她**身前 ~0.5 秒**的地方，而不是贴着身子。
+     *
+     * 另外**只接"你丢/踢过来的球"**：她自己踢出去又反弹回来的球不算来球，
+     * 否则她等于凭空多出一次顶球机会（`ball.lastRelease` 就是干这个的）。
      */
-    const canHead = !s.resting && high > REACH_MIN && high < REACH_JUMP && Math.abs(s.x - pet.x) < HEAD_X;
+    const HEAD_WINDOW = 3000;                  // 你丢/踢的球，3 秒内算"来球"
+    const sinceYou = now - (ball.lastRelease || 0);
+    const toward = Math.sign(pet.x - s.x) === Math.sign(s.vx || 0) && Math.abs(s.vx) > 40;
+    const tHit = toward ? Math.abs(s.x - pet.x) / Math.max(1, Math.abs(s.vx)) : Infinity;
+    /** 她该不该现在起跳：球朝她来、还有 0.1~0.8 秒到（球速越快越早跳）。 */
+    const shouldJump = s.vx !== 0 && s.vy > 0 && tHit > 0.1 && tHit < JUMP_LEAD
+      && high > REACH_MIN && high < REACH_JUMP + 60
+      && Math.abs(s.x - pet.x) < Math.abs(s.vx) * JUMP_LEAD + 40;
+    /** 球就在她头顶那一片（已经来不及预判了）：也跳一下碰运气。 */
+    const above = !s.resting && high > REACH_MIN && high < REACH_JUMP && Math.abs(s.x - pet.x) < HEAD_X;
+    const canHead = (sinceYou < HEAD_WINDOW) && (shouldJump || above);
     if (canHead || (herZone && !s.resting && high < REACH_MIN)) {
-      if (now - g.lastHeadAt > 700 && Math.random() < HEAD_CHANCE) {
+      // "从来没跳过"也算可以跳（跟 goTo 一个道理：别让时间轴起点决定第一次能不能动）
+      if (!(g.lastHeadAt > 0) || now - g.lastHeadAt > 900) {
+        if (Math.random() < HEAD_CHANCE) {
         g.lastHeadAt = now;
-        goTo(s.x + (s.x < pet.x ? 10 : -10), true, true);
+        goTo(s.x + (s.x < pet.x ? 6 : -6), true, true);
         control.jump();
         /**
          * 报一句给主进程（限流 1.2 秒一条）：**"头球有没有触发"的唯一实锤**。
-         * 页面里没法打断点，日志里能直接看到"球多高、离她多远、她起没起跳"。
+         * 页面里没法打断点，日志里能直接看到"球多高、多快、还有多久到她"。
          */
-        if (now - (g.lastJumpLog || 0) > 1200) {
+        if (!(g.lastJumpLog > 0) || now - g.lastJumpLog > 1200) {
           g.lastJumpLog = now;
           try {
-            globalThis.petHost?.report?.(`[弹弹乐] 起跳顶球：球离地 ${Math.round(high)}px（够得到 ${REACH_MIN}~${REACH_JUMP}）· 横向差 ${Math.round(Math.abs(s.x - pet.x))}px`);
+            globalThis.petHost?.report?.(`[弹弹乐] 起跳接球：球高 ${Math.round(high)}px · 离她 ${Math.round(Math.abs(s.x - pet.x))}px · 速度 ${Math.round(Math.abs(s.vx))} · 还有 ${tHit === Infinity ? '—' : tHit.toFixed(2)}s 到 · ${shouldJump ? '预判' : '头顶'}`);
           } catch { /* 报告失败就算了 */ }
         }
+        }
       }
-      if (canHead) return;                  // 够得到的高球：这一帧就去顶，不再管走位
+      if (canHead) return;                  // 够得到的来球：这一帧就去接，不再管走位
     }
     if (herZone) { goTo(s.x, false, true); void netX; return; }   // 她半场的地滚球：**跑**过去踢
     /**
@@ -273,6 +338,7 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
     const backX = g.defence === 0
       ? b.minX + b.W * DEFEND_X
       : b.maxX - b.W * DEFEND_X;
+    void plan;                                                     // 决策已抽成 `plan()`，这里的走位保持一致
     goTo(backX, false, true);                                      // 回防（不贴墙、留反应距离）
     void netX;
   }
@@ -310,7 +376,7 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
   }
 
   return {
-    setMode, onStep, onKick, draw, kickoff, goalRect,
+    setMode, onStep, onKick, draw, kickoff, goalRect, plan,
     /** 只给自检用的内部状态入口（合成测试跑得比真实时间快，得能重置冷静期）。 */
     debug: g,
     get mode() { return g.mode; },

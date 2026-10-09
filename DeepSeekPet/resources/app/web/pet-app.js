@@ -200,6 +200,9 @@ const game = createGame({
 });
 hooks.step = (s) => game.onStep(s);
 hooks.kick = (i) => game.onKick(i);
+/** 回填给指针监听用（它们注册得比 `game` 早，不能直接引用）。 */
+const syncGameFlag = () => { flags.gameMode = game.mode === 'game'; };
+syncGameFlag();
 
 /**
  * 切换球 / 弹弹乐的三态。**页面自己立刻切**（不等 World 一个来回），然后报给 World 记住。
@@ -209,6 +212,7 @@ function setBallMode(mode, { fromServer = false, fromUser = false } = {}) {
   prefs.ballMode = mode;
   prefs.ballModeKnown = true;
   game.setMode(mode);
+  syncGameFlag();
   refreshButtons();
   if (!fromServer) send({ t: 'ballMode', mode, fromUser });
 }
@@ -1581,6 +1585,19 @@ const overUi = (e) => e.target.closest && e.target.closest(UI_SELECTOR);
 const ballDrag = { on: false, at: null };
 /** 开始 / 结束拖球：**同时**告诉球（帧率与物理都要看它）。 */
 const setBallDrag = (on) => { ballDrag.on = on; ball.setDragging(on); if (!on) ballDrag.at = null; };
+/**
+ * **球拍模式**（比赛模式）：球不能抓，只能"打回去"。
+ *
+ * 用户的想法（原话）："在比赛模式里球不能抓，只能被鼠标打回去"。
+ * 这一条正好治了"赖皮"：你的优势本来来自"能拎到任意位置再放手"，不能抓之后
+ * 就必须隔着半个场地把它抽进网。
+ *
+ * 这里只负责"**把鼠标甩动的速度算出来**"（跟丢球用的是同一套采样思路）：
+ * 按下那一刻取最近 100ms 的位移方向与速度，交给 `ball.swat()`。
+ * `flags.gameMode` 由下面 `game` 建好之后回填（指针监听注册得比它早，不能直接引用 `game`）。
+ */
+const flags = { gameMode: false };
+const swat = { px: 0, py: 0, pt: 0, seen: false, vx: 0, vy: 0 };
 document.addEventListener('pointermove', (e) => {
   pointerSeen = true;
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
@@ -1602,6 +1619,8 @@ document.addEventListener('pointermove', (e) => {
   // 拖动由 **stage 那一层**的监听负责（指针被 stage 捕获，事件不冒泡到 document），
   // 这里只记一下位置，供其它逻辑参考。
   if (ballDrag.on) ballDrag.at = p;
+  // 球拍模式：一直记着鼠标的最近一次位置与时间（按下那一刻用它算甩动速度）
+  swat.px = p.x; swat.py = p.y; swat.pt = performance.now(); swat.seen = true;
   const hit = ctl.hitPet(p) || onBall, ui = !!overUi(e);
   diag.move = { at: performance.now(), type: e.pointerType, x: Math.round(p.x), y: Math.round(p.y), hit, ui };
   diag.types.add(e.pointerType);
@@ -1628,13 +1647,30 @@ host?.onCursor?.((p) => {
     return;
   }
   const el = document.elementFromPoint(p.x, p.y);
-  const hit = ctl.hitPet(p) || ball.hitTest(p.x, p.y), ui = !!el?.closest?.(UI_SELECTOR);
+  // 球拍模式下 `ball.hitTest` 会返回 false（不能抓），所以这里多问一句"在球附近吗" ——
+  // 不然鼠标移到球上时窗口不接收事件，"打一拍"永远接不到
+  const hit = ctl.hitPet(p) || ball.hitTest(p.x, p.y) || (flags.gameMode && ball.near(p.x, p.y));
+  const ui = !!el?.closest?.(UI_SELECTOR);
   diag.poll = { at: performance.now(), x: p.x, y: p.y, hit, ui };
   setInteractive(ctl.pressing || hit || ui, 'poll');
 });
 stage.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
   closeMenu();
+  /**
+   * **球拍模式**：球不能抓，只能打回去（用户的想法）。
+   * 用"按下前 100ms 的鼠标甩动速度"当力度与方向 —— 慢慢推球**推不动**，
+   * 所以"拎到门口放下"这条路彻底断掉。
+   */
+  if (flags.gameMode && ball.near(e.clientX, e.clientY)) {
+    const dt = Math.max(8, swat.pt ? performance.now() - swat.pt : 0);
+    const vx = swat.seen ? (e.clientX - swat.px) / (dt / 1000) : 0;
+    const vy = swat.seen ? (e.clientY - swat.py) / (dt / 1000) : 0;
+    const hit = ball.swat({ x: vx, y: vy }, Math.hypot(vx, vy));
+    if (hit) report(`[弹弹乐] 打了一拍：力度 ${Math.round(hit)}（鼠标 ${Math.round(Math.hypot(vx, vy))}px/s）`);
+    e.preventDefault();
+    return;
+  }
   // **球优先**：点在球上就是拨球，不惊动她（她自己碰到球才算踢）
   if (ball.hitTest(e.clientX, e.clientY)) {
     setBallDrag(true);

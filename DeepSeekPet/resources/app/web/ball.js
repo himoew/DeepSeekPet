@@ -71,6 +71,12 @@ const report = (msg) => {
   try { globalThis.petHost?.report?.(String(msg).slice(0, 600)); } catch { /* 报告失败就算了 */ }
 };
 
+/** 球拍模式（比赛模式）里"打一拍"的力度：鼠标甩得越快越猛；太慢（<110px/s）不给力。 */
+const SWAT_MIN = 380;
+const SWAT_MAX = 900;
+const SWAT_MIN_SPEED = 110;
+const SWAT_FULL_SPEED = 900;
+
 export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
   const st = {
     on: false,
@@ -215,6 +221,43 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
   }
 
   /* ---------- 物理 + 碰撞 ---------- */
+
+  /**
+   * **球拍模式**（比赛模式）：球不能抓，只能"打"。
+   *
+   * 用户的想法（原话）："在比赛模式里球不能抓，只能被鼠标打回去"。
+   * 这一条正好治了"赖皮"的根：你的优势本来来自"能把球拎到任何位置再放手"，
+   * 不能抓之后就必须**隔着半个场地把它抽进网**，她的守门与头球才有意义。
+   *
+   * `grabable === false` 时：`hitTest` 返回 false（页面不会开始拖动），
+   * 改为调用 `swat(dir)` —— 按鼠标甩动的速度给球一个冲量。
+   */
+  const grab = { ok: true };
+  /**
+   * 打一拍：按方向与力度给球一个冲量。
+   * `dir` 是 `{x, y}`（未归一化也行），`speed` 是你甩鼠标的速度（px/s）。
+   * 太慢的一下**不给力**（"慢慢推着球走"这条路必须断掉，否则等于还是能带球）。
+   */
+  function swat(dir, speed) {
+    if (!st.on || grab.ok) return 0;
+    const dx = Number(dir?.x) || 0;
+    const dy = Number(dir?.y) || 0;
+    const len = Math.hypot(dx, dy) || 0;
+    if (len < 1) return 0;
+    const sp = Math.max(0, Math.min(1600, Number(speed) || 0));
+    if (sp < SWAT_MIN_SPEED) return 0;                 // 太慢：推不动
+    const power = SWAT_MIN + (SWAT_MAX - SWAT_MIN) * Math.min(1, sp / SWAT_FULL_SPEED);
+    st.vx = (dx / len) * power;
+    st.vy = (dy / len) * power - 60;                   // 稍微往上抬一点，像"挑"了一下
+    st.spinV = (st.vx / R) * 1.5;
+    st.resting = false;
+    st.dragging = false;
+    st.since = 0;
+    st.lastKick = performance.now();                   // 别紧接着又被算成"她踢到了"
+    sfx?.kick?.(.6);
+    onEvent?.('ballSwat', { x: Math.round(st.x), power: Math.round(power) });
+    return power;
+  }
 
   function step(dtRaw) {
     if (!st.on) return;
@@ -442,7 +485,14 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
 
   function hitTest(x, y) {
     if (!st.on) return false;
+    if (!grab.ok) return false;                          // 球拍模式：不能抓（见 `swat`）
     return Math.hypot(x - st.x, y - st.y) <= R + 10;
+  }
+
+  /** 球拍模式的"碰到球了吗"（抓不了，但还能打）。 */
+  function near(x, y) {
+    if (!st.on) return false;
+    return Math.hypot(x - st.x, y - st.y) <= R + 14;
   }
 
   let lastDragAt = 0;
@@ -531,7 +581,13 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
   }
 
   return {
-    setOn, step, draw, drag, hitTest, wantsPlay, mount,
+    setOn, step, draw, drag, hitTest, wantsPlay, mount, swat, near,
+    /**
+     * 能不能抓（比赛模式里不能 —— 只能打）。
+     * `web/game.js` 切模式时会调它；空闲玩球时是 `true`，抓/甩的手感照旧。
+     */
+    setGrabable(on) { grab.ok = !!on; },
+    get grabable() { return grab.ok; },
     get on() { return st.on; },
     get x() { return st.x; },
     get y() { return st.y; },
@@ -544,6 +600,12 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     get busy() { return st.on && (st.dragging || !st.resting); },
     /** 上一次从手里松开是什么时候（游戏用来给"拖球进门"限一次，见 setDragging）。 */
     get releasedAt() { return st.releasedAt || 0; },
+    /**
+     * 上一次"从你手里出来"是什么时候（丢出来 `placeAt`、或者拖着松手都算）。
+     * 游戏用它判断"这只是**你丢过去的球**吗" —— 只有你丢的球才让她跳起来接，
+     * 否则她自己踢飞又反弹回来的球会被她当作"来球"再顶一次。
+     */
+    get lastRelease() { return st.lastRelease || 0; },
     setAim,
     /**
      * 游戏模式用：把球**直接放到某个位置**（开球、进球后重新开球）。
@@ -568,6 +630,7 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
       st.resting = !inAir && st.vx === 0 && st.vy === 0;
       st.dragging = false;
       st.lastKick = -Infinity;                          // 放到新位置后允许立刻被踢
+      st.lastRelease = performance.now();               // 从手里放出来的：可以算"你丢的球"
       st.since = opts.since === undefined ? 0 : opts.since;
       return { x: st.x, y: st.y };
     },
@@ -576,7 +639,10 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
       const now = !!on;
       // 松手那一刻记一笔：游戏里"拖球进门"要等这一轮结束才再算进球，
       // 不然你把它慢慢推过门线，每帧都算一次（分数疯涨）
-      if (st.dragging && !now) st.releasedAt = performance.now();
+      if (st.dragging && !now) {
+        st.releasedAt = performance.now();
+        st.lastRelease = st.releasedAt;
+      }
       st.dragging = now;
     },
     /** 给调试/日志用。 */

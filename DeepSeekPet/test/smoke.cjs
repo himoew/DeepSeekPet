@@ -538,7 +538,10 @@ function stubModel() {
       const { createGame } = await import(`${pathToFileURL(path.join(app, 'web', 'game.js')).href}?smoke=${Date.now()}`);
       const B = { W: 1280, H: 760, floorY: 758, minX: 0, maxX: 1280, S: 0.42 };
       const ballStub = {
-        on: false, x: 640, y: 745, releasedAt: 0,
+        on: false, x: 640, y: 745, releasedAt: 0, lastRelease: 0,
+        // 速度必须是 0：新版的"来球预判"会看 `vx/vy`，球桩缺这两个字段的话会被当成来球、
+        // 于是她一直在跳（自检就是这么抓到行为变化的）
+        vx: 0, vy: 0, resting: true,
         setOn() { this.on = true; },
         setAim() {},
         placeAt(fx) { this.x = B.minX + fx * B.W; this.y = B.floorY - 13; },
@@ -586,28 +589,107 @@ function stubModel() {
       // 球门要"守得住"：高度不超过她身高的一倍半、宽度小于窗口的十分之一
       ok('弹弹乐：球门尺寸按"她守得住"定（高 ≤144px、宽 <10% 窗口）',
         game.goalRect(0).yBottom - game.goalRect(0).yTop <= 144 && (gr2.x1 - gr2.x0) < B.W * 0.10);
-      // 跑动 + 回防：球一离开她的区域，她**立刻**跑向自己门前
-      walkLog.length = 0;
-      ballStub.x = game.defence === 0 ? B.maxX - 100 : B.minX + 100;   // 球在对面半场
-      game.debug.lastWalkAt = 0;
-      frame();
-      const last = walkLog[walkLog.length - 1];
-      const herHalf = (game.defence === 0) ? [0, B.W * 0.5] : [B.W * 0.5, B.W];
-      ok('弹弹乐：比赛模式她默认**跑**（不然追不上球）', walkLog.length > 0 && last.run === true);
-      ok('弹弹乐：球不在她的区域时**立刻回防**（目标在自己半场靠门）',
-        last.x >= herHalf[0] && last.x <= herHalf[1]);
-      game.setMode('ball');
-      game.setMode('off');
-      ok('弹弹乐：三态切换不抛错（off/ball/game）', game.mode === 'off');
-    } catch (err) {
+      /**
+       * 跑动 + 回防：**用一个全新实例、只开球模式、不判进球**来测，彻底躲开前面那些状态
+       * （进球会把球自动开走、把比分改掉，之前就是被这个害得"偶发失败"）。
+       *   · 球在对面但还追得上 → 她追
+       *   · 球深在对面门口（追不上）→ 她跑回自己半场
+       */
+      /**
+       * 走位决策用**纯函数 `game.plan()`** 来测（不再模拟整局）。
+       *
+       * 为什么换写法：原来这段是"摆一颗球 → 跑一帧 onStep → 看她的走路指令"，
+       * 结果被三样东西轮流搅坏 —— 进球判定把球自动开走、开球冷静期吞掉整帧、320ms 节流吞掉指令。
+       * 我为此调了十几轮，每轮"失败细节"都不一样（这才是真正的浪费时间）。
+       * `plan()` 没有副作用，测起来是确定的。
+       */
+      for (const def of [0, 1]) {
+        const side = def === 0 ? '左' : '右';
+        const herHalfX = def === 0 ? B.W * 0.25 : B.W * 0.75;   // 她半场里的一个点
+        const oppHalfX = def === 0 ? B.W * 0.75 : B.W * 0.25;   // 对面半场里的一个点
+        const midBall = def === 0 ? B.W * 0.45 : B.W * 0.55;    // 对面半场、但**她够得着**（离她 < 34% 窗口）
+        const deepBall = def === 0 ? B.W * 0.94 : B.W * 0.06;   // 贴着对面那个门（追不上）
+
+        const inHer = game.plan(herHalfX, 900, def);
+        ok(`弹弹乐：球在她半场时她直接去踢（她守${side}）`, inHer.why === 'chase' && inHer.x === herHalfX);
+        const chase = game.plan(midBall, 900, def);
+        ok(`弹弹乐：球在对面但够得着时她继续追（她守${side}）`, chase.why === 'chase' && chase.x === midBall);
+        const back = game.plan(deepBall, 900, def);
+        const myGoalX = def === 0 ? 0 : B.W;
+        ok(`弹弹乐：球贴到对面门口（追不上）时她回自己半场（她守${side}）`,
+          back.why === 'defend' && back.run === true && Math.abs(back.x - myGoalX) < B.W * 0.5);
+      }    } catch (err) {
       // 2g-3 自己的兜底：它抛错也算一条失败（别把整份自检带崩）
       ok(`弹弹乐：进球与三态切换（不抛错）—— 实际抛了 ${err && err.message}`, false);
       console.log(`      弹弹乐那段抛错的堆栈：${((err && err.stack) || '').split('\n').slice(0, 4).join(' | ')}`);
     }
   } finally {
+    // 这一段（2g）用完就把 DOM 桩收掉，别影响后面的检查
     if (hadDoc) delete globalThis.document; else delete globalThis.document;
     if (hadHost) delete globalThis.petHost; else delete globalThis.petHost;
   }
+
+  /* ---------- 2g-4. 球拍模式：比赛模式里球不能抓、只能打 ---------- */
+  /**
+   * 用户的想法：**"在比赛模式里球不能抓，只能被鼠标打回去"**。
+   * 这一条正好治了赖皮 —— 不能把球拎到门口再放下，只能隔着场地抽进网。
+   *
+   * 这一段自己准备 DOM 桩（上面那个 `finally` 已经把 2g 的桩收掉了）。
+   */
+  try {
+    if (typeof document === 'undefined') globalThis.document = { createElementNS: () => fakeEl() };
+    if (typeof petHost === 'undefined') globalThis.petHost = { report: () => {} };
+    try {
+      const { createBall } = await import(`${pathToFileURL(path.join(app, 'web', 'ball.js')).href}?smoke=${Date.now()}`);
+      const { createGame } = await import(`${pathToFileURL(path.join(app, 'web', 'game.js')).href}?smoke=${Date.now()}`);
+      const B = { W: 1280, H: 760, floorY: 758, minX: 0, maxX: 1280, S: 0.42 };
+      const pet = { x: 900, faceVis: 1, feetY: B.floorY };
+      const ball = createBall({
+        fxG: fakeEl(), sfx: {},
+        stage: { bounds: () => B, pet: () => pet },
+        onEvent: () => {},
+        game: { onStep: null, onKick: () => {} },
+      });
+      const game = createGame({
+        fxG: fakeEl(), ball, sfx: {},
+        control: { bounds: () => B, pet: () => pet, walkTo() {}, jump() {}, act() {} },
+        onEvent: () => {},
+      });
+      ball.setOn(true, { fromLeft: false });
+      game.setMode('game');                    // 先切模式（球拍模式在这里被打开）
+      /**
+       * ⚠️ 摆球的位置很讲究：`placeAt(0.5, 'floor')` 的高度是**低于门框**的，
+       * 而"球在门框高度以下且落在门柱之间"就是进球 —— 我摆球的那一下会被算成进球、球被自动开走
+       * （自检就是这么反复"偶发失败"的，真原因跟随机无关）。所以这里用**门框以上的高度**摆球。
+       */
+      ball.placeAt(0.5, B.floorY - 300, { since: 0 });
+      const cx = ball.x, cy = ball.y;
+      ok('球拍模式：比赛模式里抓不住球（hitTest 失效）', ball.grabable === false && ball.hitTest(cx, cy) === false);
+      ok('球拍模式：抓不住，但仍然"够得着"（不然打不着）', ball.near(cx, cy) === true);
+      ball.placeAt(0.5, B.floorY - 300, { since: 0 });
+      const beforeX = ball.x;
+      const slow = ball.swat({ x: 40, y: 0 }, 40);         // 慢慢推：不该给力
+      /**
+       * 判据用**横向**：摆球的高度在门框以上，它本来就会自由落体（`vy` 自己会变大），
+       * 所以不能拿 `resting` 当判据 —— 要看"推了之后横向动没动"。
+       */
+      ok('球拍模式：慢慢推球推不动（这条路必须断，否则还是能带球）',
+        slow === 0 && ball.state.vx === 0 && ball.state.x === beforeX);
+      ball.placeAt(0.5, B.floorY - 300, { since: 0 });
+      const fast = ball.swat({ x: 1, y: -0.2 }, 1200);     // 用力抽：球飞出去
+      ok('球拍模式：甩得快球就被打出去（有力度）',
+        fast > 0 && ball.state.vx > 0 && ball.state.resting === false);
+      game.setMode('ball');
+      ok('球拍模式：回到自由玩球时又能抓了', ball.grabable === true);
+      game.setMode('off');
+    } catch (err) {
+      ok(`球拍模式：抓/打的行为（不抛错）—— 实际抛了 ${err && err.message}`, false);
+    }
+  } finally {
+    if (hadDoc) delete globalThis.document; else delete globalThis.document;
+    if (hadHost) delete globalThis.petHost; else delete globalThis.petHost;
+  }
+
 
     /* ---------- 2h. 页面代码里的"跨函数引用"（纯 Node 也能盯住的致命笔误） ---------- */
     /**
@@ -795,7 +877,8 @@ function stubModel() {
     ok(`预热会真的先问一句（${warmed}ms）`, typeof warmed === 'number' && warmed >= 0);
 
     const slow = await llm.probe({ ...llm.load(), model: 'slow-model' });
-    ok('第一次慢的话会再测一次，并分开报冷/热', slow.ok === true && /第一次.*第二次/s.test(slow.message));
+    ok('第一次慢的话会再测一次，并分开报冷/热',
+      slow.ok === true && /第一次.*第二次/s.test(slow.message));
 
     llm.save({ enabled: false });
 
