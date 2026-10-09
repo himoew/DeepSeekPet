@@ -17,7 +17,7 @@
  *   - 高球她**50%** 概率**跳起来用头顶**回去（只要进了她跳起来够得到的范围；太高的够不到）；
  *   - 你随时可以把球直接丢进她的门、或者把她拎到另一边 —— 那是**整蛊玩法**，规则不拦着。
  */
-import { HEAD_REACH, GRAVITY, HEAD_BOX, BALL_R } from './ball.js';
+import { HEAD_REACH, GRAVITY, HEAD_BOX, BALL_R, JUMP_RISE } from './ball.js';
 
 /**
  * 球门尺寸 —— **两个数都按"她能不能守住"来定**（用户实测反馈："球门太大了，随便一扔就进"）：
@@ -379,7 +379,17 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
       return hHigh > REACH_MIN - 20 && hHigh < REACH_JUMP
         && Math.abs(hx - pet.x) < HEAD_X + shift;
     })();
-    const above = !s.resting && high > REACH_MIN && high < REACH_JUMP && Math.abs(s.x - pet.x) < HEAD_X;
+    /**
+     * 球就在她头顶那一片（来不及预判了）：也跳一下碰运气。
+     *
+     * ⚠️ **下限必须用"头箱的最低高度"，不能用 `REACH_MIN`（40px）**。
+     * 实测数据：她起跳时球还在**离地 13~24px**（几乎贴地）—— 那个高度连她膝盖都不到，
+     * 而头箱在**离地 60~150**。于是她跳起来、头从球上方很远掠过、永远顶不到，
+     * 你看到的就是"**球都飞走了她才跳**"。
+     * 贴地球该走"跑过去踢"，不该跳。
+     */
+    const HEAD_MIN = HEAD_BOX.above;                     // = 60px：头箱的最低点
+    const above = !s.resting && high > HEAD_MIN && high < REACH_JUMP && Math.abs(s.x - pet.x) < HEAD_X;
     const canHead = willHead || above;
     /**
      * **诊断：高球来了但没跳的原因**（`DSP_DEBUG=1` 时才记，1 秒最多一条）。
@@ -415,6 +425,24 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
         g.lastHeadAt = now;
         goTo(s.x + (s.x < pet.x ? 6 : -6), true, true);
         control.jump();
+        /**
+         * ★ **起跳瞬间就把"这次跳跃的头球几何"整条算出来**。
+         *
+         * 为什么必须现在算：她这一跳只有 ≈0.63 秒，脚底在**起跳那一刻**还是 0
+         * （诊断日志限流 1 秒，永远抓到她落地之后 —— 测了好几轮都是"她脚底离地=0"）。
+         * 这里按抛物线把**整段跳跃**里"头箱"扫过的离地区间算出来，直接跟球能到的高度比，
+         * 一次就能判定：是跳晚了、还是箱子根本够不到那个高度。
+         */
+        if (DEBUG && now - (g.jumpGeoLoggedAt || 0) > 800) {
+          g.jumpGeoLoggedAt = now;
+          try {
+            const apexFeet = b.floorY - JUMP_RISE;                  // 最高点时脚底的位置
+            const boxHigh = b.floorY - HEAD_BOX.above;              // 头箱最高能到（离地）
+            const boxLow = b.floorY - (apexFeet - HEAD_BOX.above);  // 头箱最低能到（离地）
+            globalThis.petHost?.report?.(`[弹弹乐·跳跃] 起跳时球离地=${Math.round(high)} · 这次跳跃头箱扫过离地 ${Math.round(b.floorY - boxLow)}~${Math.round(b.floorY - boxHigh)}`
+              + ` · 球速=${Math.round(Math.abs(s.vx || 0))} · 球离她 ${Math.round(Math.abs(s.x - pet.x))}px`);
+          } catch { /* ignore */ }
+        }
         /**
          * 报一句给主进程（限流 1.2 秒一条）：**"头球有没有触发"的唯一实锤**。
          * 页面里没法打断点，日志里能直接看到"球多高、多快、她当时在跑还是在走"。

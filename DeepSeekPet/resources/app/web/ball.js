@@ -133,6 +133,11 @@ const HEAD_ABOVE_FEET = 60;
 const HEAD_BOX_H = 90;
 /** 导出给 `game.js` 做几何诊断（"她跳了却顶不到"时要把两个盒子摆一起看）。 */
 export const HEAD_BOX = { above: HEAD_ABOVE_FEET, h: HEAD_BOX_H };
+/**
+ * 她跳一次最高能抬升多少（px）。`pet-core` 起跳速度 720、空中重力 2300 →
+ * `720² / (2×2300) ≈ 113`。导出给诊断用（判断"头箱扫过的高度区间"够不够到球）。
+ */
+export const JUMP_RISE = 113;
 /** 她跳起来时**够得到**的高度（px，球离地多高以内她会去顶）——≈ 2 个小肥鱼高。 */
 export const HEAD_REACH = 230;
 /**
