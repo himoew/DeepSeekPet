@@ -88,6 +88,24 @@ const SWAT_CLICK_POWER = 1.0;
 /** 甩动速度低于这个值就算"没甩"（当轻点处理，方向取"远离她"那一侧）。 */
 const SWAT_SLOW = 110;
 
+/* ---------- 球拍：鼠标在球上的"持续接触"（跟点击无关） ---------- */
+
+/**
+ * 球拍圆盘的半径（px）。**这是让"扫过去就踢"成立的关键**：
+ * 光标本身是一个点，而球只有 13px 半径 —— 用点去戳球，快速移动时每 100ms 的采样
+ * （主进程的光标轮询）之间会跳过 80px 以上，**整段从球外面飞过去**。
+ * 给它一个圆盘半径之后，接触判定从"点"变成"面"，再配上每帧的**线段扫掠**，就不会漏了。
+ */
+const PADDLE_R = 40;
+/** 两次"玩家踢"之间的最小间隔：避免一帧内连踢、也避免贴着球一路推着走。 */
+const PADDLE_COOL_MS = 200;
+/** 光标速度低于这个值不算"主动扫"（只是鼠标的轻微抖动）。 */
+const PADDLE_MIN_SPEED = 200;
+/** 光标速度到这个值就算满力。 */
+const PADDLE_FULL_SPEED = 1400;
+/** 没在扫（只是贴着球）时的默认方向分量：朝"远离她"那一侧 + 一点点上抬。 */
+const PADDLE_IDLE_LIFT = 0.25;
+
 export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
   const st = {
     on: false,
@@ -103,6 +121,8 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
      */
     lastKick: -Infinity,
     lastHead: -Infinity,
+    /** 上一次"玩家用球拍踢到球"的时刻（球拍模式的冷却）。 */
+    lastPaddle: -Infinity,
     since: 0,              // 上一次被踢到现在（秒）：用来决定"要不要过去找它玩"
     releasedAt: 0,         // 上一次从手里松开（游戏用它给"拖进门"限一次）
   };
@@ -244,6 +264,106 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
    * 改为调用 `swat(dir)` —— 按鼠标甩动的速度给球一个冲量。
    */
   const grab = { ok: true };
+  /** 鼠标位置采样（给"球拍"用）：页面每帧喂一次。 */
+  const cur = { x: 0, y: 0, at: 0, ok: false, lastX: 0, lastY: 0, lastAt: 0 };
+
+  /**
+   * 页面每帧把光标位置喂进来（**不管有没有按下**）。
+   * 这是"持续接触"模型的地基：只有在没有点击时也知道鼠标在哪，才能做到"扫过去就踢"。
+   */
+  function setCursor(x, y, at) {
+    const t = Number.isFinite(at) ? at : performance.now();
+    if (cur.ok) { cur.lastX = cur.x; cur.lastY = cur.y; cur.lastAt = cur.at; }
+    cur.x = Number(x) || 0; cur.y = Number(y) || 0; cur.at = t; cur.ok = true;
+  }
+  /** 光标离开窗口。 */
+  function clearCursor() { cur.ok = false; }
+
+  /**
+   * 线段与球的相交检测（**扫掠**，不是点）。
+   *
+   * 为什么必须扫掠：光标两次采样之间可能移动几十上百像素（主进程轮询是 100ms，
+   * 页面喂的是每帧一次），如果只测"当前这一点在不在球里"，快速移动就会**整段跳过去**。
+   * 把"上一次位置 → 这一次位置"当作一条线段，和球（圆）求最近距离，就不会漏。
+   *
+   * @returns {{t:number, px:number, py:number, nx:number, ny:number}|null}
+   *   `t` 是接触发生在这一段的哪个比例处，`(nx,ny)` 是"球心 → 接触点"的单位法向。
+   */
+  function sweepContact(ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    let t = 0;
+    if (len2 > 1e-6) {
+      t = ((st.x - ax) * dx + (st.y - ay) * dy) / len2;
+      t = Math.max(0, Math.min(1, t));
+    }
+    const px = ax + dx * t, py = ay + dy * t;
+    const ddx = st.x - px, ddy = st.y - py;
+    const dist2 = ddx * ddx + ddy * ddy;
+    const reach = R + PADDLE_R;
+    if (dist2 > reach * reach) return null;
+    const d = Math.sqrt(dist2) || 1e-6;
+    return { t, px, py, nx: ddx / d, ny: ddy / d };
+  }
+
+  /**
+   * **玩家踢一脚**（球拍模式的接触生效时调用）。
+   *
+   * 用户要的："鼠标接触球就跟小人踢出去一样的状态" —— 所以这里**刻意复用她的踢球规则**：
+   * 力度落在同一个区间（`KICK_MIN ~ KICK_MAX`）、同样往上抬一点、同样的音效、
+   * 同样给 `game.onKick`（游戏那边会决定要不要"蓄力"）。
+   * 区别只有方向：她按"背对球心 → 朝对面的门"，玩家按"**鼠标这一段扫过去的方向**"。
+   */
+  function playerKick(dirX, dirY, speed) {
+    const b = stage.bounds();
+    const power = KICK_MIN + (KICK_MAX - KICK_MIN) * Math.min(1, speed / PADDLE_FULL_SPEED);
+    const n = Math.hypot(dirX, dirY) || 1;
+    st.vx = (dirX / n) * power;
+    st.vy = Math.min(-140, (dirY / n) * power * .5 - 120);   // 和她一样：总是往上抬一点
+    st.spinV = (st.vx / R) * 1.6;
+    st.resting = false;
+    st.dragging = false;
+    st.since = 0;
+    st.lastKick = performance.now();
+    st.lastPaddle = performance.now();
+    sfx?.kick?.();
+    onEvent?.('ballKick', {
+      x: Math.round(st.x),
+      power: Math.round(power),
+      at: +(st.x / Math.max(1, b.W)).toFixed(4),
+      dir: Math.round((dirX / n) * 100) / 100,
+      by: 'player',
+    });
+    game?.onKick?.({ x: st.x, power, by: 'player' });
+    return power;
+  }
+
+  /**
+   * 每帧检查"鼠标有没有碰到球"（球拍模式的**唯一入口**：不需要点击）。
+   *
+   * 流程：光标上一帧位置 → 这一帧位置 作线段 → 与球求接触 →
+   *   · 在扫（速度 ≥ `PADDLE_MIN_SPEED`）→ 沿扫动方向踢，力度随速度；
+   *   · 只是贴着球（没在扫）→ 朝"远离她"那一侧轻推一下。
+   * 有 200ms 冷却，所以贴着球一路推不会变成"带球"（防赖皮仍在）。
+   */
+  function paddleIfTouching() {
+    if (!st.on || grab.ok || !cur.ok) return;
+    if (performance.now() - (st.lastPaddle || -Infinity) < PADDLE_COOL_MS) return;
+    const ax = cur.lastAt ? cur.lastX : cur.x;
+    const ay = cur.lastAt ? cur.lastY : cur.y;
+    const hit = sweepContact(ax, ay, cur.x, cur.y);
+    if (!hit) return;
+    const dt = Math.max(8, (cur.at - (cur.lastAt || cur.at)) || 16);
+    const vx = (cur.x - ax) / (dt / 1000);
+    const vy = (cur.y - ay) / (dt / 1000);
+    const speed = Math.hypot(vx, vy);
+    if (speed >= PADDLE_MIN_SPEED) { playerKick(vx, vy, speed); return; }
+    // 没在扫：朝"远离她"那一侧轻推（球心在她哪一侧，就往那一侧推）
+    const p = stage.pet();
+    const bb = stage.bounds();
+    playerKick(st.x >= (p?.x ?? bb.W / 2) ? 1 : -1, -PADDLE_IDLE_LIFT, PADDLE_MIN_SPEED);
+  }
+
   /**
    * 打一拍：按方向与力度给球一个冲量。
    *
@@ -328,6 +448,7 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
       st.spinV = st.vx / R;
       st.spin += st.spinV * dt;
       kickIfTouching();                                // 停着的球照样能被她撞走
+      paddleIfTouching();                              // ...也能被鼠标扫走（球拍模式）
       return;
     }
 
@@ -383,6 +504,8 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
 
     // 撞到她就踢（或被她**跳起来用头顶**）
     kickIfTouching();
+    // 鼠标碰到球就踢（球拍模式：**不需要点击**，见 paddleIfTouching）
+    paddleIfTouching();
 
     /**
      * **游戏模式的钩子**（`web/game.js`）。球本身不知道有"球门/比分"这回事：
@@ -623,6 +746,13 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
 
   return {
     setOn, step, draw, drag, hitTest, wantsPlay, mount, swat, near,
+    /**
+     * 球拍模式：页面每帧把光标位置喂进来（**不需要点击**）。
+     * 传 `at`（performance.now()）让球自己算扫掠速度；不传就用当前时间。
+     */
+    setCursor, clearCursor,
+    /** 给自检/调试看：球拍是否处于"持续接触"模式（= 球不能抓的那些时候）。 */
+    get paddleMode() { return !grab.ok; },
     /**
      * 能不能抓（比赛模式里不能 —— 只能打）。
      * `web/game.js` 切模式时会调它；空闲玩球时是 `true`，抓/甩的手感照旧。

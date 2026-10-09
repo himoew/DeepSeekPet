@@ -61,6 +61,16 @@ const sfx = createSfx();
  */
 const flags = { gameMode: false };
 const swat = { px: 0, py: 0, pt: 0, seen: false };
+/**
+ * **球拍的唤醒范围**（比球的实际接触范围大一圈）：
+ * 鼠标进入这个范围就收回窗口的点击穿透，离开再放过去。
+ * 为什么要有余量：主进程发现光标靠近有延迟（见 `CURSOR_EVERY_MS`），
+ * 如果等"真的压到球上"才收鼠标，那一下的事件已经丢给桌面了。
+ */
+const PADDLE_WAKE = 110;
+/** 离开多久之后才把鼠标放过去（防抖动；进来要快、出去要慢）。 */
+const PADDLE_KEEP_MS = 220;
+const paddleKeep = { until: 0 };
 if (host) sfx.unlock();
 else ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, () => sfx.unlock(), { capture: true }));
 
@@ -1692,7 +1702,16 @@ host?.onCursor?.((p) => {
    * 就永远发现不了鼠标在球上。球的坐标它自己知道（不依赖 DOM 命中），所以直接算。
    */
   const ballHover = (() => {
-    try { return ball.near(p.x, p.y); } catch { return false; }   // 球还没造好时（极早期）当 false
+    try {
+      if (!ball.near(p.x, p.y)) {
+        // 还没贴到球：再放宽一圈，用"唤醒余量"提前把鼠标收回来（不然那一下点击会漏给桌面）
+        const withinWake = Math.hypot(p.x - ball.x, p.y - ball.y) <= 13 + PADDLE_WAKE;
+        if (ball.paddleMode && withinWake) paddleKeep.until = performance.now() + PADDLE_KEEP_MS;
+        return performance.now() < paddleKeep.until;
+      }
+      paddleKeep.until = performance.now() + PADDLE_KEEP_MS;
+      return true;
+    } catch { return false; }   // 球还没造好时（极早期）当 false
   })();
   const hit = ctl.hitPet(p) || ballHover;
   const ui = !!el?.closest?.(UI_SELECTOR);
@@ -1703,38 +1722,17 @@ stage.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
   closeMenu();
   /**
-   * **每按一次都记一笔（限流 1 秒）**：排查"球没法互动"时，这一行能一眼分出
-   *   · 日志里**没有**这一行 → 窗口根本没收到鼠标（点击穿透没被打开）
-   *   · 有这一行、但 `进分支=false` → 事件到了、只是没判成"在球上"
-   *   · 有这一行、`进分支=true` → 进了打球逻辑（那就看 `ball.swat` 返回的力度）
+   * ⚠️ **这里不再处理"打球"**。
+   *
+   * 用户实测后定的新模型（"鼠标接触球就跟小人踢出去一样"）：接触是**每帧持续检测**的
+   * （见 `ball.setCursor` + 帧循环里的 `ball.step`），**不需要点击**。
+   * 原来那套"按下才算一拍"已经删掉 —— 它要求玩家先点一下，完全没有游戏性。
+   * 这里只留一行日志，用来确认"窗口到底有没有把鼠标收回来"。
    */
   if (performance.now() - (swat.lastDownLog || 0) > 1000) {
     swat.lastDownLog = performance.now();
     const near = (() => { try { return ball.near(e.clientX, e.clientY); } catch { return 'err'; } })();
     report(`[输入] 按下 @${Math.round(e.clientX)},${Math.round(e.clientY)} · 比赛模式=${flags.gameMode} · 在球附近=${near} · 球在 ${Math.round(ball.x ?? -1)},${Math.round(ball.y ?? -1)}`);
-  }
-  /**
-   * **球拍模式**：球不能抓，只能打回去（用户的想法）。
-   * 用"按下前 100ms 的鼠标甩动速度"当力度与方向 —— 慢慢推球**推不动**，
-   * 所以"拎到门口放下"这条路彻底断掉。
-   */
-  if (flags.gameMode && ball.near(e.clientX, e.clientY)) {
-    const dt = Math.max(8, swat.pt ? performance.now() - swat.pt : 0);
-    const vx = swat.seen ? (e.clientX - swat.px) / (dt / 1000) : 0;
-    const vy = swat.seen ? (e.clientY - swat.py) / (dt / 1000) : 0;
-    const hit = ball.swat({ x: vx, y: vy }, Math.hypot(vx, vy));
-    /**
-     * 报给主进程（限流 0.8 秒一条）：**"点在球上到底有没有被接住"的唯一实锤**。
-     * 用户实测"鼠标移到球身上无反应"时，这一行能直接分出是
-     * ① 事件没进到这个分支（`gameMode`/`near` 不对）、还是 ② 进来了但力度不够（`hit=0`）。
-     */
-    if (performance.now() - (swat.reportedAt || 0) > 800) {
-      swat.reportedAt = performance.now();
-      report(`[弹弹乐] 点在球上：力度=${hit} 鼠标速度=${Math.round(Math.hypot(vx, vy))} · 球在 ${Math.round(ball.x)},${Math.round(ball.y)} · 点到 ${Math.round(e.clientX)},${Math.round(e.clientY)}`);
-    }
-    if (hit) sfx?.kick?.(.6);
-    e.preventDefault();
-    return;
   }
   // **球优先**：点在球上就是拨球，不惊动她（她自己碰到球才算踢）
   if (ball.hitTest(e.clientX, e.clientY)) {
@@ -1766,9 +1764,16 @@ stage.addEventListener('pointerdown', (e) => {
 const up = () => { setBallDrag(false); ctl.pointerUp(); stage.style.cursor = ''; };
 // 被捕获的指针事件只到这里（不冒泡到 document），所以球在这一层也要跟手、也在这一层松手
 stage.addEventListener('pointermove', (e) => {
-  if (!ballDrag.on) return;
-  ball.drag(e.clientX, e.clientY);
-  ballDrag.at = { x: e.clientX, y: e.clientY };
+  /**
+   * **球拍的地基**：窗口收回穿透之后，鼠标移动事件全都在这里。
+   * 把它记进 `cursor.at`（全页唯一的光标位置来源之一），帧循环会每帧喂给球。
+   * 注意：以前这里只在"拖球中"才做事，现在**任何移动都记**（球拍判定要靠它）。
+   */
+  cursor.at = { x: e.clientX, y: e.clientY };
+  if (ballDrag.on) {
+    ball.drag(e.clientX, e.clientY);
+    ballDrag.at = { x: e.clientX, y: e.clientY };
+  }
 });
 /**
  * 松手：**用按下-移动这一段里最后一次真实位移算出来的速度**去丢。
@@ -2025,6 +2030,24 @@ function frame(now) {
     stepDrag();            // 拎起来：拎久了吭一声
     stepStroke();          // 抚摸的连续反馈：爬"舒服程度"、续呼噜/爱心、判"够了"
     ctl.step(dt);
+    /**
+     * **球拍（持续接触）**：每帧把光标位置喂给球，再把"窗口还要不要拿鼠标"重算一次。
+     *
+     * 为什么每帧都要喂：`onCursor` 只在光标**位置变化**时才被主进程推过来（而且只有 10Hz），
+     * 球要算"扫掠速度"必须知道两次采样的时间差 —— 每帧喂一次，球那边就有连续的时间轴。
+     * 为什么每帧都要重算"拿不拿鼠标"：`paddleKeep` 是靠时间过期的，
+     * 不每帧刷新的话，光标停在球上不动时窗口会自己把鼠标放过去。
+     */
+    if (cursor.at) ball.setCursor(cursor.at.x, cursor.at.y, performance.now());
+    else ball.clearCursor();
+    if (!ctl.pressing) {
+      const p = cursor.at;
+      let take = false;
+      try {
+        take = !!(p && (ctl.hitPet(p) || ball.near(p.x, p.y) || performance.now() < paddleKeep.until));
+      } catch { take = false; }
+      setInteractive(take, 'paddle');
+    }
     ball.step(dt);         // 玩具球：物理 + 碰到她就踢（球在 #fx 那一层，不碰她的身体）
     ctl.render();
     ball.draw();

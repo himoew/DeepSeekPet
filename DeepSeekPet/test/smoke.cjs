@@ -426,8 +426,13 @@ function stubModel() {
     const num = (name) => Number((ballSrc.match(new RegExp(`const ${name} = ([\\d.]+)`)) || [])[1]);
     ok('玩具球：能弹的门槛远高于静止门槛（否则会每帧弹一次）',
       num('BOUNCE_MIN_VY') > num('REST_VY') * 1.5 && num('REST_VY') > 0);
-    ok('玩具球：静止状态直接跳过物理（不受重力、不出声）',
-      /if \(st\.resting\) \{[\s\S]{0,900}?kickIfTouching\(\);[\s\S]{0,60}?return;/.test(ballSrc));
+    /**
+     * 静止 = 跳过物理（不受重力、不出声）。
+     * 但**仍然要判两件接触**：她撞上来、鼠标扫过来 —— 否则球停住之后就"死"了，
+     * 球拍模式里就变成"球停在那一动不动，扫它也没反应"。
+     */
+    ok('玩具球：静止状态跳过物理，但仍然判"她撞上"和"鼠标扫到"',
+      /if \(st\.resting\) \{[\s\S]{0,1200}?kickIfTouching\(\);[\s\S]{0,120}?paddleIfTouching\(\);[\s\S]{0,80}?return;/.test(ballSrc));
     ok('玩具球：够慢就一次性趴下（vy 归零 + resting）',
       /else if \(Math\.abs\(st\.vy\) <= REST_VY/.test(ballSrc) && /st\.resting = true;/.test(ballSrc));
     // 帧率：球在动 / 正被拖着时必须按 60fps（原来只有 30fps，抓着像卡住）
@@ -699,6 +704,24 @@ function stubModel() {
       const fast = ball.swat({ x: 1, y: -0.2 }, 1200);     // 用力抽：球飞出去
       ok('球拍模式：甩得快球就被打出去（而且比轻点更猛）',
         fast > 300 && fast > tap && ball.state.vx > 0 && ball.state.resting === false);
+
+      /**
+       * ★ **核心机制：鼠标扫过球就踢（不需要点击）**。
+       *
+       * 这是用户实测后定的新模型（原话："鼠标接触球就跟小人踢出去一样的状态"）。
+       * 判据：把光标从球的一侧"扫"到另一侧，**一帧之内**球就该被踢出去、方向跟着扫动方向。
+       * 这里用两次 `setCursor` 造出"上一帧 → 这一帧"的扫掠线段，再走一帧物理。
+       */
+      ball.placeAt(0.5, 'floor', { since: 0 });
+      const kx = ball.x, ky = ball.y;
+      // 左 → 右扫过球（用真实时间戳，让球自己算扫掠速度）
+      const t0 = performance.now();
+      ball.setCursor(kx - 60, ky, t0);
+      ball.setCursor(kx + 60, ky, t0 + 16);
+      for (let i = 0; i < 3; i += 1) ball.step(1 / 60);
+      ok('球拍模式：★鼠标扫过球就把它踢出去（不需要点击）',
+        ball.state.vx > 50 && ball.state.resting === false);
+      ok('球拍模式：★踢出去的方向跟着鼠标扫动的方向（往右扫 → 往右飞）', ball.state.vx > 0);
       game.setMode('ball');
       ok('球拍模式：回到自由玩球时又能抓了', ball.grabable === true);
       game.setMode('off');

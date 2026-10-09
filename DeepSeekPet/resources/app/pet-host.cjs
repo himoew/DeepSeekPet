@@ -47,8 +47,14 @@ function diag(msg) {
   } catch { /* 诊断本身绝不能让桌宠起不来 */ }
 }
 
-/** Milliseconds between the cursor reports the page gets. */
-const CURSOR_EVERY_MS = 100;
+/**
+ * Milliseconds between the cursor reports the page gets.
+ *
+ * **100ms 太慢**（球拍模式实测）：光标在这个间隔里能移动 80px 以上，而球的判定范围只有几十像素，
+ * 于是"鼠标扫过球"很容易整段被跳过 —— 玩家看到的就是"甩冒烟也没反应"。
+ * 现在 33ms（≈30Hz）：既够球拍判定用，也不会让主进程变成忙轮询。
+ */
+const CURSOR_EVERY_MS = 33;
 /** Most pixels one backdrop sample returns. */
 const BACKDROP_SAMPLES = 1500;
 
