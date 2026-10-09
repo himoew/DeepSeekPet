@@ -495,6 +495,23 @@ export function createSfx({ storageKey = 'cortico-pet.sound.v1', volume = .55 } 
       const p = Math.max(.15, Math.min(1, k));
       tone({ f0: 220 + 120 * p, f1: 90, dur: .07, vol: .05 + .1 * p });
     },
+    /**
+     * ★ **进球**：三音上行 + 一点噪声当"欢呼"（弹弹乐用；`game.js` 里调的就是它）。
+     *
+     * ⚠️ 这个方法**以前根本不存在** —— `game.js` 一直在调 `sfx?.goal?.()`，
+     * 可选链让它静静地什么都不做，所以进球是**没有声音**的（用户实测"得分还没弄"就包括这条）。
+     */
+    goal() {
+      [0, .1, .2].forEach((at, i) => tone({ type: 'triangle', f0: 660 + i * 160, f1: 880 + i * 180, dur: .16, vol: .17, at }));
+      tone({ f0: 1320, f1: 1760, dur: .3, vol: .1, at: .3 });
+      noise({ f0: 900, f1: 2800, dur: .55, vol: .09, attack: .05 });   // "哇——"那一片气声
+    },
+    /** ★ **失球（她被人进了）**：两音下行 + 一声闷的（不服气）。 */
+    concede() {
+      tone({ type: 'triangle', f0: 420, f1: 330, dur: .18, vol: .15 });
+      tone({ type: 'triangle', f0: 330, f1: 220, dur: .3, vol: .13, at: .16, vib: 8, vibRate: 6 });
+      tone({ f0: 150, f1: 90, dur: .2, vol: .1, at: .05 });
+    },
     /** `n` = 连戳第几下：音高一级级往上走（1 = 普通一下；世界那边的连击最多 5 档）。 */
     poke(n = 1) { const k = Math.min(n, 6) - 1; tone({ f0: 320 + k * 55, f1: 200 + k * 40, dur: .09, vol: .16 }); },
     nod() { tone({ type: 'triangle', f0: 520, f1: 440, dur: .07, vol: .08 }); tone({ type: 'triangle', f0: 520, f1: 440, dur: .07, vol: .08, at: .2 }); },
@@ -623,6 +640,10 @@ export function createPet(els, opts) {
    * 所以跟"发呆""有卡举着""你在忙"都不冲突 —— 那些情况下照样能看到她是活的。
    */
   let microState = { kind: '', k: 0, t: 0, dur: 0 };
+  /**
+   * **比赛模式的跑速加成**（默认 1 = 平时一样）。见 `setRaceBoost`；只在弹弹乐里 > 1。
+   */
+  let raceBoost = 1;
   /** 绘制出错只上报一次（见下面 render 里的 try/catch）。 */
   let drawFailReported = false;
 
@@ -863,11 +884,17 @@ export function createPet(els, opts) {
       case 'walk': case 'run': {
         const run = m === 'run', d = pet.target - pet.x, dist = Math.abs(d), dir = Math.sign(d) || pet.facing;
         pet.facing = dir;
-        // 快慢跟心情走，但**只有 ±10%**（`mood.speed`：开心 1.1 倍、困了 0.9 倍，见 mood.cjs）。
-        // 幅度收这么小是有原因的：走路是每帧都看得见的量，缩放 `vMax` 时位移先变、步伐节奏
-        // 后跟，差得多就像穿溜冰鞋。步伐的节奏是从
-        // `pet.speed / vMax` 算出来的，所以缩放 `vMax` 一起变——不会出现"滑步"。
-        const vMax = (run ? 250 : 78) * mood.speed;
+        /**
+         * 快慢跟心情走，但**只有 ±10%**（`mood.speed`：开心 1.1 倍、困了 0.9 倍，见 mood.cjs）。
+         * 幅度收这么小是有原因的：走路是每帧都看得见的量，缩放 `vMax` 时位移先变、步伐节奏
+         * 后跟，差得多就像穿溜冰鞋。步伐的节奏是从
+         * `pet.speed / vMax` 算出来的，所以缩放 `vMax` 一起变——不会出现"滑步"。
+         *
+         * ★ 另有 `raceBoost`：**只在弹弹乐比赛里**给她加一点跑速（`setRaceBoost`，页面在切模式时设）。
+         * 用户实测"比分差距还是有点大"（`你27 : 她8`）时加的 —— 她 250px/s、球 300~700px/s，
+         * 不给她一点速度就永远差一截。**非比赛模式必须是 1**（不然平时溜达会变快）。
+         */
+        const vMax = (run ? 250 * raceBoost : 78) * mood.speed;
         /**
          * 跑起来的**目标速度**有一个下限（`vMax` 的 65%）。
          *
@@ -1361,6 +1388,12 @@ export function createPet(els, opts) {
     get roam() { return roam; },
     /** Outside orders keep free roaming quiet for `seconds`. */
     holdRoam(seconds) { hold = Math.max(hold, T + seconds); },
+    /**
+     * **比赛模式的跑速加成**（1 = 平时；弹弹乐里给她 1.1~1.15）。
+     * 页面在切模式时设（见 `pet-app.js` 的 `setBallMode`）——**离开比赛一定要设回 1**。
+     */
+    setRaceBoost(k) { raceBoost = Math.max(1, Math.min(1.6, Number(k) || 1)); return raceBoost; },
+    get raceBoost() { return raceBoost; },
     talk() { pet.talkK = 1; },
     setListening(on) { pet.listening = on; if (on && (pet.mode === 'walk' || pet.mode === 'run')) setMode('idle'); },
     setThinking(on) { pet.thinking = on; },

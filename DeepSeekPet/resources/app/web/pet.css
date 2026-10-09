@@ -198,7 +198,55 @@ body.desk .floor{display:none}
 .toy-goals{pointer-events:none}
 .toy-goal-frame{fill:rgba(120,190,255,.10); stroke:rgba(160,210,255,.55); stroke-width:2}
 .toy-goal-grid{fill:none; stroke:rgba(160,210,255,.28); stroke-width:1}
-.toy-goal-flash .toy-goal-frame{stroke:#fff}
+/**
+ * **进球那一下的网闪**（用户要的"进球效果"）：填白 + 整张网抖两下。
+ *
+ * ⚠️ 抖动动画只能挂在 `frame` / `grid` 这两个**没有 transform 属性的子元素**上 ——
+ * 挂在外层 `net` 上，CSS 的 transform 会**盖掉** `game.js` 每帧写的
+ * `transform="translate(x y)"`，网会当场跳到窗口左上角。
+ * （`game.js` 那边也只在"该不该闪"变化时改 class，否则每帧重设会让动画一直重头开始。）
+ */
+.toy-goal-flash .toy-goal-frame{stroke:#fff; fill:rgba(255,255,255,.32)}
+.toy-goal-flash .toy-goal-grid{stroke:rgba(255,255,255,.75)}
+.toy-goal-flash .toy-goal-frame,
+.toy-goal-flash .toy-goal-grid{animation:toy-goal-shake .45s ease-out}
+@keyframes toy-goal-shake{
+  0%,100%{transform:translateX(0)}
+  20%{transform:translateX(-3px)}
+  45%{transform:translateX(3px)}
+  70%{transform:translateX(-2px)}
+}
+/**
+ * ★ **比分牌**（用户要的"显示分数"）：球场顶部居中，`你 3 : 5 小肥鱼`。
+ * 只在比赛模式显示（它挂在 `game.js` 的 `layer` 里，那一层的 display 由 setMode 控制）。
+ */
+.toy-score text{
+  font:600 15px/1 ui-sans-serif,system-ui,"Microsoft YaHei","PingFang SC",sans-serif;
+  dominant-baseline:middle; paint-order:stroke;
+  stroke:rgba(0,0,0,.45); stroke-width:3px;      /* 浅色桌面上也读得清 */
+}
+.toy-score-bg{fill:rgba(8,20,32,.42); stroke:rgba(160,210,255,.35); stroke-width:1}
+.toy-score-you{fill:#8fe3ff}                      /* 你 = 球拍光环那支青蓝 */
+.toy-score-mid{fill:rgba(255,255,255,.55)}
+.toy-score-her{fill:#ffd08a}                      /* 她 = 暖色 */
+/** 进球那一刻门上方的大字：「你进球！」/「她进球！」 */
+.toy-goal-text{
+  font:700 22px/1 ui-sans-serif,system-ui,"Microsoft YaHei","PingFang SC",sans-serif;
+  paint-order:stroke; stroke:rgba(0,0,0,.5); stroke-width:4px;
+}
+.toy-goal-text.mine{fill:#e8f8ff}
+.toy-goal-text.hers{fill:#ffe6bc}
+/**
+ * ★ **进球时的窗口内圈发光**（页面级，见 `pet-app.js` 的 `goalGlow`）。
+ * `pointer-events:none` —— 绝不能挡住点击穿透。
+ */
+#goalGlow{
+  position:fixed; inset:0; pointer-events:none; opacity:0;
+  transition:opacity .16s ease-out;
+  box-shadow:inset 0 0 90px 12px rgba(140,215,255,.50);
+}
+#goalGlow.on{opacity:1}
+#goalGlow.hers{box-shadow:inset 0 0 90px 12px rgba(255,200,120,.50)}
 /**
  * 她守的那一侧门顶上的小圆点。
  * ⚠️ **必须给 fill**：不给的话 SVG 默认填黑，看上去就是"网上多了个黑点"（用户实测报过）。

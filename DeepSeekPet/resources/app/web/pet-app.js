@@ -173,6 +173,12 @@ addEventListener('resize', () => {
   send({ t: 'hello', screen: { w: innerWidth, h: innerHeight } });
 });
 
+/**
+ * ★ **比赛模式里的跑速加成**（`ctl.setRaceBoost`，见 `pet-core.js` 的 `raceBoost`）。
+ * 用户实测"比分差距还是有点大"（`你27 : 她8`）时定的：她 250px/s、球 300~700px/s。
+ * 1 = 不加成（想让她弱回去就填 1）；1.10~1.15 是"稍微跟得上"。
+ */
+const RACE_BOOST = 1.12;
 /* ---------- 玩具球（实现在 web/ball.js，页面这边只负责接线） ---------- */
 /**
  * 球画进 `#fx`（跟影子、爱心、灰尘同一层），**不碰 `#pet` 那一层**——
@@ -216,17 +222,47 @@ const game = createGame({
     pet: () => ctl.where,
     /** `x` 是 0..1 的横向比例；`run === true` 时**跑**过去（比赛模式她默认跑，不然追不上球）。 */
     walkTo: (x, run) => { ctl.holdRoam(6); ctl.walkTo(Math.min(1, Math.max(0, x)) * innerWidth, !!run); },
-    jump: () => ctl.act(['jump']),
-    act: (a) => ctl.act([a]),
+    /**
+     * ★ **`ctl.act` 收的是字符串**（`pet-core` 里是 `switch (a) { case 'jump': … }`，字符串比较）。
+     *
+     * ⚠️ 这里曾经是 `ctl.act(['jump'])` —— 数组进 `switch` 直接落 `default: return false`，
+     * 唯一的副作用是把她当前表情清掉。后果是一条完整的假象链：
+     * 她**一次都没跳过** → `pet.fy` 永远等于地面 → `ball.js` 的 `headBox()` 因为
+     * "脚没离地"恒返回 null → **头球判定一次都不执行**；
+     * 而 `game.js` 那边只看到"指令发出去了"，于是它照样 `return` 掉走位 → 球一来她就站着不动。
+     * 用户实测的两句话都对上了："桌宠一直无法头球"、"有时候不够流畅"（详见 HANDOVER 1.28）。
+     *
+     * 返回值有用：`false` = 她当时不能跳（正被拎着 / 已经在空中 / 还在蹲），
+     * `game.js` 靠它决定"这一帧到底要不要停下走位"。
+     */
+    jump: () => ctl.act('jump'),
+    act: (a) => ctl.act(a),
     /** 只读：她当前的移动模式与速度，外加**脚底位置**（诊断头球的几何用）。 */
     move: () => ctl.move,
   },
   onEvent: (kind, d) => {
-    if (kind === 'goal') send({ t: 'ballGoal', scorer: d.scorer, score: d.score, defence: d.defence });
-    else if (kind === 'charge') send({ t: 'ballCharge' });
+    if (kind === 'goal') {
+      goalGlow(d.scorer === 1);                        // ★ 窗口内圈发光一下（你进=青蓝 / 她进=暖色）
+      send({ t: 'ballGoal', scorer: d.scorer, score: d.score, defence: d.defence });
+    } else if (kind === 'charge') send({ t: 'ballCharge' });
     else if (kind === 'mode') send({ t: 'ballMode', mode: d.mode, defence: d.defence });
   },
 });
+/**
+ * ★ **进球时窗口四边内圈发光**（`#goalGlow`，见 pet.css）。
+ * 你进球用青蓝、她进球用暖色；0.55 秒后自己收（CSS 那边 0.16s 淡出）。
+ */
+let glowTimer = 0;
+function goalGlow(hers) {
+  try {
+    const el = $('#goalGlow');
+    if (!el) return;
+    el.classList.toggle('hers', !!hers);
+    el.classList.add('on');
+    clearTimeout(glowTimer);
+    glowTimer = setTimeout(() => el.classList.remove('on'), 550);
+  } catch { /* 发光失败不影响比赛 */ }
+}
 hooks.step = (s) => game.onStep(s);
 hooks.kick = (i) => game.onKick(i);
 /**
@@ -255,6 +291,18 @@ function setBallMode(mode, { fromServer = false, fromUser = false } = {}) {
     prefs.ballMode = mode;
     prefs.ballModeKnown = true;
     game.setMode(mode);
+    /**
+     * ★ **离开比赛模式时让她当场停下**（用户实测："她一直跑，比赛模式那个悬浮按钮开关不好关"）。
+     * 光把 `game.mode` 切走是不够的：她已经收到的那条走位指令会继续跑完，
+     * 看着就像"开关没生效"。这里直接把她切回 idle。
+     */
+    if (mode !== 'game') { try { ctl.act('stand'); } catch { /* 她正忙（被拎着/在空中）就算了 */ } }
+    /**
+     * ★ **比赛里让她跑快一点**（`ctl.setRaceBoost`）：她 250px/s、球 300~700px/s，
+     * 不给一点速度就永远差一截（用户实测 `你27 : 她8` 时加的）。
+     * **非比赛模式一律回 1** —— 不然平时在桌面上溜达也会变快。
+     */
+    try { ctl.setRaceBoost(mode === 'game' ? RACE_BOOST : 1); } catch { /* ignore */ }
     syncGameFlag();
     refreshButtons();
     if (!fromServer) send({ t: 'ballMode', mode, fromUser });
@@ -297,6 +345,38 @@ async function applyFigure(s) {
   // a scheme picked while she is on screen fades in
   await fig.setScheme(s.scheme, { fade: ctl.figure === fig ? .45 : 0, at: ctl.time });
   ctl.setFigure(fig);
+}
+
+/**
+ * ★★ **启动时先别画"上游那套形象"**（用户实测：重启时小肥鱼出现前会闪一下上游的图标）。
+ *
+ * **机制**：本文件的默认 `figure` 是内置的 `coo`（上游形象），而小肥鱼（`whale`）要等 World 的
+ * 偏好消息到了才 `import('./whale/figure.js')` + 加载 25 张贴图 + 8 张表情贴图 ——
+ * 于是窗口一显示、帧循环一开（文件末尾那句 `ctl.render()`），画的**先是 coo**，
+ * 等 whale 就绪之后才 `.45s` 淡入小肥鱼。用户看到的就是"小肥鱼还没出现，先闪一下上游的图标"。
+ *
+ * **现在**：启动就先挂 whale（用默认配色），并且**在它真的能画之前不开帧循环** ——
+ * 所以页面画出来的**第一帧就是她**（而且她这会儿还在屏幕上方，窗口是透明的，什么都看不见）；
+ * 等 `figureReady` 之后再报一句 `pet:painted` 给主进程，**窗口到那时才显示**（见 `pet-host.cjs`）。
+ * 万一 whale 加载失败（贴图缺了之类），`FIGURE_WAIT_MS` 到点就照常画（退回内置形象）—— 不能让她不出现。
+ */
+const FIGURE_WAIT_MS = 2500;
+let figureReady = false;
+const figureDeadline = performance.now() + FIGURE_WAIT_MS;
+/** 第一次真正画出她之后，告诉主进程"可以显示窗口了"（只报一次）。 */
+let painted = false;
+function markPainted() {
+  if (painted) return;
+  painted = true;
+  requestAnimationFrame(() => { try { globalThis.petHost?.painted?.(); } catch { /* 老 preload 没有这个方法就算了 */ } });
+}
+function startFigure() {
+  let scheme = 'deepseek';
+  try { scheme = normalizeSkin(null).scheme || 'deepseek'; } catch { /* 用默认 */ }
+  const go = (s) => applyFigure({ figure: 'whale', scheme: s })
+    .catch((err) => { console.warn('小肥鱼的形象加载失败，退回内置形象', err); })
+    .finally(() => { figureReady = true; markPainted(); });
+  return go(scheme);
 }
 
 /**
@@ -1839,9 +1919,24 @@ stage.addEventListener('pointerdown', (e) => {
     x: clamp(at.x, 8, 248), y: clamp(at.y, 8, 250),
     hang: style ? style.hang * (at.x > 128 ? -1 : 1) : 0,
   } : null;
-  if (ctl.pointerDown({ x: e.clientX, y: e.clientY }, { grab })) { stage.setPointerCapture(e.pointerId); e.preventDefault(); }
+  if (ctl.pointerDown({ x: e.clientX, y: e.clientY }, { grab })) {
+    /**
+     * ★ **拎起来就先把比赛停一下**（`game.hold`）：不拎的话，她正在比赛里满场跑，
+     * 你根本抓不稳，而且**一松手她立刻又冲回去**（用户实测："哪怕拽起她放下来，立马又跑了"）。
+     * 抓起时给 1.5 秒、放下时再给 2.5 秒（见 `up()`）—— 拽她出来看看/摸两下不再手忙脚乱。
+     */
+    game.hold(1500);
+    stage.setPointerCapture(e.pointerId); e.preventDefault();
+  }
 });
-const up = () => { setBallDrag(false); ctl.pointerUp(); stage.style.cursor = ''; };
+const up = () => {
+  /**
+   * ★ **放下之后再愣 2.5 秒**（用户实测："拽起她放下来，立马又跑了" → 他要的是"拽停下来会等两秒"）。
+   * 她这会儿还在空中（被丢出去的那一下），落地后也安安静静站一会儿，等着你动手。
+   */
+  if (ctl.pressing) game.hold(2500);
+  setBallDrag(false); ctl.pointerUp(); stage.style.cursor = '';
+};
 // 被捕获的指针事件只到这里（不冒泡到 document），所以球在这一层也要跟手、也在这一层松手
 stage.addEventListener('pointermove', (e) => {
   /**
@@ -2097,6 +2192,14 @@ let frameFails = 0, frameFailAt = 0;
  * 持续失败时按静止帧率（`full` 保持 false）跑，不会 60fps 空转刷屏。
  */
 function frame(now) {
+  /**
+   * ★ **形象还没就绪就先别画这一帧**（见 `startFigure` 的说明）。
+   *
+   * 不拦的话，启动的头一帧画的是内置的**上游形象**（`coo`），小肥鱼要等贴图加载完再淡入 ——
+   * 用户看到的就是"小肥鱼还没出现，先闪一下上游的图标"。
+   * `FIGURE_WAIT_MS` 到点（或者 whale 加载失败）就照常跑：**不能让她一直不出现**。
+   */
+  if (!figureReady && performance.now() < figureDeadline) { requestAnimationFrame(frame); return; }
   // a display refresh up to a quarter gap early counts as on time, so the rate averages out over refresh rates it does not divide
   if (now < dueAt - gap / 4) { requestAnimationFrame(frame); return; }
   const dt = Math.min(.05, (now - last) / 1000); last = now;
@@ -2149,7 +2252,12 @@ function frame(now) {
     stepTools();
     layout();
     mark('布局');
-    full = prefs.lockFrameRate || ctl.moving || ball.busy;   // 球在滚/在飞/被拖着也按 60fps
+    /**
+     * 球在滚/在飞/被拖着按 60fps；**比赛模式（`game.mode === 'game'`）也恒定 60fps**。
+     * 为什么要加最后那条：比赛里"她站着不动 + 球静止"（开球那几秒）原来会掉到 `RESTING_FPS`（30），
+     * 于是球拍光环、扫掠判定、球的物理都跟着半速跑，她一跑起来又跳回 60 —— 手感忽快忽慢。
+     */
+    full = prefs.lockFrameRate || ctl.moving || ball.busy || game.mode === 'game';
     if (FRAME_DIAG) {
       marks.push(['总', performance.now()]);
       frameCost.push(t0, marks);
@@ -2169,6 +2277,11 @@ function frame(now) {
   if (full) requestAnimationFrame(frame);
   else setTimeout(() => requestAnimationFrame(frame), Math.max(0, dueAt - gap / 4 - performance.now()));
 }
-ctl.render();
+/**
+ * ★ **先把形象挂上，再开帧循环**：`startFigure()` 会在小肥鱼真的画得出来之后报 `pet:painted`，
+ * 主进程收到才显示窗口 —— 于是窗口露出来的第一帧就是她（那会儿她还在屏幕上方，窗口全透明）。
+ * （原来这里先 `ctl.render()` 一下：那一帧画的是内置的上游形象，就是"闪一下"的来源。）
+ */
+startFigure();
 addEventListener('pagehide', reportPosition);
 requestAnimationFrame(frame);

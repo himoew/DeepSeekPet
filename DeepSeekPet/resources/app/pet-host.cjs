@@ -209,6 +209,16 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
   let win = null, tray = null, dress = null, heartbeat = null;
   /** Id of the display whose work area the window covers. */
   let displayId = null;
+  /**
+   * 限流用：上一次"收/放鼠标"的日志时间（见下面的 `pet:interactive`）。
+   *
+   * ⚠️ **必须声明在 `runPetHost` 这一层**：`ipcMain.on('pet:interactive')` 挂在这一层，
+   * 而它原来被写在 `create()` 里面（块作用域）—— 于是**每一次"窗口收/放鼠标"都抛**
+   * `ReferenceError: lastInteractiveAt is not defined`：实测 70 分钟刷了 **1102 条 FATAL**，
+   * 而且那条"[输入] 主进程：收鼠标=… 忽略鼠标=…"的诊断行**一次都没写出来**
+   * （HANDOVER 第 1.27.4 节的输入链路排查就是靠它）。
+   */
+  let lastInteractiveAt = 0;
 
   /** The display the window belongs on: the one it was moved to, or the primary display once that one is gone. */
   const display = () => screen.getAllDisplays().find((d) => d.id === displayId) ?? screen.getPrimaryDisplay();
@@ -253,12 +263,17 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
       shell.openExternal(target);
       return { action: 'deny' };
     });
-    // 让她出现。**别只靠 `ready-to-show`**：它是"首帧画好了"的通知，而透明窗口偶尔
-    // 根本不发这个事件（页面一直没提交帧、GPU 初始化出问题…），于是进程活着、日志正常、
-    // 渲染循环也在跑，**窗口却始终是隐藏的**——用户看到的就是"桌面上没有宠物"，
-    // 而所有日志都显示一切正常（实测踩过：窗口存在、IsWindowVisible 为 False）。
-    // 所以：`ready-to-show` 到了就立刻显示，**再挂一个 2.5 秒的兜底**，到点还没显示就照样显示
-    // （透明窗口在页面画好之前是空的，show 一下没有任何副作用）。
+    /**
+     * 让她出现。**三层保险**：
+     *   ① 页面报 `pet:painted` —— "小肥鱼已经画出来了"（首选，见 `web/pet-app.js` 的 `startFigure`）。
+     *      ★ 为什么不用 `ready-to-show` 立刻显示：它是"**第一帧**画好了"的通知，而页面的第一帧
+     *      画的是**内置的上游形象**（小肥鱼要等贴图加载完才淡入）—— 用户实测到的
+     *      "重启时小肥鱼出现前先闪一下上游的图标"就是这一帧。现在页面那边改成"形象就绪才开帧循环"，
+     *      再由这里等 painted 才显示，于是**窗口露出来的第一帧就是她**。
+     *   ② `ready-to-show` 只记一行日志，**不再拿它当显示时机**。
+     *   ③ 4 秒兜底：页面没报就照样显示（透明窗口在页面画好前是空的，show 没有副作用）——
+     *      不能因为一个信号没来就"桌面上没有宠物"（这条实测踩过）。
+     */
     let shown = false;
     const showNow = (why) => {
       if (shown || !win) return;
@@ -266,12 +281,11 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
       win.showInactive();
       diag(`窗口已显示（${why}）visible=${win.isVisible()}`);
     };
-    win.once('ready-to-show', () => showNow('ready-to-show'));
-    setTimeout(() => { if (!shown) showNow('兜底：ready-to-show 没来，2.5 秒后自己显示'); }, 2500);
+    ipcMain.on('pet:painted', () => showNow('页面报 painted（小肥鱼画出来了）'));
+    win.once('ready-to-show', () => diag('ready-to-show 到了（等页面报 painted 再显示）'));
+    setTimeout(() => { if (!shown) showNow('兜底：页面 4 秒没报 painted，自己显示'); }, 4000);
     // the page learns where the cursor is even when the click-through window misses its moves
     let last = '';
-    /** 限流用：上一次"收/放鼠标"的日志时间（见 `pet:interactive`）。 */
-    let lastInteractiveAt = 0;
     const cursorTimer = setInterval(() => {
       if (!win || !win.isVisible()) return;
       const pt = screen.getCursorScreenPoint(), b = win.getBounds();

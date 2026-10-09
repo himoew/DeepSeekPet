@@ -35,8 +35,18 @@ const BOUNCE_MIN_VY = 110;
 /** 慢到这个速度以内就算静止（不再受重力、也不出声）。 */
 const REST_VY = 45;
 const REST_VX = 14;
-/** 每次落地后水平速度乘这个（地面摩擦）。 */
+/** 每次落地后水平速度乘这个（落地那一下的搓地）。 */
 const GROUND_FRICTION = 0.86;
+/**
+ * **贴着地面滚**的时候，水平速度每秒衰减多少（按 `dt` 折算，`1 - ROLL_DRAG*dt`）。
+ *
+ * ⚠️ 这是一个真 bug 的修法：原来贴地滚动走的也是 `GROUND_FRICTION`（每帧乘 0.86），
+ * 而那个分支**在球贴地的每一帧都会执行** —— 等于每秒乘 0.86 的 60 次方，
+ * 实测 400px/s 的球**只滚 46px（0.48 个小肥鱼）、0.4 秒就停死**（vx 逐帧 344→295→254→218…）。
+ * 用户说的"球不受控 / 距离不够"有一半是它 —— 球一沾地就陷进泥里，只能不停补拍。
+ * 现在 400px/s 大约能滚 400px 上下、3~4 秒慢慢停，地滚球（沿地面传过去）才成立。
+ */
+const ROLL_DRAG = 0.9;
 /** 空气阻力（每秒衰减比例）。 */
 const AIR_DRAG = 0.06;
 /** 球半径（舞台像素）。 */
@@ -145,6 +155,11 @@ export const HEAD_REACH = 230;
  * 大一点；back 是背对那一侧、小一点。**刻意比她的身体略小**（宁可漏判也别误判成"踢到空气"）。
  */
 const HIT = { front: 52, back: 40, low: 52 };
+/**
+ * 她**脚下那个碰撞盒的顶**（离地高度）—— 导出给 `game.js` 判"这一球该跳还是该跑过去踢"：
+ * 球的下沿低于这条线时她的脚/身体会先碰到球，跳起来是白跳。
+ */
+export const BODY_TOP = HIT.low;
 
 /** 上报一句给主进程（写进 `data\pet-host.log`）。页面报错通道见 `web/diag.js`。 */
 const report = (msg) => {
@@ -192,6 +207,12 @@ const PADDLE_COOL_MS = 500;
  * 26px 太敏感：鼠标在球旁边随手一动就算一脚，方向完全由那一帧的抖动决定。
  */
 const PADDLE_MIN_SWEEP = 40;
+/**
+ * **最近 120ms 里"至少动了这么多像素"才算你在推球**（不是鼠标抖动）。
+ * 比它小的当"手只是停在球上" → 走下面"朝手那一侧轻推"的兜底。
+ * 定得小（6px）是有意的：**慢扫也是扫** —— 方向必须跟着你手的移动走。
+ */
+const PADDLE_TAP_MIN = 6;
 /** 光标速度低于这个值不算"主动扫"（只是鼠标的轻微抖动）。 */
 const PADDLE_MIN_SPEED = 120;
 /**
@@ -206,6 +227,12 @@ const PADDLE_MAX_STEP = 70;
 const PADDLE_POWER_CURVE = 1.35;
 /** 没在扫（只是贴着球）时的默认方向分量：朝"远离她"那一侧 + 一点点上抬。 */
 const PADDLE_IDLE_LIFT = 0.25;
+/**
+ * **"别把球踢进自家门"这条护栏只在离自家门这么近（占窗口宽）的时候生效**。
+ * 0.18 × 1280 ≈ 230px —— 只覆盖门口那一小块（跟她踢球那边的 `nearOwnGoal` 同一个数）。
+ * 原来写的是"整个自家半场"（0.5），后果见 `playerKick` 里的说明。
+ */
+const OWN_GOAL_GUARD = 0.18;
 
 export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
   const st = {
@@ -226,6 +253,11 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     lastPaddle: -Infinity,
     since: 0,              // 上一次被踢到现在（秒）：用来决定"要不要过去找它玩"
     releasedAt: 0,         // 上一次从手里松开（游戏用它给"拖进门"限一次）
+    /**
+     * **进球庆祝期间冻住**（`game.js` 的 `CELEBRATE_MS`）：球留在网里不出物理、不判碰撞 ——
+     * 但**仍然把每一帧报给游戏**，否则游戏的庆祝计时永远走不完（球就永远冻着）。
+     */
+    frozen: false,
   };
 
   /**
@@ -374,8 +406,36 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
    * 改为调用 `swat(dir)` —— 按鼠标甩动的速度给球一个冲量。
    */
   const grab = { ok: true };
+  /**
+   * **她现在能不能碰到球**（游戏用）。
+   *
+   * 用途只有一个：**她进球之后要退回自己半场**（用户定的规则，见 `game.js` 的 `RETREAT_MS`）。
+   * 退回期间如果放着她不管，球就复位在她脚边、而她的瞄准方向正是那个门 ——
+   * 一碰又进（真机日志：一分钟刷 23 个球）。所以退回期间把她的"碰球"关掉。
+   *
+   * 只关**她**，不关鼠标球拍、也不关球自己的物理（所以球照样能滚、能被她之后踢）。
+   */
+  const touch = { ok: true };
+  /**
+   * **"开球权"在你手里吗**（游戏用）。`false` = 这段时间你的球拍碰不到球（见 `paddleIfTouching`），
+   * 而且球会画成半透明，一眼能看出"这颗还没开球"。
+   */
+  const paddleTouch = { ok: true };
+  /** 庆祝进度 0→1（球缩一下、淡出去），由游戏推进；见 `setCelebrate`。 */
+  const celebrate = { k: 0 };
   /** 鼠标位置采样（给"球拍"用）：页面每帧喂一次。 */
   const cur = { x: 0, y: 0, at: 0, ok: false, lastX: 0, lastY: 0, lastAt: 0 };
+  /**
+   * **最近 ~120ms 的光标采样**（时间 + 位置），给"这一脚往哪踢"定方向用。
+   *
+   * 为什么不能只用"上一帧 → 这一帧"：
+   *   · 主进程的光标轮询是 **33ms（30Hz）**，而页面按 **60fps** 喂 —— 相邻两帧里必有一帧位置没变，
+   *     用单帧位移判方向就会把那一帧当成"没在扫"，掉进"朝鼠标那一侧轻推"的兜底（球往回走）；
+   *   · 另一帧的位移又是两帧的量、时间却只按一帧算 → 速度翻倍、力度失真。
+   * 按时间窗算，两个毛病一起消失：位置没变时 `dt` 也在长，算出来还是真实速度。
+   */
+  const hist = [];
+  const HIST_MS = 120;
 
   /**
    * 页面每帧把光标位置喂进来（**不管有没有按下**）。
@@ -385,9 +445,18 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     const t = Number.isFinite(at) ? at : performance.now();
     if (cur.ok) { cur.lastX = cur.x; cur.lastY = cur.y; cur.lastAt = cur.at; }
     cur.x = Number(x) || 0; cur.y = Number(y) || 0; cur.at = t; cur.ok = true;
+    hist.push({ x: cur.x, y: cur.y, t });
+    // 只留时间窗里的（至少留两个，够算一段位移）
+    while (hist.length > 24 || (hist.length > 2 && t - hist[0].t > HIST_MS)) hist.shift();
+  }
+  /** 时间窗里"最老那一点 → 当前"的位移与时长；只有一个采样就当没动。 */
+  function cursorMove() {
+    if (hist.length < 2) return { dx: 0, dy: 0, dt: 0 };
+    const a = hist[0], b = hist[hist.length - 1];
+    return { dx: b.x - a.x, dy: b.y - a.y, dt: Math.max(0, b.t - a.t) };
   }
   /** 光标离开窗口。 */
-  function clearCursor() { cur.ok = false; }
+  function clearCursor() { cur.ok = false; hist.length = 0; }
 
   /**
    * 线段与球的相交检测（**扫掠**，不是点）。
@@ -437,10 +506,26 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
      * 只要球在自家半场，横向分量强制朝对面；纵向照旧由仰角表决定。
      */
     if (aim.x !== null && aim.x !== undefined) {
-      const ownGoalX = b.minX + (1 - aim.x) * (b.maxX - b.minX);   // 对面门 → 自家门
-      const inOwnHalf = Math.abs(st.x - ownGoalX) < (b.maxX - b.minX) * 0.5;
-      const wantSign = Math.sign(b.minX + aim.x * (b.maxX - b.minX) - st.x) || 1;
-      if (inOwnHalf && Math.sign(ux) !== wantSign) ux = wantSign * Math.abs(ux);
+      /**
+       * ★ **`aim.x` = "她进攻的那个门" = "你自家门"**（`game.js` 用同一个数给她瞄准对面）。
+       * 所以：你自家门在 `aim.x` 那一侧，你要打进的门在**另一侧**。
+       *
+       * ⚠️ 原来把 `ownGoalX` 算成了 `1 - aim.x`（= 她的门 = **你的目标门**），于是
+       * "绝不在自家半场朝自家门踢"这条护栏**保护的是她的门**：你正对着球门、往球门方向一挥，
+       * 球被强行掰到反方向（探针实测：`aim.x=0`、球在 1024px 时，往右扫 → `vx=-700`，
+       * 连满速抽射都掉头）。这就是用户反复报的"**往右慢扫球往左滚**"。
+       * 换边之后，护栏只在"球已经退回你自家门前"时生效，跟注释里写的意思一致。
+       */
+      const ownGoalX = b.minX + aim.x * (b.maxX - b.minX);            // 她进攻的门 = 你自家门
+      const targetGoalX = b.minX + (1 - aim.x) * (b.maxX - b.minX);   // 你要打进的那个门
+      /**
+       * **只在"自家门口那一小块"才管**（`OWN_GOAL_GUARD` 个窗口宽 ≈ 230px，跟她的踢球护栏同一个数）。
+       * 别写成"整个自家半场"：那样你在中场随手往回带一下都会被掉头，
+       * 用户实感就是"慢扫往右、球往左滚"（探针：球在 1024px、半场判定成立时，往右扫 → 球往左飞）。
+       */
+      const nearOwnGoal = Math.abs(st.x - ownGoalX) < b.W * OWN_GOAL_GUARD;
+      const wantSign = Math.sign(targetGoalX - st.x) || 1;
+      if (nearOwnGoal && Math.sign(ux) !== wantSign) ux = wantSign * Math.abs(ux);
     }
     /**
      * **高度按力度分档**（见 `KICK_LIFT`）：轻扫到她的脖子、中扫到 1.5 倍她、全力过顶。
@@ -493,6 +578,14 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
    */
   function paddleIfTouching() {
     if (!st.on || grab.ok || !cur.ok) return;
+    /**
+     * **"开球权"不在你手里时，你的球拍碰不到球**（`web/game.js` 的 `KICKOFF_HOLD_MS`）。
+     *
+     * 用户定的规则：谁进球，谁就要把开球权让出去（跟她"进球后退回半场"是一对）。
+     * 你进球 → 球在她门前、**在她碰到之前你碰不到它**（球这段时间画成半透明），
+     * 否则你可以守在门口把复位球一扫再进（实测比分一度是 你30:她14，一半是这么来的）。
+     */
+    if (!paddleTouch.ok) return;
     if (performance.now() - (st.lastPaddle || -Infinity) < PADDLE_COOL_MS) return;
     const rawAx = cur.lastAt ? cur.lastX : cur.x;
     const rawAy = cur.lastAt ? cur.lastY : cur.y;
@@ -542,6 +635,28 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
      * 方向用上面**阻尼过的 `dirX/dirY`**（不是原始的 `rawDx/rawDy`），这样上下抖动不会带偏。
      */
     if (swept >= PADDLE_MIN_SWEEP) { playerKick(dirX, dirY, Math.max(PADDLE_MIN_SPEED, speed)); return; }
+    /**
+     * ★ **位移不够长（慢慢推 / 慢慢扫）：方向也照样跟着你手走**。
+     *
+     * ⚠️ 这一步原来直接掉进最后那条"朝鼠标所在那一侧轻推"的兜底，而那条**跟你的移动方向无关**：
+     * 你从左边慢慢往右推，第一次接触时手还在球心左边 → 兜底把球**往左**推。
+     * 用户反复报的"**往右慢扫球往左滚**"就是它（探针实测：慢扫右移 → `vx=-298`）。
+     * 现在改成看**最近 120ms 的整体位移**（`cursorMove`，见上面 `hist` 的说明）：
+     *   · 有明确移动 → 方向 = 你移动的方向、力度按这段的**真实速度**（下限仍是 `PADDLE_MIN_SPEED`）；
+     *   · 真的一动不动（只是把光标停在球上）→ 才走兜底那条。
+     */
+    const win = cursorMove();
+    const moveLen = Math.hypot(win.dx, win.dy);
+    if (moveLen >= PADDLE_TAP_MIN) {
+      const wdt = Math.max(8, win.dt || 16);
+      const wspeed = (moveLen / wdt) * 1000;
+      let mx = win.dx;
+      let my = Math.abs(win.dy) < 12 ? 0 : win.dy * 0.45;      // 纵向阻尼，跟上面一致
+      if (Math.abs(mx) < 12) mx = mx < 0 ? -12 : 12;           // 纯上下挥也保留一点横向
+      const mn = Math.hypot(mx, my) || 1;
+      playerKick(mx / mn, my / mn, Math.max(PADDLE_MIN_SPEED, Math.min(PADDLE_FULL_SPEED, wspeed)));
+      return;
+    }
     /**
      * ★ **扫得太短（轻轻拍）：方向要朝"你鼠标所在的那一侧"**。
      *
@@ -627,6 +742,13 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     if (st.dragging) { st.vx = 0; st.vy = 0; st.resting = false; return; }
 
     /**
+     * ★ **进球庆祝：球冻在网里**（不出物理、不判碰撞、谁碰都不算）。
+     * ⚠️ 但**必须继续把这一帧交给游戏**：游戏的庆祝计时就在 `onStep` 里走 ——
+     * 不报的话计时永远不动，球就永远冻着（自己把自己锁死）。
+     */
+    if (st.frozen) { st.vx = 0; st.vy = 0; hookGame(dt, b); return; }
+
+    /**
      * **静止 = 完全不动**：不受重力、不出声、位置锁在地面上。
      * 只有被踢 / 被拨 / 被点（`drag`）才会重新 awake。
      * 这一条是"静止还在弹"的根治 —— 光调门槛不够，静止状态必须真的跳过物理。
@@ -640,6 +762,20 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
       st.spin += st.spinV * dt;
       kickIfTouching();                                // 停着的球照样能被她撞走
       paddleIfTouching();                              // ...也能被鼠标扫走（球拍模式）
+      /**
+       * ★★ **静止的球也必须把这一帧告诉游戏**（`game.onStep`）。
+       *
+       * ⚠️ 这里原来直接 `return`，而那个钩子写在函数**末尾** —— 于是**球一停，游戏就一帧都收不到**：
+       * 她的走位指令全在钩子里（`game.onStep` → `goTo` → `control.walkTo`），
+       * 所以"球停着"= "她收不到任何走路指令" = **她站在那儿不动**。
+       *
+       * 而**开球恰恰就是把球静止放在地上**（`placeAt(..., 'floor')` → `resting = true`）——
+       * 用户实测的"她自己场地复位时**有时**会不踢"就是它：她当时正好站在球边上就踢得到
+       * （`kickIfTouching` 在静止分支里是照常跑的），离得远就**永远走不过去**，所以是"有时"。
+       * 这也解释了为什么上一轮加的诊断"一直没等到复现数据" —— **那段诊断本身就挂在 `game.onStep` 里**，
+       * 而 `game.onStep` 正是那个不会被调用的东西。
+       */
+      hookGame(dt, b);
       return;
     }
 
@@ -675,9 +811,14 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
         st.resting = true;
         st.since = 0;                                  // 从"停稳"开始重新计时（她要玩球靠它）
       } else {
-        // 中间那一段（45~110）：既不弹也不停，就贴着地面耗掉这点速度
+        /**
+         * 中间那一段（45~110）：不弹，贴着地面**滚**。
+         *
+         * 摩擦必须**按时间折算**（见 `ROLL_DRAG`）：球贴地时这个分支每帧都会走到，
+         * 写成"每帧乘一个固定值"就等于每秒乘 60 次 —— 球一落地就停死（实测只滚 46px）。
+         */
         st.vy = 0;
-        st.vx *= GROUND_FRICTION;
+        st.vx *= Math.max(0, 1 - ROLL_DRAG * dt);
         st.spinV = st.vx / R;
         st.resting = false;
       }
@@ -702,16 +843,29 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
      * **游戏模式的钩子**（`web/game.js`）。球本身不知道有"球门/比分"这回事：
      * 它只把"这一帧发生了什么"告诉钩子，钩子（游戏）负责瞄准、判进球、记分。
      * 没给钩子时（空闲玩球）一切照旧 —— 用户要的"对球的那套互动通用"。
+     *
+     * ⚠️ **封装成函数是为了让"静止"那条分支也能调它**（见上面 `st.resting` 里的说明：
+     * 钩子原来只写在函数末尾，而静止分支提前 `return` → 球一停，游戏就一帧都收不到）。
      */
-    if (game) {
+    hookGame(dt);
+  }
+
+  /**
+   * 把这一帧的球状态交给游戏钩子。**两个分支都要调**（滚动/飞行那条、以及静止那条）。
+   * `dt` 用调用方那一帧的值；`bounds` 也由调用方给（静止分支里 `box` 已经刷过了）。
+   */
+  function hookGame(dt, bounds) {
+    if (!game) return;
+    const bb = bounds || box || stage.bounds();
+    try {
       game.onStep?.({
         dt,
         x: st.x, y: st.y, vx: st.vx, vy: st.vy,
         resting: st.resting, dragging: st.dragging,
-        floorY: b.floorY, R,
+        floorY: bb.floorY, R,
         setAim,
       });
-    }
+    } catch { /* 游戏那边抛错不该把球的物理带崩（帧循环自有兜底） */ }
   }
 
   /** 她的碰撞盒（正面 / 背面宽度不同，跟着朝向镜像）。 */
@@ -743,7 +897,16 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     const p = stage.pet();
     const feet = Number.isFinite(p.feetY) ? p.feetY : b.floorY;
     if (b.floorY - feet < 6) return null;               // 站在地上：头不算碰撞体
-    const top = feet - HEAD_ABOVE_FEET;
+    /**
+     * ★ **箱子要挂在"脚底往上 60~150"那一段，不是"从脚底往上 60"**。
+     *
+     * `HEAD_ABOVE_FEET`(60) / `HEAD_BOX_H`(90) 说的是**离脚底 60~150**（肚子→头→气泡那一带）。
+     * 原来写的是 `top = feet - 60; y1 = top + 90` —— 那是**脚底上下 −30~+60**，
+     * 也就是她的大腿/肚子：球永远在"她的腿"上被弹走，而用户要的是头顶那一片
+     * （"我想象的范围在气泡那一块"）。她跳起来时这个箱子当然也够不到球。
+     * 现在 `top = feet - (60 + 90)`，箱子正好落在脚底往上 60~150。
+     */
+    const top = feet - (HEAD_ABOVE_FEET + HEAD_BOX_H);
     return { x0: p.x - 34, x1: p.x + 34, y0: top, y1: top + HEAD_BOX_H };
   }
 
@@ -757,6 +920,7 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
    * 两种都会先"往上抬一点"，看着才像被踢飞。
    */
   function kickIfTouching() {
+    if (!touch.ok) return;                    // 她这会儿不能碰球（退回半场，见 `touch` 的说明）
     const now = performance.now();
     // 1) 头球
     const head = headBox();
@@ -923,12 +1087,23 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
       // 影子：球越高越小越淡
       const h = Math.max(0, floorY - R - st.y);
       const k = Math.max(.35, 1 - h / 320);
+      /** 庆祝进度：球在网里缩一下、淡出去（影子也跟着淡）。 */
+      const ck = celebrate.k;
       shadow.setAttribute('cx', st.x.toFixed(1));
       shadow.setAttribute('cy', floorY.toFixed(1));
       shadow.setAttribute('rx', (R * 1.1 * k).toFixed(1));
       shadow.setAttribute('ry', (R * .42 * k).toFixed(1));
-      shadow.setAttribute('opacity', (.34 * k).toFixed(2));
-      ballEl.setAttribute('transform', `translate(${st.x.toFixed(1)} ${st.y.toFixed(1)}) rotate(${(st.spin * 57.2958).toFixed(1)})`);
+      shadow.setAttribute('opacity', (.34 * k * (1 - .9 * ck)).toFixed(2));
+      const cs = 1 - .62 * ck;
+      ballEl.setAttribute('transform', `translate(${st.x.toFixed(1)} ${st.y.toFixed(1)}) rotate(${(st.spin * 57.2958).toFixed(1)}) scale(${cs.toFixed(3)})`);
+      if (ck > 0) ballEl.setAttribute('opacity', (1 - .92 * ck).toFixed(2));
+      else ballEl.removeAttribute('opacity');
+      /**
+       * **"还没开球"的球画成半透明**（`paddleTouch` 关着的时候）。
+       * 这是给玩家的唯一提示：这段时间你的球拍碰不到它（规则见 `game.js` 的 `KICKOFF_HOLD_MS`），
+       * 不然"我扫了它却不动"会被当成 bug。
+       */
+      root.setAttribute('opacity', paddleTouch.ok ? '1' : '.45');
       /**
        * **球拍光环**：画在鼠标位置上（半径 = 真实接触半径）。
        * 只在"球拍模式"（比赛模式，球不能抓）时显示；自由玩球是"抓住甩"，不需要它。
@@ -985,6 +1160,28 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
      */
     setGrabable(on) { grab.ok = !!on; },
     get grabable() { return grab.ok; },
+    /** 她现在能不能碰到球（`web/game.js` 在"她进球后要退回自己半场"那几秒里关掉它）。 */
+    setHerTouch(on) { touch.ok = !!on; },
+    get herTouch() { return touch.ok; },
+    /**
+     * **冻住球**（进球庆祝用）：不出物理、不判碰撞，位置停在原地；**游戏钩子照常每帧调用**。
+     * 解冻之后从当前位置继续（游戏那边紧接着就会 `placeAt` 复位）。
+     */
+    setFrozen(on) {
+      st.frozen = !!on;
+      if (st.frozen) { st.vx = 0; st.vy = 0; st.dragging = false; }
+    },
+    /**
+     * **庆祝进度 0→1**：球在网里缩一下、淡出去（1 = 完全消失）。
+     * 由游戏按庆祝计时推进（见 `game.js` 的 `CELEBRATE_MS`）。
+     */
+    setCelebrate(k) { celebrate.k = Math.max(0, Math.min(1, Number(k) || 0)); },
+    /**
+     * **开球权**：`false` = 这段时间你的球拍碰不到球（半透明显示）。
+     * `web/game.js` 用规则"谁进球谁让出开球权"驱动它。
+     */
+    setPaddleTouch(on) { paddleTouch.ok = !!on; },
+    get paddleTouch() { return paddleTouch.ok; },
     get on() { return st.on; },
     get x() { return st.x; },
     get y() { return st.y; },

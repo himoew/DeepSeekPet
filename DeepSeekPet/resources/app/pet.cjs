@@ -1479,6 +1479,13 @@ function attach(ws) {
         const mine = m.scorer === 1;                    // scorer 1 = 她进的
         const [you, her] = Array.isArray(m.score) ? m.score : [0, 0];
         log.info(`进球：${mine ? '她' : '你'}进的 · 比分 你${you} : 她${her}`);
+        /**
+         * ★ **输赢意识的第一小步**（用户拍板）：进球/失球轻轻推动她的心情（见 `mood.cjs` 的 EVENT）。
+         * 幅度刻意很小 —— 一局踢十几个球，太大会把心情直接推到底。
+         * 心情又反过影响她走路的快慢（`mood.speed`）与台词档，所以"落后时更急"是顺带有的；
+         * 真正"更急"还有 `game.js` 里的 `urgency`（落后压得更靠前）。
+         */
+        try { mood.onEvent(mine ? 'goal' : 'concede'); } catch { /* 心情出问题不该影响踢球 */ }
         if (state.paused || state.card) break;
         reactor.reply('line', 'ballGoal', [next(mine ? lines.ballGoalMine : lines.ballGoalYours)]);
         break;
