@@ -371,7 +371,11 @@ export const createGame = ({ fxG, control, ball, sfx, onEvent } = {}) => {
       const hx = s.x + (s.vx || 0) * t;
       const hy = s.y + (s.vy || 0) * t + 0.5 * GRAVITY * t * t;
       const hHigh = b.floorY - hy;
-      const shift = Math.abs((s.vx || 0) * t);
+      /**
+       * 横向窗口按球速放宽（快球外推得远），但要**封顶**：
+       * 不封的话 700px/s 的球会让窗口宽到 350px —— 她会在离球 400px 的地方就跳起来（很傻）。
+       */
+      const shift = Math.min(150, Math.abs((s.vx || 0) * t));
       return hHigh > REACH_MIN - 20 && hHigh < REACH_JUMP
         && Math.abs(hx - pet.x) < HEAD_X + shift;
     })();
