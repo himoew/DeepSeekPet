@@ -395,6 +395,21 @@ function stubModel() {
     const htmlSrc = fs.readFileSync(path.join(app, 'web', 'pet.html'), 'utf8');
     const coreSrc = fs.readFileSync(path.join(app, 'web', 'pet-core.js'), 'utf8');
     ok('特效层分成两层：#fx 里装 #fxCore（她的粒子）', /id="fx"[\s\S]{0,120}id="fxCore"/.test(htmlSrc));
+    /**
+     * **模块求值顺序**：`pet-app.js` 里有些代码在**模块加载时就会执行**（不只是被调用时），
+     * 比如 `syncGameFlag()`、`for (const b of BUTTONS)` 之类。如果它引用的 `const` 声明在后面，
+     * 就是 `Cannot access 'X' before initialization` → **整个页面脚本挂掉**（她完全不出来）。
+     *
+     * 这条守卫为一次真实翻车加的：我把 `flags` 声明写在文件后面，而 `syncGameFlag()` 在前面，
+     * 部署后页面日志里当场就是这个错。静态检查一下这个顺序，别等部署了才发现。
+     */
+    {
+      const appSrc2 = fs.readFileSync(path.join(app, 'web', 'pet-app.js'), 'utf8');
+      const declAt = appSrc2.indexOf('const flags = ');
+      const callAt = appSrc2.indexOf('syncGameFlag();');
+      ok('pet-app：模块加载期就用到的状态，声明必须在调用之前（TDZ 会让整页挂掉）',
+        declAt > 0 && callAt > 0 && declAt < callAt);
+    }
     ok('pet-core 的粒子只写 #fxCore，不整层重写 #fx（否则会把球抹掉）',
       !/fxG\.innerHTML\s*=/.test(coreSrc) && /fxCore\.innerHTML\s*=/.test(coreSrc));
     ok('玩具球挂在 #fx 下（跟粒子同一层但不同子节点）',

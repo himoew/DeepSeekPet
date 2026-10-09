@@ -54,6 +54,13 @@ const prefs = {
   ballMode: 'off', ballModeKnown: false,
 };
 const sfx = createSfx();
+/**
+ * 球拍模式（见下面 `stage` 的 pointerdown）：`flags.gameMode` 由 `syncGameFlag()` 回填，
+ * `swat` 是鼠标最近一次的位置与时间（用来算"甩动速度"）。
+ * **必须声明在模块顶部**：指针监听和 `syncGameFlag()` 都在模块求值时就会碰到它们。
+ */
+const flags = { gameMode: false };
+const swat = { px: 0, py: 0, pt: 0, seen: false };
 if (host) sfx.unlock();
 else ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, () => sfx.unlock(), { capture: true }));
 
@@ -200,7 +207,12 @@ const game = createGame({
 });
 hooks.step = (s) => game.onStep(s);
 hooks.kick = (i) => game.onKick(i);
-/** 回填给指针监听用（它们注册得比 `game` 早，不能直接引用）。 */
+/**
+ * 回填给指针监听用（它们注册得比 `game` 早，不能直接引用）。
+ * ⚠️ `flags` / `swat` 这两个对象**必须声明在很前面**（模块顶部那一堆状态里）：
+ * 曾经把它们写在下面，而这行在模块求值时就执行 → `Cannot access 'flags' before initialization`
+ * → 整个页面脚本挂掉（实测部署后日志里当场抓到）。
+ */
 const syncGameFlag = () => { flags.gameMode = game.mode === 'game'; };
 syncGameFlag();
 
@@ -1594,10 +1606,8 @@ const setBallDrag = (on) => { ballDrag.on = on; ball.setDragging(on); if (!on) b
  *
  * 这里只负责"**把鼠标甩动的速度算出来**"（跟丢球用的是同一套采样思路）：
  * 按下那一刻取最近 100ms 的位移方向与速度，交给 `ball.swat()`。
- * `flags.gameMode` 由下面 `game` 建好之后回填（指针监听注册得比它早，不能直接引用 `game`）。
+ * `flags.gameMode` 在模块顶部声明，由 `game` 建好后回填。
  */
-const flags = { gameMode: false };
-const swat = { px: 0, py: 0, pt: 0, seen: false, vx: 0, vy: 0 };
 document.addEventListener('pointermove', (e) => {
   pointerSeen = true;
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
