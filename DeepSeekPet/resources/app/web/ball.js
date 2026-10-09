@@ -178,8 +178,13 @@ const PADDLE_R = 30;
  * 收鼠标那一下的回拉会形成一条反向的扫掠线段，间隙太小就会立刻被当成一脚。
  */
 const PADDLE_COOL_MS = 500;
-/** 扫掠线段至少要这么长才算"一脚"：收鼠标的小幅回拉（几十像素）不该触发。 */
-const PADDLE_MIN_SWEEP = 26;
+/**
+ * 扫掠线段至少这么长才算"一脚"。
+ *
+ * 从 26 提到 **40**（用户实测："球感觉不受控了，鼠标拍过去乱飞"）——
+ * 26px 太敏感：鼠标在球旁边随手一动就算一脚，方向完全由那一帧的抖动决定。
+ */
+const PADDLE_MIN_SWEEP = 40;
 /** 光标速度低于这个值不算"主动扫"（只是鼠标的轻微抖动）。 */
 const PADDLE_MIN_SPEED = 120;
 /**
@@ -442,8 +447,16 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
      */
     const ux2 = Math.abs(ux) < 0.25 ? (ux < 0 ? -0.25 : 0.25) : ux;   // 极竖的扫动也保留一点横向
     st.vx = ux2 * power;
+    /**
+     * **抬升完全跟扫动速度走**（0.25~1.0 倍档位高度）。
+     *
+     * ⚠️ 老写法是 `0.65 + 0.35 × k` —— 于是**轻轻一扫也有 65% 的高度**，
+     * 慢扫和快扫只差 35%，球几乎每次都高飞（用户实测："球感觉不受控了，鼠标拍过去乱飞"；
+     * 实测数据：不管怎么扫，垂直初速都顶到 -748 的满档）。
+     * 现在 **0.25~1.0**：**慢慢推就贴地滚，扫得越快才越高** —— 高度真正由你控制。
+     */
     const lift = liftFor(power) * liftCeilFor(st.y, b.floorY, st.vy)
-      * (0.65 + 0.35 * Math.min(1, Math.max(0, speed) / PADDLE_FULL_SPEED) ** 0.8);
+      * (0.25 + 0.75 * Math.min(1, Math.max(0, speed) / PADDLE_FULL_SPEED) ** 0.8);
     st.vy = Math.min(-140, -lift);
     st.spinV = (st.vx / R) * 1.6;
     st.resting = false;
@@ -498,6 +511,20 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
     const vy = (cur.y - ay) / (dt / 1000);
     const speed = Math.hypot(vx, vy);
     /**
+     * ★ **方向要稳**（用户实测："球感觉不受控了，鼠标拍过去乱飞"）。
+     *
+     * 老写法直接拿"这一帧的鼠标位移"当方向 —— 鼠标上下抖几像素就会变成斜上/斜下踢，
+     * 手感就是"球乱飞、根本控不住"。三处收紧：
+     *   ① **纵向阻尼到 0.45**：横向瞄准为主，上下抖动最多让它稍微抬一点；
+     *   ② **纵向死区 12px**：这么小的上下位移当没有；
+     *   ③ **横向太小的扫动**（纯上下挥）给一个最小横向分量，免得球在原地被往上挑。
+     */
+    let dirX = rawDx;
+    let dirY = Math.abs(rawDy) < 12 ? 0 : rawDy * 0.45;
+    if (Math.abs(dirX) < 12) dirX = dirX < 0 ? -12 : 12;
+    const dn = Math.hypot(dirX, dirY) || 1;
+    dirX /= dn; dirY /= dn;
+    /**
      * ★ **只要碰到球就按"你扫的方向"踢**（用户实测："初始那一下拍球出奇地高"）。
      *
      * 老写法分了两级：位移 ≥26 且速度 ≥120 才算"扫"，否则掉进最后那条
@@ -505,9 +532,10 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
      * 而兜底用的是 `PADDLE_MIN_SPEED` 当力度、方向跟你的扫动无关 ——
      * 结果就是"第一下/刚落地的那一下"莫名其妙飞得很高，而且方向也不对。
      * 现在合并成一条：**碰到就按你的方向踢，力度看你扫多快**（下限 `PADDLE_MIN_SPEED`）。
+     * 方向用上面**阻尼过的 `dirX/dirY`**（不是原始的 `rawDx/rawDy`），这样上下抖动不会带偏。
      */
-    if (swept >= 8) { playerKick(rawDx, rawDy, Math.max(PADDLE_MIN_SPEED, speed)); return; }
-    // 真的几乎没动（贴着球停住）：朝"远离她"那一侧轻推一下
+    if (swept >= PADDLE_MIN_SWEEP) { playerKick(dirX, dirY, Math.max(PADDLE_MIN_SPEED, speed)); return; }
+    // 扫得太短：**不当一脚**，但当"贴着球的轻推"（朝远离她那一侧），避免"点了没反应"
     const p = stage.pet();
     const bb = stage.bounds();
     playerKick(st.x >= (p?.x ?? bb.W / 2) ? 1 : -1, -PADDLE_IDLE_LIFT, PADDLE_MIN_SPEED);
@@ -733,7 +761,18 @@ export const createBall = ({ fxG, sfx, stage, onEvent, game } = {}) => {
       st.resting = false;
       st.since = 0;
       sfx?.kick?.(1);
-      onEvent?.('ballHead', { x: Math.round(st.x), at: +(st.x / Math.max(1, b.W)).toFixed(4) });
+      /**
+       * 带上**顶到那一刻球离地多高** —— 这是校准"头球到底打在她哪个部位"的唯一依据。
+       * 用户实测："大概在额头部位，我想象的范围在气泡那一块" —— 有真实数字才能精确挪箱子，
+       * 不用一轮一轮猜。
+       */
+      onEvent?.('ballHead', {
+        x: Math.round(st.x),
+        at: +(st.x / Math.max(1, b.W)).toFixed(4),
+        high: Math.round(b.floorY - st.y),
+        feet: Math.round((stage.pet()?.feetY ?? b.floorY)),
+        floor: Math.round(b.floorY),
+      });
       game?.onKick?.({ x: st.x, power, head: true });
       return;
     }

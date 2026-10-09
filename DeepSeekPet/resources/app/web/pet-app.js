@@ -197,6 +197,12 @@ const ball = createBall({
       // 报的是横向比例（0..1）**和这一脚的方向**：World 用它决定"下次走过去找球"，
       // 也是排查"她怎么把球踢进自己网里"的关键线索
       send({ t: 'ballKick', at: +(d.x / Math.max(1, innerWidth)).toFixed(4), dir: d.dir });
+    } else if (kind === 'ballHead') {
+      /**
+       * 头球顶到的那一刻，**球离地多高、她的脚底在哪** —— 用来校准判定盒的高低。
+       * （用户："头球大概打在额头，我想象的范围在气泡那一块"。）
+       */
+      send({ t: 'ballHead', high: d.high, feet: d.feet, floor: d.floor });
     }
   },
   game: { onStep: (s) => hooks.step?.(s), onKick: (i) => hooks.kick?.(i) },

@@ -1490,6 +1490,18 @@ function attach(ws) {
         reactor.reply('react', 'ballCharge', [next(lines.ballCharge)]);
         break;
 
+      case 'ballHead': {
+        /**
+         * 头球顶到的那一刻：**球离地多高、她的脚底在哪**。
+         * 用它校准"头球打在她哪个部位"（用户："大概在额头，我想象的在气泡那一块"）——
+         * 有真实数字才能一次挪准判定盒，不用一轮一轮试。
+         */
+        log.info(`头球：球离地 ${m.high}px · 她的脚底在离地 ${m.floor - m.feet}px（跃起）· 球在她头顶上方 ${m.high - (m.floor - m.feet) - 96}px`);
+        if (state.paused || state.card) break;
+        reactor.reply('react', 'ballHead', [next(lines.ballKick)]);
+        break;
+      }
+
       case 'ballKick': {
         // 页面判定"她踢到球了"（物理在 web/ball.js），`at` 是球的横向比例（0..1）。
         // 记下来，好让她下次知道往哪走；然后说一句踢球的台词。
