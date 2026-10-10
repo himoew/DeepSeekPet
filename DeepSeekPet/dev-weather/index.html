@@ -58,6 +58,11 @@
   #stage{position:relative;width:100%;height:calc(100vh - 210px);min-height:320px;overflow:hidden;
     border:1px solid #2b3947;border-radius:10px;background:#20303c}
   #fxCanvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}
+  /* ★ 近层画布（粒子在她身前的那一层）：跟桌宠一样，它必须排在她的身体**后面**（DOM 顺序） */
+  #fxCanvasNear{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;z-index:2}
+  /* ★ 中间那个"她"：只是一个人形剪影，用来一眼分清"粒子在她身后还是身前"（桌宠里那是真的身体） */
+  #dummy{position:absolute;inset:0;z-index:1;pointer-events:none;display:flex;align-items:flex-end;justify-content:center}
+  #dummy svg{height:70%;overflow:visible;opacity:.95}
   #hint{color:#7f8ea3;margin:8px 0 0}
   #hint code{background:#1b242e;border:1px solid #2b3947;border-radius:4px;padding:0 4px}
   #err{color:#ff8a8a;white-space:pre-wrap;margin:6px 0 0;font-size:12px}
@@ -89,6 +94,7 @@
   <div class="row">
     <b>工具</b>
     <button id="freeze">冻结画面</button>
+    <button id="dummyBtn" class="on">人形参照</button>
     <button id="flower">撒 3 朵整花</button>
     <button id="clear">清空粒子</button>
   </div>
@@ -108,7 +114,14 @@
     <span><b>画布</b> <span id="cv">–</span></span>
   </div>
 
-  <div id="stage"><canvas id="fxCanvas"></canvas></div>
+  <div id="stage">
+  <canvas id="fxCanvas"></canvas>
+  <!-- ★ 中间的人形剪影（`#dummy`）：她站在**两张画布之间** —— 跟桌宠里 `svg` 的位置一模一样。
+       远景参数（远层画布）的粒子应该从她**背后**过去，最近那一层的粒子应该从她**面前**划过。
+       这一层只是"一把尺子"，桌宠里那个位置是她的真身。 -->
+  <div id="dummy"></div>
+  <canvas id="fxCanvasNear"></canvas>
+</div>
 
   <p id="hint">
     怎么看：先点 <code>雨</code>（最费的一档）看 <code>这一帧画了</code>；
@@ -130,20 +143,39 @@ addEventListener('error', (e) => say('JS 错误：' + e.message + ' @' + e.linen
 addEventListener('unhandledrejection', (e) => say('未捕获：' + ((e.reason && e.reason.message) || e.reason)));
 
 const canvas = document.getElementById('fxCanvas');
+const canvasNear = document.getElementById('fxCanvasNear');
 const stage = document.getElementById('stage');
 const q = new URLSearchParams(location.search);
+/**
+ * ★ **中间那个"她"**（只是一把尺子，见 `#dummy` 的注释）。
+ * ⚠️ 不要 `import` 桌宠的 `pet-core.js` 来画她：那个模块会自己去碰 `#pet` / `#shadow` 这些
+ * 桌宠里才有的元素，在验收页里跑那套等于自己造一个新的出错面。这里只画一个不依赖任何内部
+ * 状态的剪影（圆身 + 尾 + 眼）—— 够用来判断"粒子在她前面还是后面"就收手。
+ */
+document.getElementById('dummy').innerHTML = `<svg viewBox="0 0 200 200" aria-hidden="true">
+  <g fill="#5d7f9c" stroke="#dfe8f2" stroke-width="3" stroke-linejoin="round">
+    <path d="M100 18c34 0 60 26 60 60 0 40-26 74-60 74S40 118 40 78c0-34 26-60 60-60z"/>
+    <path d="M156 96l30-20-8 30 12 26-34-14z"/>
+  </g>
+  <g fill="#12181f"><circle cx="80" cy="76" r="7"/><circle cx="120" cy="76" r="7"/></g>
+  <path d="M84 104q16 12 32 0" fill="none" stroke="#12181f" stroke-width="4" stroke-linecap="round"/>
+</svg>`;
 
 /**
  * ★ **和桌宠页面用同一套写法**（`pet-app.js` 里就是这么建的）：
- * 只给 canvas，**不自己算尺寸** —— `fx.js` 会按 ①`ctl.bounds` → ②画布的 CSS 尺寸 → ③视口
+ * 只给两张 canvas，**不自己算尺寸** —— `fx.js` 会按 ①`ctl.bounds` → ②画布的 CSS 尺寸 → ③视口
  * 依次取，并且每帧校对，所以窗口一缩放它自己就跟着变。
  *
  * ⚠️ 这里原来自己写了个"等布局出来再开跑"的小补丁，正是那个补丁把 bug 藏住了：
  * 页面以为尺寸是 967×408、`fx` 以为是 1×1（`ctl.bounds` 传成函数时旧代码读不出来）。
  * 教训：**尺寸只留一个来源**，页面不要在旁边再算一遍。
+ *
+ * ★ `canvasNear` 就是桌宠里的 `#fxCanvasNear`：远/近两层各一张，分流规则完全一样 ——
+ * 她在中间，于是"谁在前谁在后"一眼看得出来。
  */
 const fx = createFx({
   canvas,
+  canvasNear,
   report: (m) => say('fx 上报：' + String(m)),
 });
 
@@ -154,6 +186,28 @@ let t = 0;
 say('fx 已创建 · 天气 ' + weather + ' · 画布由窗口尺寸决定');
 /** 把 fx 眼里的尺寸摊在页面上（这条链出问题时的第一现场）。挂到 window 上方便你在控制台看。 */
 globalThis.fxSize = () => JSON.stringify({ fx: fx.size(), stage: [stage.clientWidth, stage.clientHeight], dpr: devicePixelRatio, inner: [innerWidth, innerHeight] });
+/**
+ * ★ **把实例挂到 `globalThis`**（2026-10-11 加）：这样在控制台（或做视觉验收的人）可以直接
+ * 驱动它，不用等"每秒几颗"慢慢攒粒子：
+ *
+ *     fxDrive('blossom', 30)      // 先按 300% 规模离线推 30 秒，再冻住
+ *     fx.sprites()                // 看每张贴图里有多少不透明像素（全空 = 形状没烘上去）
+ *     fx.stats().meta.byKind      // 这一帧画了几种、各几个
+ *
+ * ⚠️ `fxDrive` 只推进物理与绘制、**不碰墙上的钟**，所以它不会影响 `tick()` 的 FPS 读数。
+ */
+globalThis.fx = fx;
+globalThis.fxDrive = (kind, secs = 30, scale = 3) => {
+  weather = kind; scaleK = scale; frozen = false;
+  fx.clear();                                  // 先清干净：免得两种粒子混在一起看不清形状
+  let tt = t;
+  const dt = 1 / 30;
+  for (let i = 0; i < Math.round(secs * 30); i += 1) { tt += dt; fx.frame(dt, tt, kind, scale); }
+  t = tt; frozen = true;                       // 冻住：形状定格，方便凑近看
+  $('freeze').classList.add('on');
+  paintK(); paintScale();
+  return fx.count;
+};
 
 /* ---------- 环境音 ----------
    ★ 和桌宠那边接线一样：手势解锁 → `switchTo()` 换底噪 → 每帧 `follow()` 排点缀
@@ -196,15 +250,27 @@ function tick(gapMs, costMs, physMs) {
 
 /* ---------- 主循环 ---------- */
 let lastT = performance.now();
+/**
+ * ★ **整条循环包在 try/catch 里，而且无论如何都要排下一帧**（2026-10-11 加）。
+ *
+ * 为什么非这样不可：上一棒这里**一帧抛错就整页死掉** —— 缺了 `fx.spend()` 时表现为
+ * "页面加载了、按钮能点、画面一片空"，而错误只在控制台里（没人看）。于是"这一版没验过"
+ * 拖了整整一棒。现在：抛错 → 红字写到页面上（`#err`）→ 继续跑下一帧。
+ * ⚠️ 别把 `requestAnimationFrame(loop)` 挪回 `tick()` 后面那一行之前 —— 挪回去就是把它变回会死的写法。
+ */
 function loop(now) {
-  const gap = now - lastT;
-  const dt = Math.min(0.05, gap / 1000);
-  lastT = now;
-  t += dt;
-  if (frozen) fx.draw();                       // 冻结：只重画（不推物理，形状定住）
-  else fx.frame(dt, t, weather, scaleK);
-  if (soundOn && weather !== 'off') ambience.follow(weather, dt, now / 1000);
-  tick(gap, fx.spend(), fx.spendPhys());
+  try {
+    const gap = now - lastT;
+    const dt = Math.min(0.05, gap / 1000);
+    lastT = now;
+    t += dt;
+    if (frozen) fx.draw();                       // 冻结：只重画（不推物理，形状定住）
+    else fx.frame(dt, t, weather, scaleK);
+    if (soundOn && weather !== 'off') ambience.follow(weather, dt, now / 1000);
+    tick(gap, fx.spend(), fx.spendPhys());
+  } catch (e) {
+    say('主循环抛错（画面可能停住）：' + ((e && e.message) || e));
+  }
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
@@ -260,12 +326,21 @@ paintScale();
 /** 上限提示：粒子数正在贴着引擎上限时把它标出来（不然"怎么点都不涨"会被当成卡住）。 */
 function paintCap() {
   const n = fx.count;
-  $('cap').textContent = n >= 230 ? '· 已到上限 240（HARD_CAP）' : '· 上限 240';
+  const lc = fx.layerCounts();
+  $('cap').textContent = (n >= 230 ? '· 已到上限 240（HARD_CAP）' : '· 上限 240')
+    + (lc.hasNear ? ` · 身后 ${lc.far} / 身前 ${lc.near}` : ' · ⚠只有一张画布（近层没接上）');
 }
 
 /* ---------- 工具 ---------- */
 const fr = $('freeze');
 fr.addEventListener('click', () => { frozen = !frozen; fr.classList.toggle('on', frozen); });
+/** 人形参照：关掉就只剩粒子（想干净地看形状时用）。 */
+const dm = $('dummyBtn');
+dm.addEventListener('click', () => {
+  const on = stage.querySelector('#dummy').style.display !== 'none';
+  stage.querySelector('#dummy').style.display = on ? 'none' : '';
+  dm.classList.toggle('on', !on);
+});
 $('clear').addEventListener('click', () => { fx.clear(); $('cnt').textContent = '0'; });
 $('flower').addEventListener('click', () => {
   const { W, H } = fx.size();                  // ★ 尺寸一律问 fx（页面不自己算，免得两套尺寸打架）

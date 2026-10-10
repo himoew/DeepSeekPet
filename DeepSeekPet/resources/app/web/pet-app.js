@@ -225,11 +225,16 @@ const ctl = createPet(
   {
     sfx,
     /**
-     * ★ **把"画粒子"这一步交给外面**（2026-10-10）：粒子物理与外观搬去了 `web\fx.js`，
-     * pet-core 那套老粒子（爱心/尘土/z/眼泪）**原样保留** —— 这里只在它自己那层画完之后，
-     * 再把外面那套画进同一个 `#fxCore`。见 `pet-core.js` 里 `renderFx` 的注释。
+     * ★ **`renderFx` 现在什么都不做**（2026-10-11 改）。
+     *
+     * 原来这里是 `() => fx.draw()`：粒子物理在 `stepWeather` 里推、却**在这一层又画了一遍**，
+     * 于是每帧白刷两次屏。2026-10-11 之后粒子是**两张 canvas**（`#fxCanvas` 在她身后、
+     * `#fxCanvasNear` 在她身前），**画在她身上的那一层绝不能在 pet-core 的渲染里画** ——
+     * 它必须排在 `svg` 后面才会盖住她（DOM 顺序 = 绘制顺序）。
+     * 所以：**唯一画粒子的地方是 `stepWeather` → `fx.frame()`**，这里保留钩子只是为了让
+     * pet-core 那条出口还在（老页面/别的宿主照样能传）。
      */
-    renderFx: () => fx.draw(),
+    renderFx: () => {},
     roam: prefs.roam,
     bounds: () => ({ W: innerWidth, H: innerHeight, floorY: floorAt(), S: .42 * prefs.scale }),
     onEvent: (kind, d) => onBody(kind, d),
@@ -2416,10 +2421,33 @@ const weatherNow = () => WEATHER[weather.mode] || WEATHER.off;
 /**
  * ★ **粒子系统**（物理、外观、渲染都在 `web\fx.js`）。
  *   · 2026-10-10：从 pet-core 搬出来，按现实轨迹重写（风场/景深/翻滚/雨丝）；
- *   · 2026-10-11：**从 SVG 换成整层 canvas**（用户实测"特效会导致卡顿"）。
- *     现在这里给它的是 `#fxCanvas`，**不是** `#fxCore`（那个 SVG 层只剩她自己的爱心/眼泪/z/尘土）。
+ *   · 2026-10-11：**从 SVG 换成 canvas**（用户实测"特效会导致卡顿"）；
+ *   · 2026-10-11 之后：**两张画布** —— `#fxCanvas` 在她**身后**（远景/中景），
+ *     `#fxCanvasNear` 在她**身前**（最近那一层 + 音符）。分流在 `fx.assignCanvas()` 里，
+ *     只看 `p.layer`。**给不给 canvasNear 都能跑**（不给 = 全在她身后，行为同上一版）。
  */
-const fx = createFx({ ctl, canvas: $('#fxCanvas'), report });
+const fx = createFx({ ctl, canvas: $('#fxCanvas'), canvasNear: $('#fxCanvasNear'), report });
+/**
+ * ★ **给 `?diag=1` 探针用的一行状态**（2026-10-11 加）。
+ *
+ * 为什么需要它：粒子改到 canvas 之后，"有没有在画"从窗口外面**完全看不出来** ——
+ * 页面上没有 DOM 节点可数（这本来就是 canvas 的好处）。上一棒就是因此只能靠"用户说看不见"
+ * 来回猜。现在把**两张画布的像素尺寸 + 这一帧画了几个形状 + 粒子总数 + 远近分流**压成一行，
+ * 由 `pet.html` 的探针每秒写进 `document.title`，从窗口外面就能读到。
+ */
+function fxDiagLine() {
+  try {
+    const st = fx.stats();
+    const lc = fx.layerCounts();
+    const sz = fx.size();
+    const near = sz.nearCanvas ? `${sz.nearCanvas.px.join('x')}/${(sz.nearCanvas.css || []).join('x')}` : '无';
+    return ` fx=${fx.count}画${st.n}(远${lc.far}/近${lc.near})`
+      + ` 层[px${sz.canvas ? sz.canvas.join('x') : '?'}/${(sz.css || []).join('x')} near:${near}]`
+      + ` 笔[s${st.meta.callStroke}/i${st.meta.callImage}]${sz.broken ? ' BROKEN' : ''}`;
+  } catch (e) { return ` fx=ERR(${(e && e.message) || e})`; }
+}
+/** `?diag=1` 的探针（`pet.html` 里那段）每秒取一次这一行。见 `fxDiagLine` 的注释。 */
+globalThis.petFxDiag = fxDiagLine;
 /** 她说话时从嘴边冒音符（页面在打字循环里调，见 `typeText`）。 */
 function noteAt(x, y) { fx.note(x, y); }
 /**
@@ -2495,7 +2523,8 @@ function stepWeather(dt) {
       try {
         report(`[天气] 窗口 ${innerWidth}x${innerHeight} · 屏 ${screen.width}x${screen.height} · dpr ${devicePixelRatio}`
           + ` · 粒子 ${fx.count} 颗 · 画了 ${st.n} 个形状（fill ${st.meta.fills}/stroke ${st.meta.strokes}/图 ${st.meta.images}，最长 ${st.meta.maxLen.toFixed(1)}px）`
-          + (xs ? ` · x 范围 ${xs[0]}~${xs[1]}（中位 ${xs[2]}）` : ''));
+          + (xs ? ` · x 范围 ${xs[0]}~${xs[1]}（中位 ${xs[2]}）` : '')
+          + fxDiagLine());
       } catch { /* ignore */ }
     }
   }

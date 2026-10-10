@@ -418,12 +418,19 @@ function toHex(v) {
  * 造一套粒子系统
  * ===================================================================================== */
 /**
- *   `ctl`     —— pet-core 的控制句柄（只要 `bounds`：`{ W, H }`）
- *   `canvas`  —— 粒子画布（`#fxCanvas`）。**没有它也能跑**（自检在 Node 里就没有画布）
- *   `report`  —— 出错/诊断上报
- *   `onPaint` —— 每帧画完回调一次（自检用，参数 `{ D, meta }`）
+ *   `ctl`        —— pet-core 的控制句柄（只要 `bounds`：`{ W, H }`）
+ *   `canvas`     —— **远层**画布（`#fxCanvas`，挂在她身后）。**没有它也能跑**（自检在 Node 里没有画布）
+ *   `canvasNear` —— **近层**画布（`#fxCanvasNear`，盖在她身前）。**不给就退化成"一张画布"**
+ *                   （全部粒子都画在 `canvas` 上，行为同上一版）
+ *   `report`     —— 出错/诊断上报
+ *   `onPaint`    —— 每帧画完回调一次（自检用，参数 `{ D, meta }`）
+ *
+ * ★ **为什么要两张画布**（2026-10-11 加）：canvas 和她的身体是**兄弟节点**，谁在前面只看 DOM 顺序 ——
+ * 一张画布只能选"全在她身后"或"全在她身前"，两种都不像：雨雪糊脸是后者、粒子被身体挡住是前者。
+ * 现在按 `PROFILE[kind].layers` 的**景深**分流：**最近的那一层画在身前的画布上，其余画在身后**
+ * （见 `assignCanvas()`）。粒子落在哪一层是生成时定好的（`p.layer`），之后一辈子不变。
  */
-export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
+export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {}) {
   /** 上一帧的时刻 / 音符节流计数 / 风场种子 / 发射余数（**都是这一套系统自己的状态**）。 */
   let last = null, noteTick = 0, seed = Math.random() * 100, cut = 0;
   /** 每一颗：位置、速度、时间、外观。`bx/by` 是"没有摆动时"的位置，风推的是它。 */
@@ -470,6 +477,21 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
   const calls = { stroke: 0, fill: 0, image: 0 };
   let ctl2 = ctx;
   if (onCtx && ctx) { try { ctl2 = onCtx(ctx) || ctx; } catch (e) { ctl2 = ctx; } }
+
+  /* ---------- 近层画布（可选） ---------- */
+  /**
+   * **近层画布**：跟远层同一套 API，只是挂在 DOM 里她的身体**后面**，所以画上去的粒子盖在她前面。
+   * `hasNear` 是唯一开关：**没给画布 / 没给出上下文 → 全部退化成一张**（自检、老宿主都不会因此出错）。
+   * `ncw/nch` 是近层自己的 CSS 尺寸（两张画布各自校对，任何一张脏了都不会把另一张带歪）。
+   */
+  let ctxN = null, ncw = 0, nch = 0;
+  if (canvasNear && typeof canvasNear.getContext === 'function') {
+    try { ctxN = canvasNear.getContext('2d'); } catch (e) { ctxN = null; }
+  }
+  const hasNear = !!(ctx && ctxN);
+  let ctl2N = ctxN;
+  if (hasNear && onCtx) { try { ctl2N = onCtx(ctxN) || ctxN; } catch (e) { ctl2N = ctxN; } }
+  if (!hasNear) ctxN = null;
 
   /* ---------- 配色（读 CSS 变量；只有真的变了才重建贴图） ---------- */
   const PAL_KEYS = ['snow', 'blossom', 'blossomInk', 'blossomHi', 'blossomCore', 'leafA', 'leafB', 'leafC', 'leafInk', 'rain', 'note', 'petalRoot'];
@@ -540,6 +562,17 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
       canvas.width = Math.round(W * d);
       canvas.height = Math.round(H * d);
     }
+    /**
+     * ★ **近层画布自己校对一次**（`W/H/dpr` 跟远层共用**同一份** `view()` 结果 —— 尺寸只有一个来源，
+     * 这就是上一棒"画布变 1×1"那条教训的用法：两张画布绝不许各算各的）。
+     */
+    if (hasNear) {
+      if (canvasNear.width !== Math.round(W * d) || canvasNear.height !== Math.round(H * d)) {
+        canvasNear.width = Math.round(W * d);
+        canvasNear.height = Math.round(H * d);
+      }
+      if (ncw !== W || nch !== H) { ncw = W; nch = H; }
+    }
     if (cw !== W || ch !== H || dpr !== d) { cw = W; ch = H; dpr = d; }
     return ctl2;
   }
@@ -572,6 +605,21 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
       H = (globalThis.innerHeight | 0) || 760;
     }
     return { W: Math.max(8, W | 0), H: Math.max(8, H | 0) };
+  }
+  /**
+   * **这一颗画在哪张画布上**（近层 = 盖在她身前，远层 = 落在她身后）。
+   *
+   * 规则只看一个字段：`p.layer`。`PROFILE` 里 `layers` 是**从远到近**排的（第一层最远、最后一层
+   * 最近最大最实），所以：
+   *   · 三种天气都是"**最后一层**去近层"，其余留在远层 —— 远景的细雨/小雪在她身后，最近的那层
+   *     从她面前划过（这正是"三层景深"该有的样子）；
+   *   · 没有近层画布（老宿主 / 自检）时一律返回 false → 全部画在远层，行为同上一版；
+   *   · 音符（`note`）**永远在近层**：它是从她嘴边冒出来的，被她的脸挡住就没意义了。
+   */
+  function assignCanvas(p) {
+    if (!hasNear) return false;
+    if (p.kind === 'note') return true;
+    return p.layer >= p.layerN - 1;
   }
 
   /* ---------- 生成 ---------- */
@@ -655,14 +703,19 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
   }
   /**
    * 页面要的"每帧发射"接口：**这种天气同时最多 `cap` 颗**（到顶就不发了，等它们落地）。
-   * ⚠️ `scale` 是"因为卡顿而减量"用的（页面按帧时间给，见 `stepWeather`）——
-   * 它削的是**上限**（= 减密度），但下面 `frame` 里同时也削了发射速率，
-   * 而且页面只会给 0.4~1，不会出现"雪突然一颗都没有"。
+   * ⚠️ `scale` 是"规模倍率"：桌宠按帧时间给 0.4~1（卡顿自动减量），验收页给到 3（堆粒子看渲染开销）。
+   * 它同时动**上限**（= 密度）与**发射速率**；下限夹在 0.4，不会出现"雪突然一颗都没有"。
    */
   function emit(kind, scale = 1) {
     const p = PROFILE[kind];
     if (!p) return;
-    const want = Math.max(1, Math.round(p.cap * clamp(scale, .4, 1)));
+    /**
+     * ⚠️ **上限钳制的上界是 3，不是 1**（2026-10-11 修）：验收页的「规模 300%」写着
+     * "放大当前天气的发射量与上限"，而 `clamp(scale, .4, 1)` 把上限焊死在 100% ——
+     * 于是堆不出高负载，A/B 数字（"600 颗 2.13ms"）根本量不出来。
+     * 下限 `.4` **不许动**：那是"卡顿时也一颗都不许没有"的保险；真天花板是 `HARD_CAP`。
+     */
+    const want = Math.max(1, Math.round(p.cap * clamp(scale, .4, 3)));
     let same = 0;
     for (const it of P) if (it.kind === kind) same += 1;
     if (same >= want) return;
@@ -790,6 +843,7 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
     d.x = p.x; d.y = p.y;
     d.spr = spr; d.rot = p.rot; d.sx = Math.max(.12, Math.abs(c)); d.sc = len / spr.len;
     d.branches = null; d.w = 0;
+    d.near = assignCanvas(p);
     D.push(d);
   }
   function drawFlower(p, op, d) {
@@ -800,6 +854,7 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
     d.x = p.x; d.y = p.y;
     d.spr = spr; d.rot = p.rot; d.sx = 1; d.sc = len / spr.len;
     d.branches = null; d.w = 0;
+    d.near = assignCanvas(p);
     D.push(d);
   }
   function drawLeaf(p, op, d) {
@@ -812,6 +867,7 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
     d.x = p.x; d.y = p.y;
     d.spr = spr; d.rot = p.roll; d.sx = clamp(Math.abs(c), .10, 1); d.sc = len / spr.len;
     d.branches = null; d.w = 0;
+    d.near = assignCanvas(p);
     D.push(d);
   }
   function drawRain(p, op, d) {
@@ -824,6 +880,7 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
     d.w = p.size; d.col = pal.rain;
     d.x2 = p.x - Math.cos(ang) * len; d.y2 = p.y - Math.sin(ang) * len;
     d.spr = null; d.sx = 1; d.branches = null;
+    d.near = assignCanvas(p);
     D.push(d);
   }
   function drawNote(p, op, d) {
@@ -833,6 +890,7 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
     d.font = `${(p.size * 1.25).toFixed(1)}px "Segoe UI Symbol","Noto Sans SC",system-ui,sans-serif`;
     d.glyph = p.glyph; d.rot = p.rot; d.sc = 1;
     d.spr = null; d.sx = 1; d.branches = null;
+    d.near = assignCanvas(p);
     D.push(d);
   }
   /**
@@ -873,13 +931,21 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
       d.rx = r * 1.7; d.ry = r * .28;
       d.w = 1.4 - 1.1 * k; d.col = pal.rain;
       d.spr = null; d.sx = 1; d.branches = null;
+      d.near = hasNear;                       // 溅落总是"打在她面前的地上"，永远在近层
       D.push(d);
     }
+    /** ★ 分流：每颗按 `assignCanvas()` 决定去近层还是远层（溅落已在上面直接标了近层）。 */
+    for (const d of D) if (d.near === undefined) d.near = assignCanvas(d);
   }
 
   /* ---------- 每帧：真的画到 canvas 上 ---------- */
-  function drawQ(g) {
+  /**
+   * `layer` = `'far'`（远层画布，她身后）或 `'near'`（近层画布，她身前）。
+   * 两个队列共用同一份绘制代码 —— 只有这一处知道"哪张画布"，别的都只认 `d.near`。
+   */
+  function drawQ(g, layer) {
     for (const d of D) {
+      if (!!d.near !== (layer === 'near')) continue;
       if (d.shape === 'snow') {
         const r = d.sc;
         g.setTransform(dpr, 0, 0, dpr, d.x * dpr, d.y * dpr);
@@ -921,6 +987,31 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
    * 每帧画一次。**没有 canvas（自检在 Node 里 / 老宿主）也不报错**，只是什么都不画 ——
    * 绘制清单照样算出来，所以自检仍然能查"形状/尺寸/翻转"。
    */
+  /**
+   * 在一张画布上"清干净 + 画这一层"。
+   * ⚠️ **清屏用的是这张画布自己的 CSS 尺寸**（`w`/`h`），不是另一张的 —— 两张画布各自校对
+   * （见 `ensureCanvas`），这里只是把"该清多大"传进来，避免某一张脏了把另一张也清错。
+   */
+  function paintLayer(ctxToUse, layer, w, h) {
+    if (!ctxToUse) return;
+    ctxToUse.setTransform(1, 0, 0, 1, 0, 0);
+    ctxToUse.globalAlpha = 1;
+    ctxToUse.globalCompositeOperation = 'source-over';
+    ctxToUse.clearRect(0, 0, w * dpr, h * dpr);
+    ctxToUse.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctxToUse.lineCap = 'round';
+    ctxToUse.lineJoin = 'round';
+    /**
+     * ⚠️ **不要开 `globalCompositeOperation = 'lighter'`**（2026-10-11 试过又撤掉了）。
+     * 加法混合看着"雪会发光"，但它把**主体的颜色吃掉了**：樱花的粉（#FF9EC4）加在
+     * 一屏透明像素上还算正常，可一旦花瓣和雪/雨重叠，粉色会先被自己叠成白色，
+     * 贴图上那点深粉描边和叶子会直接变成"一根毛边" —— 用户看到的就是"像划痕"。
+     * 现在用浏览器默认的 `source-over`（正常 alpha 叠加），`op` 直接给 `globalAlpha`。
+     */
+    drawQ(ctxToUse, layer);
+    ctxToUse.globalAlpha = 1;
+    ctxToUse.globalCompositeOperation = 'source-over';
+  }
   function draw() {
     refreshPal(false);
     const t0 = spender ? spender() : 0;
@@ -928,24 +1019,9 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
     const g = ensureCanvas();
     if (g && !drawBroken) {
       try {
-        g.setTransform(1, 0, 0, 1, 0, 0);
-        g.globalAlpha = 1;
-        g.globalCompositeOperation = 'source-over';
-        g.clearRect(0, 0, cw * dpr, ch * dpr);
-        g.setTransform(dpr, 0, 0, dpr, 0, 0);
-        g.lineCap = 'round';
-        g.lineJoin = 'round';
-        /**
-         * ⚠️ **不要开 `globalCompositeOperation = 'lighter'`**（2026-10-11 试过又撤掉了）。
-         * 加法混合看着"雪会发光"，但它把**主体的颜色吃掉了**：樱花的粉（#FF9EC4）加在
-         * 一屏透明像素上还算正常，可一旦花瓣和雪/雨重叠，粉色会先被自己叠成白色，
-         * 贴图上那点深粉描边和叶子会直接变成"一根毛边" —— 用户看到的就是"像划痕"。
-         * 现在用浏览器默认的 `source-over`（正常 alpha 叠加），`op` 直接给 `globalAlpha`。
-         */
         calls.stroke = 0; calls.fill = 0; calls.image = 0;
-        drawQ(g);
-        g.globalAlpha = 1;
-        g.globalCompositeOperation = 'source-over';
+        paintLayer(g, 'far', cw, ch);                       // ① 远层：她身后
+        if (hasNear && ctl2N) paintLayer(ctl2N, 'near', ncw, nch);   // ② 近层：她身前
       } catch (e) {
         if (!drawBroken) {
           drawBroken = true;
@@ -1012,6 +1088,16 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
 
   return {
     frame, step, draw, emit, note, spawn,
+    /**
+     * ★ **最近一帧"画"花了多少毫秒**（`spend()`）与**"物理+发射"花了多少**（`spendPhys()`）。
+     *
+     * ⚠️ 这两个接口**必须挂在返回值上**：上一棒把它们写在内部（`lastCost`/`lastPhys`），
+     * 却忘了挂出来 —— 验收页 `dev-weather\index.html` 每帧都调，于是页面**第一帧就抛
+     * `fx.spend is not a function`、整条 `requestAnimationFrame` 循环当场死掉**（画面全空）。
+     * 这就是"这一版始终没验过"的真因（不是浏览器缓存）。见文件头与 HANDOVER。
+     */
+    spend: () => lastCost,
+    spendPhys: () => lastPhys,
     get count() { return P.length; },
     /** 每种粒子各几颗（诊断/自检用）。 */
     kinds() {
@@ -1026,26 +1112,42 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
      */
     stats: () => ({ n: D.length, list: S.slice(), meta: { ...meta, byKind: { ...meta.byKind } } }),
     xs: xsOf,
+    /** 这一层（近/远）现在有几颗在画（诊断用：两张画布分流有没有生效，一眼看得出）。 */
+    layerCounts() {
+      let far = 0, near = 0;
+      for (const p of P) { if (assignCanvas(p)) near += 1; else far += 1; }
+      return { far, near, hasNear, total: P.length };
+    },
     clear() {
       P.length = 0; splash.length = 0; D.length = 0; poolN = 0;
       const g = ensureCanvas();
+      /** ⚠️ **两张画布都要清**：只清远层会让近层停着上一秒的花瓣（切天气时看得最清楚）。 */
       if (g) { try { g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw * dpr, ch * dpr); } catch (e) { /* ignore */ } }
+      if (hasNear && ctl2N) { try { ctl2N.setTransform(1, 0, 0, 1, 0, 0); ctl2N.clearRect(0, 0, ncw * dpr, nch * dpr); } catch (e) { /* ignore */ } }
     },
     /** 换主题之后页面调一次（重读 CSS 变量并重烘贴图）。 */
     repaintPalette() { refreshPal(true); },
     /**
      * ★ **尺寸诊断**：把"fx 眼里的尺寸 / 真正的画布像素 / 画布 CSS 尺寸 / dpr / 有没有 2D 上下文"
-     * 一次给全。画布尺寸这条链出问题时会表现成"粒子在算、但一个都看不见"（踩过一次：1×1）。
+     * 一次给全（**两张画布各报一行**）。画布尺寸这条链出问题时会表现成"粒子在算、但一个都看不见"
+     * （踩过一次：1×1）。
      */
     size() {
       const v = view();
       const src = ctl && ctl.bounds ? (typeof ctl.bounds === 'function' ? 'ctl.bounds()' : 'ctl.bounds') : '(无)';
+      const boxOf = (c) => (c ? {
+        px: [c.width, c.height],
+        css: c.getBoundingClientRect
+          ? [Math.round(c.getBoundingClientRect().width), Math.round(c.getBoundingClientRect().height)] : null,
+      } : null);
       return {
-        W: v.W, H: v.H, src,
+        W: v.W, H: v.H, src, dpr, hasCtx: !!ctx, broken: drawBroken,
         canvas: canvas ? [canvas.width, canvas.height] : null,
         css: canvas && canvas.getBoundingClientRect
           ? [Math.round(canvas.getBoundingClientRect().width), Math.round(canvas.getBoundingClientRect().height)] : null,
-        dpr, hasCtx: !!ctx, broken: drawBroken,
+        /** 近层（盖在她身前的那张）：`hasNear:false` = 只有一张画布，粒子全在她身后。 */
+        nearCanvas: hasNear ? boxOf(canvasNear) : null,
+        hasNear,
       };
     },
     /**

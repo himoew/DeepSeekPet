@@ -49,15 +49,18 @@ body.desk .floor{display:none}
 .stage{position:fixed; inset:0; touch-action:none}
 .stage svg{position:absolute; inset:0; width:100%; height:100%; display:block; overflow:visible}
 /**
- * ★ **天气粒子的画布**（2026-10-11，见 `web\fx.js` 的文件头）。
+ * ★ **天气粒子的两张画布**（2026-10-11，见 `web\fx.js` 的文件头）。
  *   · 和 `.stage svg` **同一套定位与坐标系**：`inset:0` + `width/height:100%`，
  *     而 canvas 的 `width/height` 属性由 `fx.js` 按 `innerWidth × dpr` 设（dpr 上限 2），
  *     所以 1 用户单位 = 1 CSS 像素，粒子的坐标和她的身体完全对齐；
- *   · **不设 z-index**：让它按 DOM 顺序压在 `svg` 上面（粒子在"她"前面飘），
- *     而小球 `#fx`、气泡（z-index:3+）都在它上面 —— 别在这里抢层级；
- *   · `pointer-events:none`：这一层铺满整屏，绝不能挡住点击穿透。
+ *   · **远层 `#fxCanvas` 排在 `svg` 前面、近层 `#fxCanvasNear` 排在 `svg` 后面** —— 谁在她身前
+ *     身后完全由这个 DOM 顺序决定（`position:absolute` 的元素按 DOM 顺序叠，同层里 z-index 一样）；
+ *   · **`pointer-events:none`**：两层都铺满整屏，绝不能挡住点击穿透。
+ *   ⚠️ 想调"粒子在她前面还是后面"，改的是 `pet.html` 里两个 canvas 的**位置**，
+ *      不是这里 —— 这里只管尺寸和穿透。
  */
 #fxCanvas{position:absolute; inset:0; width:100%; height:100%; display:block; pointer-events:none}
+#fxCanvasNear{position:absolute; inset:0; width:100%; height:100%; display:block; pointer-events:none}
 
 /* figure classes */
 .ink{stroke:var(--skin-ink)} .inkf{fill:var(--skin-ink)} .eye{stroke:var(--skin-eye)}
@@ -270,10 +273,13 @@ body.desk .floor{display:none}
  * ★ **天气的窗口内圈染色**（`pet-app.js` 的 `stepWeather` 每切一次天气就写 `--weather-tint`）。
  * 也是 `pointer-events:none` —— 这一层压在整张桌面上，绝不能挡住点击穿透。
  * **只在天气开着时才有颜色**（默认 transparent = 完全看不见、也不算一层视觉效果）。
+ * ⚠️ **`z-index:1` 是必需的**（2026-10-11）：它排在两个 canvas **后面**，不给 z-index 的话
+ * 它会压在**近层粒子上面**，把从她身前划过的雨丝/花瓣罩上一层色（`box-shadow` 是内圈 130px 的
+ * 大面积渐变，看着就是"粒子发灰"）。现在：远层粒子(0) < 染色(1) < 近层粒子(2) < 气泡(3+)。
  */
 #weatherTint{
   --weather-tint:transparent;
-  position:fixed; inset:0; pointer-events:none;
+  position:fixed; inset:0; pointer-events:none; z-index:1;
   transition:box-shadow .5s ease-out;
   box-shadow:inset 0 0 130px 26px var(--weather-tint);
 }

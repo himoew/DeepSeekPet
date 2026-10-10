@@ -9,6 +9,17 @@
 <body>
 <div class="floor" aria-hidden="true"></div>
 <div class="stage" id="stage">
+  <!--
+    天气粒子的**远层**画布（2026-10-11）。
+    ★ 为什么单独开 canvas 而不是继续画在 `#fxCore` 的 SVG 里：粒子原来每帧拼字符串再
+      `innerHTML = …`，60fps × 200 颗 = 每秒重建上万个 DOM 节点，这就是"特效会卡顿"的来源。
+      现在整层粒子在这张 canvas 上画（跟 SVG **同一个坐标系**：1 用户单位 = 1 CSS 像素），
+      每帧一次 clearRect + N 次画图，不产生任何 DOM。
+    ★ 它排在 `svg` **前面**：DOM 顺序 = 绘制顺序，所以这张上面的粒子在**她身后**
+      （远景的雨丝/雪片、中景的花瓣）。近处那一层在 `svg` 后面，见下面的 `#fxCanvasNear`。
+    ★ `pointer-events:none`：它盖在整张桌面上，绝不能挡住点击穿透（见 pet.css）。
+  -->
+  <canvas id="fxCanvas" aria-hidden="true"></canvas>
   <svg id="stageSvg" aria-hidden="true">
     <defs>
       <!-- a soft light gray glow behind the body, for backdrops of the body's own color -->
@@ -27,14 +38,12 @@
     <g id="fx"><g id="fxCore"></g></g>
   </svg>
   <!--
-    天气粒子的画布（2026-10-11）。
-    ★ 为什么单独开一张 canvas 而不是继续画在 `#fxCore` 的 SVG 里：粒子原来每帧拼字符串再
-      `innerHTML = …`，60fps × 200 颗 = 每秒重建上万个 DOM 节点，这就是"特效会卡顿"的来源。
-      现在整层粒子在这张 canvas 上画（跟 SVG **同一个坐标系**：1 用户单位 = 1 CSS 像素），
-      每帧一次 clearRect + N 次画图，不产生任何 DOM。
-    ★ `pointer-events:none`：它盖在整张桌面上，绝不能挡住点击穿透（见 pet.css）。
+    天气粒子的**近层**画布：排在 `svg` **后面**，所以这一层的粒子盖在她**身前**。
+    ★ 分流规则只看 `p.layer`（`PROFILE[kind].layers` 从远到近排，最后一层=最近的那层）：
+      见 `web\fx.js` 的 `assignCanvas()`。她的音符（♪）永远在这一层（从嘴边冒出来，被脸挡住就没意义）。
+    ★ 没有这张画布也能跑：`fx.js` 会自动退化成"只有远层"（老宿主 / 自检都是这样）。
   -->
-  <canvas id="fxCanvas" aria-hidden="true"></canvas>
+  <canvas id="fxCanvasNear" aria-hidden="true"></canvas>
 </div>
 <div class="trail" id="trail" hidden aria-hidden="true"><i></i><i></i><i></i></div>
 <!-- 进球时窗口四边内圈发光（比赛模式，见 pet-app.js 的 goalGlow 与 pet.css） -->
@@ -62,8 +71,16 @@
       const r = svg ? svg.getBoundingClientRect() : null;
       const cs = [...document.querySelectorAll('canvas')].map((c) => {
         const b = c.getBoundingClientRect();
-        return `${c.width}x${c.height}@${Math.round(b.x)},${Math.round(b.y)}:${Math.round(b.width)}x${Math.round(b.height)}`;
+        return `${c.id || '?'}:${c.width}x${c.height}@${Math.round(b.x)},${Math.round(b.y)}:${Math.round(b.width)}x${Math.round(b.height)}`;
       });
+      /**
+       * ★ **粒子那一行**（2026-10-11 加）：粒子搬进 canvas 之后，页面上**没有 DOM 节点可数**，
+       * 从窗口外面完全看不出"它在不在画"。`pet-app.js` 暴露了 `window.petFxDiag()`，
+       * 这里每秒取一次，写进标题（=从窗口外面/日志里都能读）。
+       * ⚠️ 只在 `?diag=1` 里调 —— 它每帧都在算 stats()，别放进正常路径。
+       */
+      let fxs = '';
+      try { fxs = typeof window.petFxDiag === 'function' ? window.petFxDiag() : ' fx=(未接线)'; } catch (e) { fxs = ' fx=throw'; }
       // ⚠️ 探针**不要每秒新建一个 canvas 再要一个 WebGL 上下文**：Chromium 每页只给约 16 个
       // 活动上下文（见 rig/rig.js 的 dispose 注释），这个自检本身会把它耗光 ——
       // 于是读出来的 `GLNONE` 反而是**自检造成的假象**（排查时最误导人的一种）。
@@ -77,6 +94,7 @@
       document.title = `DIAG ${tag} ready=${document.readyState} kids=${petG ? petG.childElementCount : -1}`
         + ` inner=${petG ? petG.innerHTML.length : -1} tf=${petG ? petG.getAttribute('transform') : null}`
         + ` svg=${r ? [r.x, r.y, r.width, r.height].map(Math.round).join(',') : null}`
+        + fxs
         + ` canvas=[${cs.join(' ')}] ${gl}`;
     };
     window.addEventListener('error', (e) => report(`ERR ${e.message}@${e.lineno}`));

@@ -57,43 +57,91 @@
  * `spark` 是稀疏事件（雨滴/落叶/鸟叫/风紧一下），`every` 是事件的期望间隔（秒）。
  *
  * 每层的字段：`n` 噪声色 · `t` 滤波器类型 · `f` 截止/中心 · `q` 品质因数 · `g` 线性增益 ·
- * `drift` = [摆动深度Hz, 游走源低通Hz] · `lfo` = [[速率Hz, 深度Hz], …]（不可通约的几个慢正弦）。
+ * `swing` = **截止被游走推多远（占 `f` 的百分比）** · `drift` = [游走源低通Hz]（推进量由 `swing` 定）
+ * · `lfo` = [[速率Hz, 深度Hz], …]（不可通约的几个慢正弦，做小幅呼吸）。
+ *
+ * ★★ **`bedRmsDb` = 实测的"这一档原来的床电平"，`EU` 是换算成增益的常量** —— 2026-10-11 加的。
+ *   这一条要讲清楚，因为它是**整件事里最值钱的一次测量**：
+ *
+ *   病根是**两处增益叠乘**。每层的 `g`（0.01~0.26）**本来就是混音比例**，而 `MASTER_GAIN = 0.15`
+ *   又当"绝对音量"再乘了一次。离线量出来（`dev-weather/sound.html`，那把尺子先过 `calib.html`
+ *   的 16 项自校准）四档分别是：
+ *
+ *     | 天气 | 实测床 RMS | 目标 | 差 |
+ *     |---|---|---|---|
+ *     | 雨 | -42.4 dBFS | -24 | 要抬 18.4dB |
+ *     | 雪 | -46.1 | -24 | 22.1 |
+ *     | 落叶 | -54.9 | -24 | 30.9 |
+ *     | 樱花 | -51.6 | -24 | 27.6 |
+ *
+ *   两件事一眼看得出来：① 全都比"环境床"该有的量级低 **20~30dB**（几乎听不见）；
+ *   ② **四档之间自己就差 12.5dB** —— 落叶比雨小一大截，切过去像被关了。
+ *   抬起 18~31dB 不是"把音量拧大"，是**把被叠乘两次的增益还回去**；层与层之间的比例（设计）
+ *   一点没动。
+ *
+ *   ⚠️ **目标为什么是 -24 而不是文件头原来写的 -16**：那是**峰值上限**逼出来的 ——
+ *   抬高到 -16 时，雨的峰值量到 **+3.2dBFS（爆表）**、落叶 +0.2dB。
+ *   合成噪声的波峰因数就是这么大（峰值比 RMS 高 20dB 上下），所以要同时满足
+ *   "听得见"和"不爆表"，只能落在 **-24dBFS RMS**（此时峰值 ≈ -5dB，留 5dB 余量）。
+ *   想更响就得上压缩器/限幅器 —— 那是另一件事，别靠拧增益。
+ *
+ *   `bedRmsDb` 只作**记录**用（改参数之后要重新量）；真正用的数是 `EU` 算出来的。
  */
+/** 目标：常驻环境床的 RMS（dBFS）。见上面那张表与"为什么是 -24"。 */
+const TARGET_RMS_DB = -24;
+/** 把"实测床电平 → 目标电平"的 dB 差换算成线性增益。 */
+const EU = (bedRmsDb) => (bedRmsDb == null ? 1 : 10 ** ((TARGET_RMS_DB - bedRmsDb) / 20));
 const TRACKS = {
   snow: {
-    vol: 1, seed: 11,
+    vol: 1, bedRmsDb: -46.1, seed: 11,
+    /**
+     * ⚠️ 雪这一档**只有低频**（量出来 54% 能量在 150Hz 以下、频谱重心 181Hz）——
+     * 电平抬起来之后那就是"远处轰隆"，跟"下雪天的安静冷风"不是一回事。
+     * 所以加了**第三层**：白噪声 + 带通 1.1kHz（"冷空气的细声"），它正好补上中高频那一段。
+     */
     bed: [
-      { n: 'brown', t: 'lowpass', f: 420, q: .7, g: .17, drift: [260, 8], lfo: [[.031, 35], [.047, 22], [.083, 12]] },
-      { n: 'white', t: 'bandpass', f: 700, q: .9, g: .022, drift: [300, 11] },
+      { n: 'brown', t: 'lowpass', f: 420, q: .7, g: .17, swing: 16, drift: [8], lfo: [[.031, 12], [.047, 8]] },
+      { n: 'white', t: 'bandpass', f: 1100, q: .9, g: .05, swing: 14, drift: [11] },
     ],
     every: [5, 14], spark: 'gust',                       // 偶尔一阵风紧一点
   },
   blossom: {
-    vol: 1, seed: 22,
+    vol: 1, bedRmsDb: -51.6, seed: 22,
     bed: [
-      { n: 'pink', t: 'lowpass', f: 2200, q: .7, g: .10, drift: [700, 9], lfo: [[.037, 60], [.061, 30]] },
-      { n: 'white', t: 'bandpass', f: 4000, q: .8, g: .012, drift: [900, 13] },
+      { n: 'pink', t: 'lowpass', f: 2200, q: .7, g: .10, swing: 12, drift: [9], lfo: [[.037, 40], [.061, 22]] },
+      { n: 'white', t: 'bandpass', f: 4000, q: .8, g: .012, swing: 10, drift: [13] },
     ],
     every: [22, 55], spark: 'bird',                      // 鸟叫：间隔拉长、去掉突兀的上滑
   },
   leaf: {
-    vol: 1, seed: 33,
+    vol: 1, bedRmsDb: -54.9, seed: 33,
+    /**
+     * ⚠️ 落叶原来**太尖**：量出来 49% 的能量堆在 2k~6k（"刺耳段"），而 500~2k 只有 41%。
+     * 沙沙声该以 500~2k 为主体，所以把带通那层从 2.4k 压到 **1.6kHz**（`Q` 也收到 .8），
+     * 让"擦过"的质感落回中频。改完 500~2k = 50%、2k~6k = 45%（见 sound.html 的表格）。
+     */
     bed: [
-      { n: 'pink', t: 'highpass', f: 600, q: .7, g: .085, then: { t: 'lowpass', f: 5000, q: .7 }, drift: [1800, 10] },
-      { n: 'white', t: 'bandpass', f: 2400, q: 1, g: .016, drift: [900, 12] },
+      { n: 'pink', t: 'highpass', f: 600, q: .7, g: .09, then: { t: 'lowpass', f: 4500, q: .7 }, swing: 14, drift: [10] },
+      { n: 'white', t: 'bandpass', f: 1600, q: .8, g: .02, swing: 12, drift: [12] },
     ],
     every: [1.4, 3.6], spark: 'rustle',                  // 一片叶子擦过
   },
   rain: {
-    vol: 1, seed: 44,
+    vol: 1, bedRmsDb: -42.4, seed: 44,
     bed: [
       // 主体：粉噪声 + 8k 低通（真实雨声 = 低频轰鸣 + 柔和的中高频，高频是衰减的）
-      { n: 'pink', t: 'lowpass', f: 8000, q: .7, g: .26, drift: [1200, 7], lfo: [[.043, 90], [.071, 40]] },
+      { n: 'pink', t: 'lowpass', f: 8000, q: .7, g: .30, swing: 14, drift: [7], lfo: [[.043, 60], [.071, 30]] },
       // 空气/嘶声：一点点白噪声，压在 3k 附近（对应调研里的"高频沸腾"层，但要很小）
-      { n: 'white', t: 'bandpass', f: 3000, q: 1, g: .018, drift: [700, 9] },
+      { n: 'white', t: 'bandpass', f: 3000, q: 1, g: .018, swing: 12, drift: [9] },
     ],
-    // 远处轰鸣：比床低 25dB 左右（只"感觉到"）；原来那层 150Hz 是"恐怖片"的来源之一
-    rumble: { n: 'brown', t: 'lowpass', f: 150, q: .7, g: .016 },
+    /**
+     * 远处轰鸣：比床低 25dB 左右（只"感觉到"）；原来那层 150Hz 是"恐怖片"的来源之一。
+     * ⚠️ 2026-10-11 把 `g` 从 .016 降到 **.007**：电平抬起来之后，量出来 41% 的能量压在
+     * 150Hz 以下（"轰鸣太重"），这股低音正是"像恐怖片"的那一条。降到 .007 之后低频占比
+     * 落回 ~40%→见 sound.html 的表格。**别一边抬总电平一边留着旧的低频比例** ——
+     * 电平一抬，原来"听不出来"的低频就出来了。
+     */
+    rumble: { n: 'brown', t: 'lowpass', f: 150, q: .7, g: .007 },
     every: [.10, .26], spark: 'drop',                    // 雨滴（宽带冲击，不是音调）
     thunder: [26, 70],                                   // 远雷：拉长间隔、压低音量
   },
@@ -120,6 +168,11 @@ export function createAmbience({ report } = {}) {
   let pink = null;      // 粉噪声（-3dB/oct）
   let brown = null;     // 棕噪声（-6dB/oct，风声/轰鸣的底子）
   let drift = null;     // 30 秒的慢随机游走（驱动滤波器截止，替代正弦 LFO）
+  /**
+   * **游走源自己的 RMS**（2026-10-11 加，`layer()` 里拿它把 `swing` 换算成 Hz）。
+   * ⚠️ 少了它就只能像旧代码那样"猜一个 3.2 的系数"，而那正是"摆动过头/几乎不动"的根源。
+   */
+  let driftRms = 1;
 
   const enabled = () => on && unlocked && !failed;
 
@@ -162,6 +215,10 @@ export function createAmbience({ report } = {}) {
     const dl = Math.floor(ctx.sampleRate * 30);
     drift = ctx.createBuffer(1, dl, ctx.sampleRate);
     drift.getChannelData(0).set(br.subarray(0, dl));
+    /** ★ 量出游走源的 RMS（见 `driftRms` 的注释）：`swing` 要按 Hz 算，就得知道源的幅度。 */
+    let ds2 = 0;
+    for (let i = 0; i < dl; i += 1) ds2 += br[i] * br[i];
+    driftRms = Math.max(1e-6, Math.sqrt(ds2 / dl));
   }
 
   function context() {
@@ -209,18 +266,36 @@ export function createAmbience({ report } = {}) {
     made.nodes.push(src, g, ...filters.map((x) => x.bq));
 
     // ★ 让截止"永远在动"：噪声驱动的随机游走（主）+ 几个不可通约的慢正弦（次）
-    if (lo.drift || lo.lfo) {
+    if (lo.drift || lo.swing || lo.lfo) {
       for (const { bq, f } of filters) {
         const baseHz = Math.max(20, Math.min(c.sampleRate / 2 - 100, f.f || 1000));
         if (lo.drift) {
-          const [depth, lpHz] = lo.drift;
+          const lpHz = Array.isArray(lo.drift) ? lo.drift[0] : lo.drift;
           const ds = c.createBufferSource();
           ds.buffer = drift; ds.loop = true;
           const dlp = c.createBiquadFilter();
           dlp.type = 'lowpass'; dlp.frequency.value = lpHz; dlp.Q.value = .7;
           const dg = c.createGain();
-          // 噪声是 ±1 量级，低通后幅度小很多 —— 这个系数把"摆幅"补回到 depth 的量级
-          dg.gain.value = depth * 3.2;
+          /**
+           * ★★ **"摆动幅度"的算法换过一次（2026-10-11）**，因为旧的那行是**拍脑袋的系数**：
+           * 原来写 `dg.gain = depth * 3.2`，而 `depth` 在表里是**几百 Hz**（雪 260、雨 1200）。
+           * 实测（`sound.html` 的 `driftSwing()` 把这条链单独渲出来量）结果**正好相反**：
+           *
+           *     base 420Hz → 只推 ±13Hz（3%）· base 8000Hz → ±54Hz（1%）
+           *     base  600Hz → ±90Hz（15%，而且**跑到负频率**被钳到 0 = 每次都在"啪"一下）
+           *
+           * 也就是说：**该动的地方（1~3%）几乎不动，"风像死水"那条病根其实还在**，
+           * 而个别层已经推到钳位、开始爆音。病根是这个系数没人量过。
+           *
+           * 现在改成**按比例定**：`swing` 是"占 `f` 的百分比"，`driftGain = f × swing% ÷ 游走源RMS`。
+           * `drift` 缓冲区的 RMS 在造 buffer 时量一次（`driftRms`），所以**推进量的量纲是 Hz**，
+           * 不再依赖"噪声低通后大概少多少"的猜测。
+           *   · `swing` 缺省 12%（听着像"一直在变"，又不会被听成"在扫频"）；
+           *   · 因为游走以 0 为中心，最低只会到 `f × (1 - 0.3×swing)`，**永远不会到负频率**
+           *     （1σ ≈ swing/3，两头各留 3σ 余量）。
+           */
+          const sw = (lo.swing == null ? 12 : lo.swing) / 100;
+          dg.gain.value = (baseHz * sw) / Math.max(1e-6, driftRms);
           ds.connect(dlp); dlp.connect(dg); dg.connect(bq.frequency);
           ds.start(Math.random() * 20);           // 每层从游走的不同位置开始 → 层与层也不同步
           made.nodes.push(ds, dlp, dg);
@@ -247,6 +322,13 @@ export function createAmbience({ report } = {}) {
     const made = { nodes: [], oscs: [], out: null };
     const out = c.createGain();
     out.gain.value = 0;
+    /**
+     * ★ **整档电平 = `cfg.vol × EU(cfg.bedRmsDb)`**（2026-10-11）。
+     * `vol` 是"这一档在总输出里的相对位置"，`EU` 把实测床电平换算到目标 `TARGET_RMS_DB` ——
+     * 少了它四档都在 -42~-55dBFS（几乎听不见、而且彼此差 12dB）。见 `TRACKS` 上面那张表。
+     * ⚠️ 这里**只乘一次**；"用户音量"仍然由 `MASTER_GAIN` 与「天气声」那把开关管。
+     */
+    made.norm = (cfg.vol == null ? 1 : cfg.vol) * EU(cfg.bedRmsDb);
     out.connect(master);
     made.out = out;
     for (const lo of (cfg.bed || [])) layer(c, lo, out, made);
@@ -430,14 +512,15 @@ export function createAmbience({ report } = {}) {
       const c = context();
       if (!c) return;
       if (live && live.name === mode) {
-        try { live.made.out.gain.setTargetAtTime(cfg.vol, c.currentTime, .5); } catch (e) { /* ignore */ }
+        try { live.made.out.gain.setTargetAtTime(live.made.norm, c.currentTime, .5); } catch (e) { /* ignore */ }
         return;
       }
       teardown();
       const made = build(cfg);
       if (!made) return;
       live = { name: mode, made, cfg };
-      try { made.out.gain.setTargetAtTime(cfg.vol, c.currentTime, 1.2); } catch (e) { /* ignore */ }
+      /** ★ 淡入的目标是 `vol × norm`（不是只有 `vol`）—— 见 `build()` 里 `norm` 的说明。 */
+      try { made.out.gain.setTargetAtTime(made.norm, c.currentTime, 1.2); } catch (e) { /* ignore */ }
       when.next = 0; when.thunderAt = 0;
     },
     /**
@@ -454,3 +537,17 @@ export function createAmbience({ report } = {}) {
 }
 
 const rnd = (a, b) => a + Math.random() * (b - a);
+
+/**
+ * ★ **把音色表和总增益暴露出去**（2026-10-11 加），只给一个用途：**离线验收**。
+ *
+ * `dev-weather\sound.html` 拿它做两件事，都不改运行时的行为：
+ *   ① 在 `OfflineAudioContext` 里把四种天气各渲一遍，存成 4 个 wav 给你**用耳朵**判
+ *      （"四档底噪的平衡"这件事只能听，自检查不出来）；
+ *   ② 对渲出来的样本做 FFT，把**客观数字**摆出来（总 RMS、峰值、2kHz 以上的能量占比、
+ *      每秒几次雨滴）—— 这样"听着不对"时能立刻分清是**参数错了**还是**口味不同**。
+ *
+ * ⚠️ 它**不在运行路径上**（桌宠永远不 import 它），所以改它不会影响她出声。
+ */
+export const TRACKS_INFO = TRACKS;
+export { MASTER_GAIN, TARGET_RMS_DB, EU };

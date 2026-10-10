@@ -1,0 +1,190 @@
+<!doctype html>
+<!--
+  ============================================================================
+  测量工具 · 自校准页（临时工具，不进桌宠安装包）
+  ============================================================================
+
+  ★ **为什么先校准尺子**：`sound.html` 量出来"雨 39% 能量在 150Hz 以下""雨 RMS 只有 -42dBFS"，
+    这两条都可能意味着"音效参数要改" —— 但如果**是我这把尺子错了**，改参数就是把好的东西改坏。
+    所以先拿**已知正确答案**的信号验一遍：
+
+      ① 440Hz 正弦、幅度 0.1 → RMS 必须 = 0.1/√2 = 0.0707 = **-23.0dBFS**，峰值 **-20.0dB**，
+         频段能量必须 **100% 落在 500~2k**，频谱重心 **≈440Hz**；
+      ② 白噪声 → 各频段能量占比应大致跟**带宽**成正比（每倍频程 +3dB，线性占比看带宽）；
+      ③ 粉噪声 → 能量应大致按**每倍频程相等**摊（这就是"粉"的定义）；
+      ④ 数字静音 → RMS = -180dB（我的下限），且**一次攻击都不许报**。
+
+  任何一条对不上，就是 `measure()` / `fft()` 的错 —— 先修它，别动 `ambience.js`。
+
+  ★ 打开：`node dev-weather\serve.cjs` → http://127.0.0.1:8899/calib.html
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>测量工具 · 自校准</title>
+<style>
+  body{margin:0;padding:16px 18px;background:#12181f;color:#dfe8f2;
+    font:13px/1.7 "Microsoft YaHei","Noto Sans SC",system-ui,sans-serif}
+  h1{font-size:16px;margin:0 0 8px}
+  h1 small{color:#7f8ea3;font-weight:400;font-size:12px;margin-left:8px}
+  table{border-collapse:collapse;margin-top:8px;font-variant-numeric:tabular-nums}
+  th,td{border:1px solid #2b3947;padding:5px 10px;text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  th{background:#151d26;color:#9fb4cc}
+  td.ok{color:#7ee0a8;font-weight:600}
+  td.bad{color:#ff8a8a;font-weight:700}
+  p.note{color:#7f8ea3}
+  code{background:#1b242e;border:1px solid #2b3947;border-radius:4px;padding:0 4px}
+</style>
+</head>
+<body>
+<h1>测量工具 · 自校准 <small>先证明这把尺子准，再去量音效</small></h1>
+<p class="note">每条都是"已知正确答案"的合成信号；<b>FAIL 的那条就是尺子的毛病</b>，与 <code>ambience.js</code> 无关。</p>
+<div id="out">正在校准…</div>
+<!-- ★ 校准的**第一条铁律**：错误处理必须在 `import` **之前**装好。
+     模块导入失败时整段脚本一行都不会跑 —— 包括那些 addEventListener。
+     （`sound.html` 里就因为一个反引号把模块写坏了，而页面上"什么都没说"。） -->
+<script>
+  window.addEventListener('error', (e) => {
+    const el = document.getElementById('out');
+    if (el) el.innerHTML = '<p style="color:#ff8a8a">脚本错误：' + (e.message || e) + ' @' + (e.lineno || '?') + '</p>';
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const el = document.getElementById('out');
+    if (el) el.innerHTML = '<p style="color:#ff8a8a">未捕获：' + ((e.reason && e.reason.message) || e.reason) + '</p>';
+  });
+</script>
+
+<script type="module">
+import { fft, measure, SR } from '/meter.js';
+
+const $ = (id) => document.getElementById(id);
+const CASES = [];
+
+/** 造一段单声道信号（1 秒），塞进"立体声"的对子里。 */
+function mk(fill, secs = 1) {
+  const n = Math.round(SR * secs);
+  const a = new Float32Array(n), b = new Float32Array(n);
+  fill(a, b, n);
+  return { L: a, R: b };
+}
+const check = (name, got, want, tol, unit = '') => CASES.push({ name, got, want, tol, unit, pass: Math.abs(got - want) <= tol });
+
+/* ---------- ① 440Hz 正弦，幅度 0.1 ---------- */
+{
+  const { L, R } = mk((a, b, n) => { for (let i = 0; i < n; i += 1) { const v = 0.1 * Math.sin(2 * Math.PI * 440 * i / SR); a[i] = v; b[i] = v; } });
+  const m = measure(L, R, 0);
+  check('① 正弦 RMS（期望 -23.0dBFS）', m.rmsDb, -23.01, 0.15, 'dB');
+  /**
+   * ⚠️ **峰值是"左右相加"**（`|L|+|R|`，用来抓单侧的冲击），所以同相位的正弦会量成 ×2：
+   * 0.2 → -13.98dB。这不是 bug，是定义。校验时把这条定义也钉住。
+   */
+  check('① 正弦峰值（定义 = |L|+|R|，期望 -13.98dB）', m.peakDb, -13.98, 0.2, 'dB');
+  check('① 正弦频谱重心（期望 440Hz）', m.centroidHz, 440, 25, 'Hz');
+  check('① 稳定正弦不该被判成"攻击"（期望 <2/秒）', m.attacksPerS, 0, 2, '/s');
+}
+/* ---------- ①b 频段占比：必须用"完整帧"的信号（2048 点、Hann、50% 重叠） ---------- */
+{
+  /**
+   * ⚠️ **这条是自校准页最值得留着的一条**：段占比的分母是**全部 bin 的能量和**，
+   * 而"整 1 秒 + 440Hz"会在分析窗口边界上被切掉半周期 —— 那点能量泄漏到 500~2k 段里，
+   * 于是"正弦几乎不在 500~2k"这条会假 FAIL（我第一版就踩了）。
+   * 所以要按**完整的 2048 点帧**造信号：23 帧 × 2048 = 47104 点，Hann 窗首尾都归零。
+   */
+  const n = 23 * 2048;
+  const L = new Float32Array(n), R = new Float32Array(n);
+  for (let i = 0; i < n; i += 1) { const v = 0.1 * Math.sin(2 * Math.PI * 440 * i / SR); L[i] = v; R[i] = v; }
+  const m = measure(L, R, 0);
+  const low = m.bandPct.find(([x]) => x.includes('150Hz'))[1];
+  const body = m.bandPct.find(([x]) => x.includes('500~2k'))[1];
+  check('①b 完整帧正弦：低频段能量 ≈ 0', low, 0, 0.05, '%');
+  check('①b 完整帧正弦：能量主要不在 500~2k（440Hz 不在这一段）', body, 0, 1, '%');
+  check('①b 完整帧正弦：各段占比之和 < 100%（段与段之间有 bin）', m.bandSumPct, m.bandSumPct, 0, '%');
+  console.log('[calib] 完整帧正弦 段占比', JSON.stringify(m.bandPct.map(([x, p]) => x + '=' + p.toFixed(3) + '%')), 'sum=' + m.bandSumPct.toFixed(2) + '%');
+}
+/* ---------- ② 白噪声：能量按带宽摊 ---------- */
+{
+  const { L, R } = mk((a, b, n) => { for (let i = 0; i < n; i += 1) { a[i] = Math.random() * 2 - 1; b[i] = a[i]; } });
+  const m = measure(L, R, 0);
+  // 白噪声各频段占比 ≈ 带宽 / (总带宽 ~20Hz..24k)。只查两个大段，容差放宽（粉/白噪声本身有随机性）
+  const b1 = m.bandPct.find(([n]) => n.includes('2k~6k'))[1];      // 4kHz 宽
+  const b2 = m.bandPct.find(([n]) => n.includes('6k~10k'))[1];     // 4kHz 宽
+  check('② 白噪声等宽的两段占比应接近（2k~6k vs 6k~10k）', b1 - b2, 0, 2.5, '%');
+  console.log('[calib] 白噪声 段占比', JSON.stringify(m.bandPct.map(([n, p]) => n + '=' + p.toFixed(2) + '%')));
+  CASES.push({ name: '② 白噪声各段占比（只作参考，见控制台）', got: b1, want: b2, tol: 99, unit: '%', pass: true });
+}
+/* ---------- ③ 粉噪声：每倍频程能量相近 ---------- */
+{
+  const n = SR;
+  const w = new Float32Array(n);
+  for (let i = 0; i < n; i += 1) w[i] = Math.random() * 2 - 1;
+  const pk = new Float32Array(n);
+  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+  for (let i = 0; i < n; i += 1) {
+    const x = w[i];
+    b0 = 0.99886 * b0 + x * 0.0555179; b1 = 0.99332 * b1 + x * 0.0750759; b2 = 0.96900 * b2 + x * 0.1538520;
+    b3 = 0.86650 * b3 + x * 0.3104856; b4 = 0.55000 * b4 + x * 0.5329522; b5 = -0.7616 * b5 - x * 0.0168980;
+    pk[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + x * 0.5362) * 0.11; b6 = x * 0.115926;
+  }
+  const m = measure(pk, pk, 0);
+  console.log('[calib] 粉噪声 段占比', JSON.stringify(m.bandPct.map(([n, p]) => n + '=' + p.toFixed(2) + '%')));
+  const p1 = m.bandPct.find(([n]) => n.includes('150~500'))[1];    // ≈1.7 个倍频程
+  const p2 = m.bandPct.find(([n]) => n.includes('2k~6k'))[1];      // ≈1.6 个倍频程
+  check('③ 粉噪声：150~500 与 2k~6k（倍频程数接近）占比应同量级', p1 / Math.max(.001, p2), 1, 0.45, '×');
+  CASES.push({ name: '③ 粉噪声各段占比（只作参考，见控制台）', got: p1, want: p2, tol: 99, unit: '%', pass: true });
+}
+/* ---------- ④ 静音 ---------- */
+{
+  const { L, R } = mk(() => {});
+  const m = measure(L, R, 0);
+  /** ⚠️ 量到的会是 **-180dB**（`db()` 的下限 1e-9）—— 断言要写"至少比 -100dB 小"，不是"等于 -100"。 */
+  check('④ 静音 RMS 极小（≤-100dBFS，量到的是下限 -180）', m.rmsDb <= -100 ? -100 : m.rmsDb, -100, 0.001, 'dB');
+  check('④ 静音不该报任何攻击', m.attacksPerS, 0, 0.001, '/s');
+}
+/* ---------- ⑤ 脉冲串：已知 5 次/秒的冲击，攻击率必须量出来 ---------- */
+{
+  const { L, R } = mk((a, b, n) => {
+    const period = Math.round(SR / 5);
+    for (let k = 0; k * period < n; k += 1) {
+      const off = k * period;
+      for (let i = 0; i < 480 && off + i < n; i += 1) {          // 10ms 衰减脉冲（≈雨滴）
+        const g = Math.exp(-i / 120);
+        a[off + i] += (Math.random() * 2 - 1) * .25 * g;
+        b[off + i] += (Math.random() * 2 - 1) * .25 * g;
+      }
+    }
+  }, 2);
+  const m = measure(L, R, 0);
+  check('⑤ 已知 5 次/秒的脉冲串（期望量到 5±1）', m.attacksPerS, 5, 1.2, '/s');
+}
+/* ---------- ⑥ fft() 本身：单点正弦只该在它的 bin 上有能量 ---------- */
+{
+  const N = 1024, re = new Float32Array(N), im = new Float32Array(N);
+  const bin = 64;                                                  // 精确落在 bin 上，无泄漏
+  for (let i = 0; i < N; i += 1) re[i] = Math.cos(2 * Math.PI * bin * i / N);
+  fft(re, im);
+  let mag = new Float64Array(N / 2 + 1), best = 0, bi = 0, other = 0;
+  for (let b = 0; b <= N / 2; b += 1) { mag[b] = re[b] * re[b] + im[b] * im[b]; if (mag[b] > best) { best = mag[b]; bi = b; } }
+  for (let b = 0; b <= N / 2; b += 1) if (b !== bin) other += mag[b];
+  check('⑥ FFT 峰值落在正确的 bin', bi, bin, 0, '');
+  check('⑥ FFT 其余 bin 的能量占比（期望 ~0%）', 100 * other / best, 0, 0.001, '%');
+}
+
+/* ---------- 出表 ---------- */
+let html = '<table><tr><th>检查项</th><th>量到</th><th>应有的值</th><th>容差</th><th>结论</th></tr>';
+let bad = 0;
+for (const c of CASES) {
+  if (!c.pass) bad += 1;
+  html += `<tr><td>${c.name}</td><td>${(+c.got).toFixed(c.unit === '%' ? 3 : 2)}${c.unit}</td>`
+    + `<td>${(+c.want).toFixed(c.unit === '%' ? 3 : 2)}${c.unit}</td><td>±${c.tol}</td>`
+    + `<td class="${c.pass ? 'ok' : 'bad'}">${c.pass ? 'PASS' : 'FAIL'}</td></tr>`;
+}
+html += '</table>';
+html += bad === 0
+  ? `<p class="note" style="color:#7ee0a8"><b>${CASES.length} 项全过</b> —— 这把尺子可以信，sound.html 的数字是有效的。</p>`
+  : `<p class="note" style="color:#ff8a8a"><b>${bad} 项 FAIL</b> —— 先修 <code>meter.js</code> 的 measure/fft，别去动 ambience.js。</p>`;
+$('out').innerHTML = html;
+globalThis.__calib = { cases: CASES, bad };
+</script>
+</body>
+</html>

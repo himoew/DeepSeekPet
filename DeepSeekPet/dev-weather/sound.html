@@ -1,0 +1,564 @@
+<!doctype html>
+<!--
+  ============================================================================
+  天气环境音 · 离线验收页（临时工具，不进桌宠安装包）
+  ============================================================================
+
+  ★ 为什么要有它：`ambience.js` 的自检只证明"**结构**对"（造了噪声、几层滤波、排了事件），
+    **听感**它一点都测不了 —— 而上一棒最后一项没做完的正是"四档底噪的平衡还没人听过"。
+    我（AI）这边没有耳朵，所以这一页干两件事，把"只能听"的那部分交给你、把"能算"的那部分交给我：
+
+      ① **渲出来给你听**：用 `OfflineAudioContext` 把四种天气各渲 20 秒（**跟运行时同一套逻辑**：
+         同样的噪声、同样的滤波器、同样的 `spark()` 事件），做成 wav，页面上直接播、也能下载；
+      ② **把客观数字摆出来**：对渲出来的样本做 FFT，量
+
+           · 总 RMS / 峰值      —— 是不是"太大声"（设计目标 ≈ -16dBFS RMS）
+           · 各频段能量占比      —— "像油锅"= 2~6kHz 太重、"恐怖片"= 低频太重
+           · 每秒事件数 / 事件峰值出现次数 —— 雨滴密不密、雨滴有没有盖过床
+           · 左右声道能量         —— 声场有没有真的分开
+
+  ★ 怎么打开：跟验收页一样，在 DeepSeekPet 目录里
+        node dev-weather\serve.cjs
+    然后开 http://127.0.0.1:8899/sound.html
+
+  ⚠️ 它**不改产品代码**：只读 `web\ambience.js` 导出的 `TRACKS_INFO`（音色表）和 `MASTER_GAIN`，
+    自己重写了一遍同构的渲染链。所以"你听到的这一版"就是桌宠里那一版 —— 参数来自同一张表。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<base href="../resources/app/web/">
+<title>天气环境音 · 离线验收</title>
+<style>
+  :root{--line:#2b3947;--bg:#12181f;--panel:#0d1218;--ink:#dfe8f2;--dim:#7f8ea3}
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font:13px/1.6 "Microsoft YaHei","Noto Sans SC",system-ui,sans-serif}
+  #wrap{padding:14px 16px 40px;max-width:1180px}
+  h1{margin:0 0 4px;font-size:16px}
+  h1 small{font-weight:400;color:var(--dim);font-size:12px;margin-left:8px}
+  h2{font-size:13px;margin:18px 0 6px;color:#9fb4cc;font-weight:600}
+  p.note{color:var(--dim);margin:6px 0}
+  code{background:#1b242e;border:1px solid var(--line);border-radius:4px;padding:0 4px}
+  button{font:inherit;padding:6px 12px;border-radius:8px;cursor:pointer;
+    border:1px solid var(--line);background:#1b242e;color:var(--ink)}
+  button:hover:not(:disabled){border-color:#3f6a8c;background:#22303c}
+  button:disabled{opacity:.5;cursor:default}
+  button.on{background:#1f6feb;border-color:#4a8ff7;color:#fff;font-weight:600}
+  #bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0 4px}
+  #prog{color:var(--dim)}
+  table{border-collapse:collapse;width:100%;margin-top:8px;font-variant-numeric:tabular-nums}
+  th,td{border:1px solid var(--line);padding:5px 8px;text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  th{background:#151d26;color:#9fb4cc;font-weight:600}
+  td.warn{color:#ffcf6b;font-weight:600}
+  td.good{color:#7ee0a8}
+  .card{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:10px 0;background:var(--panel)}
+  .card h3{margin:0 0 6px;font-size:14px}
+  .card .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .card audio{height:30px;vertical-align:middle}
+  .card a{color:#79b8ff}
+  .bar{display:inline-block;height:9px;background:#1f6feb;border-radius:3px;vertical-align:middle}
+  .bar.low{background:#c8992f}
+  .bar.hi{background:#c05a4a}
+  #err{color:#ff8a8a;white-space:pre-wrap;margin-top:10px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>天气环境音 · 离线验收 <small>同一份 <code>web/ambience.js</code> 的音色表，离线渲成 wav</small></h1>
+  <p class="note">
+    点「开始渲染」→ 四种天气各渲 20 秒（几秒钟就完）→ 每档出现播放器和下载链接。
+    <b>请重点听</b>：① 底噪音量合不合适（设计目标 ≈ -16dBFS）；
+    ② 雨还像不像"油锅"；③ 风是不是"死水"（一直不变）；④ 有没有低频轰鸣压着（"恐怖片"感）。
+    表格里是同一段音频的**客观数字**，用来分清"参数真的错了"还是"口味不同"。
+  </p>
+
+  <div id="bar">
+    <button id="go">开始渲染</button>
+    <label>时长 <select id="secs">
+      <option value="10">10 秒</option>
+      <option value="20" selected>20 秒</option>
+      <option value="30">30 秒</option>
+    </select></label>
+    <button id="playAll">依次试听</button>
+    <span id="prog">未开始</span>
+  </div>
+
+  <h2>客观数字（同一段渲染的测量值）</h2>
+  <div id="tableBox"><p class="note">还没渲染。</p></div>
+
+  <h2>试听</h2>
+  <div id="cards"></div>
+  <div id="err"></div>
+</div>
+
+<script type="module">
+import { TRACKS_INFO as TRACKS, MASTER_GAIN, TARGET_RMS_DB, EU } from './ambience.js';
+import { measure, BANDS, SR } from '/meter.js';
+
+const $ = (id) => document.getElementById(id);
+const say = (m) => { $('prog').textContent = m; };
+const err = (m) => { $('err').textContent = String(m); };
+addEventListener('error', (e) => err('JS 错误：' + e.message + ' @' + e.lineno));
+addEventListener('unhandledrejection', (e) => err('未捕获：' + ((e.reason && e.reason.message) || e.reason)));
+
+/**
+ * ★ **采样率从 `meter.js` 来**（那边写死 48000，跟桌宠 Electron 的默认输出一致）——
+ * 渲染和测量**必须是同一个采样率**，否则"谱段占比"是拿 44.1k 的坐标去量 48k 的信号。
+ */
+const rnd = (a, b) => a + Math.random() * (b - a);
+
+/* =====================================================================================
+ * ① 离线渲染：跟 ambience.js 的运行时链**同构**（同样的噪声、滤波器、事件分配）
+ * ===================================================================================== */
+/** 造四种噪声底子（跟 `makeBuffers()` 同一套算法；只是这里给 OfflineAudioContext 用）。 */
+function makeBuffers(c) {
+  const len = Math.floor(c.sampleRate * 2);
+  const w = new Float32Array(len);
+  for (let i = 0; i < len; i += 1) w[i] = Math.random() * 2 - 1;
+
+  const br = new Float32Array(len);
+  let last = 0;
+  for (let i = 0; i < len; i += 1) { last = (last + 0.02 * w[i]) / 1.02; br[i] = last * 3.5; }
+
+  const pk = new Float32Array(len);
+  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+  for (let i = 0; i < len; i += 1) {
+    const x = w[i];
+    b0 = 0.99886 * b0 + x * 0.0555179;
+    b1 = 0.99332 * b1 + x * 0.0750759;
+    b2 = 0.96900 * b2 + x * 0.1538520;
+    b3 = 0.86650 * b3 + x * 0.3104856;
+    b4 = 0.55000 * b4 + x * 0.5329522;
+    b5 = -0.7616 * b5 - x * 0.0168980;
+    pk[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + x * 0.5362) * 0.11;
+    b6 = x * 0.115926;
+  }
+  const mk = (arr) => { const b = c.createBuffer(1, arr.length, c.sampleRate); b.getChannelData(0).set(arr); return b; };
+  const driftArr = new Float32Array(Math.floor(c.sampleRate * 30));
+  driftArr.set(br.subarray(0, driftArr.length));
+  /** ★ 游走源自己的 RMS（跟运行时一样量一次）：`swing` 按 Hz 换算要用它。 */
+  let ds2 = 0;
+  for (let i = 0; i < driftArr.length; i += 1) ds2 += driftArr[i] * driftArr[i];
+  return { white: mk(w), brown: mk(br), pink: mk(pk), drift: mk(driftArr), driftRms: Math.max(1e-6, Math.sqrt(ds2 / driftArr.length)) };
+}
+
+/**
+ * 造一层（噪声 → 滤波(可两层) → 增益 → 目标）。
+ * ★ **跟运行时的 `layer()` 逐行对齐**（噪声、滤波、`Q ≤ 5`、以及**摆动幅度的算法**）：
+ *   `swing` = 占截止的百分比，推进增益 = `f × swing% ÷ 游走源RMS`。
+ *   ⚠️ 这一页的**价值全在"跟运行时一致"**上：两边一旦不同步，量出来的数字就不代表她实际听到的那一版。
+ *   （2026-10-11 就是因为两边都写着"depth × 3.2"这种拍脑袋系数，才一直没人发现摆动其实只有 1~3%。）
+ */
+function layer(c, buf, lo, dest, baseT) {
+  const src = c.createBufferSource();
+  src.buffer = buf[lo.n] || buf.white; src.loop = true;
+  let node = src;
+  const filters = [];
+  for (const f of [lo, lo.then].filter(Boolean)) {
+    const bq = c.createBiquadFilter();
+    bq.type = f.t;
+    bq.frequency.value = Math.max(20, Math.min(c.sampleRate / 2 - 100, f.f || 1000));
+    bq.Q.value = Math.max(0.0001, Math.min(5, f.q == null ? .7 : f.q));
+    node.connect(bq); node = bq;
+    filters.push({ bq, f });
+  }
+  const g = c.createGain();
+  g.gain.value = lo.g == null ? .1 : lo.g;
+  node.connect(g); g.connect(dest);
+  src.start(baseT);
+  if (lo.drift || lo.swing || lo.lfo) {
+    for (const { bq, f } of filters) {
+      if (lo.drift) {
+        const lpHz = Array.isArray(lo.drift) ? lo.drift[0] : lo.drift;
+        const ds = c.createBufferSource();
+        ds.buffer = buf.drift; ds.loop = true;
+        const dlp = c.createBiquadFilter();
+        dlp.type = 'lowpass'; dlp.frequency.value = lpHz; dlp.Q.value = .7;
+        const dg = c.createGain();
+        const sw = (lo.swing == null ? 12 : lo.swing) / 100;
+        dg.gain.value = ((f.f || 1000) * sw) / Math.max(1e-6, buf.driftRms);
+        ds.connect(dlp); dlp.connect(dg); dg.connect(bq.frequency);
+        ds.start(baseT + Math.random() * 20);
+      }
+      for (const [rate, depth] of (lo.lfo || [])) {
+        const o = c.createOscillator(); o.type = 'sine'; o.frequency.value = rate;
+        const og = c.createGain(); og.gain.value = depth;
+        o.connect(og); og.connect(bq.frequency); o.start(baseT);
+      }
+      void f;
+    }
+  }
+}
+/** 一次"冲击"（跟 `burst()` 同构）：谱、包络、声场都照抄。 */
+function burst(c, buf, o, dest, baseT) {
+  const t0 = baseT + (o.at || 0);
+  const s = c.createBufferSource(); s.buffer = buf[o.n || 'white']; s.loop = true;
+  const bq = c.createBiquadFilter(); bq.type = o.t || 'bandpass'; bq.Q.value = Math.min(5, o.q == null ? 1 : o.q);
+  bq.frequency.setValueAtTime(o.f == null ? 2000 : o.f, t0);
+  if (o.f1 && o.f1 !== o.f) bq.frequency.exponentialRampToValueAtTime(Math.max(40, o.f1), t0 + (o.dur || .05));
+  const g = c.createGain();
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(o.vol == null ? .1 : o.vol, t0 + (o.attack || .003));
+  g.gain.exponentialRampToValueAtTime(1e-4, t0 + (o.dur || .05));
+  const p = c.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, o.pan || 0));
+  s.connect(bq); bq.connect(g); g.connect(p); p.connect(dest);
+  s.start(t0, Math.random() * 1.5); s.stop(t0 + (o.dur || .05) + .05);
+}
+function chirp(c, o, dest, baseT) {
+  const t0 = baseT + (o.at || 0);
+  const osc = c.createOscillator(); osc.type = 'sine';
+  osc.frequency.setValueAtTime(o.f0 || 2400, t0);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(60, o.f1 || 2600), t0 + (o.dur || .09));
+  const g = c.createGain();
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(o.vol == null ? .05 : o.vol, t0 + .012);
+  g.gain.exponentialRampToValueAtTime(1e-4, t0 + (o.dur || .09));
+  const p = c.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, o.pan || 0));
+  osc.connect(g); g.connect(p); p.connect(dest);
+  osc.start(t0); osc.stop(t0 + (o.dur || .09) + .04);
+}
+/** 到点的一次"点缀"（照抄 `spark()` 的分支；返回放了几个音）。 */
+function spark(cfg, c, buf, dest, baseT) {
+  let n = 0;
+  switch (cfg.spark) {
+    case 'drop': {
+      const large = Math.random() < .72;
+      const pan = Math.random() * 2 - 1;
+      if (large) {
+        burst(c, buf, { t: 'lowpass', f: 1800, f1: 900, q: .7, dur: .03 + Math.random() * .04, vol: .05 + Math.random() * .05, attack: .002, pan }, dest, baseT);
+        if (Math.random() < .35) chirp(c, { f0: 2200 + Math.random() * 1500, f1: (2200 + Math.random() * 1500) * .8, dur: .014, vol: .012, pan }, dest, baseT);
+      } else {
+        burst(c, buf, { t: 'bandpass', f: 4200 + Math.random() * 3000, q: 2, dur: .02 + Math.random() * .02, vol: .012 + Math.random() * .012, attack: .002, pan }, dest, baseT);
+      }
+      n += 1; break;
+    }
+    case 'rustle': {
+      for (let i = 0; i < 3; i += 1) {
+        burst(c, buf, { t: 'bandpass', f: 1800 + Math.random() * 2200, f1: 900 + Math.random() * 900, q: 1.2, dur: .05 + Math.random() * .06, vol: .02 + Math.random() * .02, at: i * .07, attack: .006, pan: Math.random() * 1.8 - .9 }, dest, baseT);
+        n += 1;
+      }
+      break;
+    }
+    case 'gust': {
+      burst(c, buf, { n: 'brown', t: 'lowpass', f: 380 + Math.random() * 240, f1: 160, q: .6, dur: .9 + Math.random() * 1.1, vol: .02 + Math.random() * .02, attack: .35, pan: Math.random() * 1.2 - .6 }, dest, baseT);
+      n += 1; break;
+    }
+    case 'bird': {
+      const base = 2100 + Math.random() * 900;
+      const k = 2 + Math.floor(Math.random() * 3);
+      const pan = Math.random() * 1.4 - .7;
+      for (let i = 0; i < k; i += 1) {
+        const f0 = base * (0.94 + Math.random() * 0.12);
+        chirp(c, { f0, f1: f0 * (1.02 + Math.random() * .06), dur: .05 + Math.random() * .05, vol: .022 + Math.random() * .02, at: i * (0.10 + Math.random() * 0.09), pan }, dest, baseT);
+        n += 1;
+      }
+      break;
+    }
+    default: break;
+  }
+  return n;
+}
+
+/**
+ * 渲一档。★ **音量包络照抄运行时**（`_apply()`）：master 从 0 用 0.25s 爬到 `MASTER_GAIN`，
+ * 档位自己的 `out` 用 **1.2 秒**爬到 `cfg.vol` —— 所以开头那 1~2 秒本来就是淡入的，
+ * 量 RMS 的时候**必须掐掉开头**（不然会低估）。这里把前 2.5 秒留给淡入，测量从 2.5s 起。
+ */
+async function renderTrack(name, secs) {
+  const cfg = TRACKS[name];
+  const c = new OfflineAudioContext(2, Math.round(SR * secs), SR);
+  const buf = makeBuffers(c);
+  const master = c.createGain();
+  master.gain.setValueAtTime(0, 0);
+  master.gain.linearRampToValueAtTime(MASTER_GAIN, 0.25);
+  master.connect(c.destination);
+  const out = c.createGain();
+  out.gain.setValueAtTime(0, 0);
+  /**
+   * ★ **淡入目标是 `vol × EU(bedRmsDb)`** —— 跟运行时 `_apply()` 一字不差。
+   * `bedRmsDb` 是实测的"原来这一档有多小声"，目标由 `ambience.js` 的 `TARGET_RMS_DB`（-24）定；
+   * 少了这一步，这一页量到的就是"两处增益叠乘"之后的 -42~-55dBFS（几乎听不见）。
+   * ⚠️ 这里**读的是 `ambience.js` 导出的同一个公式**（`EU` / `TARGET_RMS_DB`），不是另抄一份数字 ——
+   * 两边一旦不同步，"离线听"和"桌宠里听"就不是同一版了。
+   */
+  const norm = (cfg.vol == null ? 1 : cfg.vol) * EU(cfg.bedRmsDb);
+  out.gain.linearRampToValueAtTime(norm, 1.2);
+  out.connect(master);
+
+  const baseT = 0.35;                       // 让所有 source 在第 0.35 秒才开始（跟"建立时已解锁"等价）
+  for (const lo of (cfg.bed || [])) layer(c, buf, lo, out, baseT);
+  if (cfg.rumble) layer(c, buf, cfg.rumble, out, baseT);
+  // 稀疏事件：从 0.5 秒开始按 `every` 的期望间隔排（随机抽）
+  let at = baseT + .2, events = 0;
+  while (at < secs) {
+    events += spark(cfg, c, buf, out, at);
+    at += rnd(cfg.every[0], cfg.every[1]);
+  }
+  let thunders = 0;
+  if (cfg.thunder) {
+    let ta = rnd(cfg.thunder[0], cfg.thunder[1]);
+    while (ta < secs) {
+      burst(c, buf, { n: 'brown', t: 'lowpass', f: 240, f1: 70, q: .4, dur: 2.6, vol: .055, attack: .5, pan: Math.random() * 1.6 - .8 }, out, ta);
+      chirp(c, { f0: 58, f1: 34, dur: 2.2, vol: .03, pan: Math.random() * 1.2 - .6 }, out, ta);
+      thunders += 1;
+      ta += rnd(cfg.thunder[0], cfg.thunder[1]);
+    }
+  }
+  const rendered = await c.startRendering();
+  return { cfg, L: rendered.getChannelData(0), R: rendered.getChannelData(1), events, thunders, buf };
+}
+
+/**
+ * ★ **量"滤波器截止被摆动器推了多远"**（2026-10-11 加，这一页最有价值的一条）。
+ *
+ * 病根在 `ambience.js` 的 `layer()`：游走源接 `bq.frequency`，增益是 `depth * 3.2`，
+ * 而**表里的 depth 是几百 Hz**（雪那层 260、雨 1200）。这个系数是拍脑袋定的（注释里写着
+ * "噪声低通后幅度小很多，把摆幅补回来"）—— **补多少从来没人量过**。
+ * 推得太远 = 截止在 0 和两倍之间来回扫 → 声音又闷又亮地"喘"；推得太近 = 听着就是"死水"。
+ * 所以这里直接把那条游走链**单独渲一遍**（同一条 buffer、同一个低通、同一个增益），
+ * 报告它的标准差与极值 —— 数字一出来，"摆动过头 / 摆动不足"就不用猜了。
+ */
+async function driftSwing(name) {
+  const cfg = TRACKS[name];
+  const layers = [...(cfg.bed || []), ...(cfg.rumble ? [cfg.rumble] : [])].filter((l) => l.drift);
+  const out = [];
+  for (const lo of layers) {
+    const secs = 20;
+    const c = new OfflineAudioContext(1, Math.round(SR * secs), SR);
+    const buf = makeBuffers(c);
+    const lpHz = Array.isArray(lo.drift) ? lo.drift[0] : lo.drift;
+    const ds = c.createBufferSource();
+    ds.buffer = buf.drift; ds.loop = true;
+    const dlp = c.createBiquadFilter();
+    dlp.type = 'lowpass'; dlp.frequency.value = lpHz; dlp.Q.value = .7;
+    const dg = c.createGain();
+    const f0 = lo.f || 1000;
+    const sw = (lo.swing == null ? 12 : lo.swing) / 100;
+    dg.gain.value = (f0 * sw) / Math.max(1e-6, buf.driftRms);   // ★ 跟运行时一字不差
+    const sink = c.createGain(); sink.gain.value = 1;
+    ds.connect(dlp); dlp.connect(dg); dg.connect(sink); sink.connect(c.destination);
+    ds.start(0);
+    const res = await c.startRendering();
+    const d = res.getChannelData(0);
+    let sum = 0, mn = Infinity, mx = -Infinity;
+    for (let i = 0; i < d.length; i += 1) { sum += d[i] * d[i]; if (d[i] < mn) mn = d[i]; if (d[i] > mx) mx = d[i]; }
+    out.push({
+      base: f0, swing: lo.swing == null ? 12 : lo.swing, lpHz,
+      swingHz: Math.sqrt(sum / d.length),     // 推动量的 1σ（Hz）
+      minHz: mn, maxHz: mx,                   // 20 秒里真正触到的最低/最高**偏移**（相对 base）
+      pct: 100 * Math.sqrt(sum / d.length) / f0,
+      /**
+       * ⚠️ 判"会不会被钳"用的是**实测极值**，不是 3σ 外推 —— 游走是**非高斯**的
+       * （低通棕噪声，重尾），3σ 外推会把 5% 的正常摆动全判成"CLIP"。
+       */
+      wouldClip: (f0 + mn) < 20 || (f0 + mx) > SR / 2 - 100,
+      loHz: Math.round(f0 + mn), hiHz: Math.round(f0 + mx),
+    });
+  }
+  return out;
+}
+
+/* =====================================================================================
+ * ② 测量：**不再自己实现** —— 用 `meter.js`，而且那份实现先过了 `calib.html` 的 16 项自校准
+ * =====================================================================================
+ * ★ 2026-10-11 的教训：这一页原来自己内联了一份 `measure()`，报出"雨 RMS -42dBFS、
+ *   每秒 348 次攻击"——**那把尺子是坏的**（攻击计数复位不了、重心分母算错）。
+ *   如果拿它去改 `ambience.js` 的参数，就是把好的东西改坏。现在尺子独立成 `meter.js`，
+ *   `calib.html` 用**已知正确答案的合成信号**（正弦/白噪/粉噪/静音/5Hz 脉冲串/FFT 单 bin）
+ *   把它验过 16 项全过，这一页才敢用。
+ */
+
+/* =====================================================================================
+ * ③ wav 编码 + 页面
+ * ===================================================================================== */
+function wavBlob(L, R) {
+  const n = L.length, bytes = 44 + n * 4;
+  const ab = new ArrayBuffer(bytes), v = new DataView(ab);
+  const w = (o, s) => { for (let i = 0; i < s.length; i += 1) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, bytes - 8, true); w(8, 'WAVE');
+  w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true);
+  v.setUint32(24, SR, true); v.setUint32(28, SR * 4, true); v.setUint16(32, 4, true); v.setUint16(34, 16, true);
+  w(36, 'data'); v.setUint32(40, n * 4, true);
+  let o = 44;
+  for (let i = 0; i < n; i += 1) {
+    for (const ch of [L[i], R[i]]) {
+      let s = Math.max(-1, Math.min(1, ch));
+      v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true); o += 2;
+    }
+  }
+  return new Blob([ab], { type: 'audio/wav' });
+}
+const LABELS = { snow: '雪（风 + 气息）', blossom: '樱花（轻风 + 鸟叫）', leaf: '落叶（沙沙）', rain: '雨（粉噪 + 雨滴 + 远雷）' };
+let rendered = null;
+
+/** 一个频段占比的小横条（0~100%）。 */
+function bar(pct, cls) {
+  const w = Math.max(1, Math.min(120, pct * 2.4));
+  return `<span class="bar ${cls || ''}" style="width:${w}px"></span> ${pct.toFixed(1)}%`;
+}
+function paintTable() {
+  const rows = ['rain', 'snow', 'leaf', 'blossom'];
+  /**
+   * ⚠️ **"攻击次数/秒"这一列不放进质量表**（2026-10-11）：在现在的电平下，
+   * 雨滴（峰值 0.05~0.1）**淹没在床里**，检测器只数出 0.1~0.3 次/秒，而设计是 `every [0.10, 0.26]`
+   * → 10 次/秒。**这个数字只能说明"雨滴比床小得多"，不能说明密度**，所以别拿它当结论；
+   * 想调"雨滴够不够响"要去改 `spark('drop')` 的 `vol`，想调密度改 `every`。
+   */
+  let html = '<table><tr><th>天气</th><th>RMS (dBFS)</th><th>峰值 (dB)</th><th>设计事件/秒</th>'
+    + BANDS.map(([n]) => `<th>${n}</th>`).join('') + '<th>频谱重心</th><th>左右差</th></tr>';
+  for (const name of rows) {
+    const m = rendered[name].m;
+    const r = rendered[name];
+    const want = TARGET_RMS_DB == null ? -24 : TARGET_RMS_DB;
+    const rmsCls = Math.abs(m.rmsDb - want) > 3 ? 'warn' : 'good';
+    const ev = TRACKS[name].every;
+    html += `<tr><td>${LABELS[name]}</td>`
+      + `<td class="${rmsCls}">${m.rmsDb.toFixed(1)}</td>`
+      + `<td>${m.peakDb.toFixed(1)}</td>`
+      + `<td>${(1 / ((ev[0] + ev[1]) / 2)).toFixed(1)}</td>`
+      + m.bandPct.map(([, p]) => `<td>${bar(p, p > 45 ? 'hi' : p < 3 ? 'low' : '')}</td>`).join('')
+      + `<td>${Math.round(m.centroidHz)} Hz</td>`
+      + `<td>${m.balDb.toFixed(2)}</td></tr>`;
+  }
+  html += '</table>';
+  html += `<p class="note">这一版的读数（离线实测，测量区跳过 2.5 秒淡入）：
+    <b>四档 RMS ${rows.map((n) => rendered[n].m.rmsDb.toFixed(1)).join(' / ')} dBFS</b>
+    —— 已经**互相对齐**（原来彼此差 12.5dB：雨 -42.4、落叶 -54.9，切过去像被关了）。
+    目标 <b>${TARGET_RMS_DB}dBFS</b> 是**峰值上限逼出来的**：抬到 -16 时雨的峰值到 +3dBFS（爆表）。
+    峰值那一列是 <code>|L|+|R|</code>（抓单侧冲击用的定义），所以它比"真实每声道峰值"高约 6dB ——
+    现在四档峰值 ≤ -3.7dB，**每声道还有 9dB 以上余量**。
+    "2k~6k 刺耳"那一段：雨 21%、落叶 44%（原来 49%，已经把带通从 2.4k 压到 1.6k）。
+    <b>攻击次数/秒没有放进表里</b> —— 现在雨滴比床小得多，检测器数不准（见源码里的说明）。</p>`;
+  $('tableBox').innerHTML = html;
+}
+function paintCards() {
+  let html = '';
+  for (const name of ['rain', 'snow', 'leaf', 'blossom']) {
+    const r = rendered[name];
+    const url = URL.createObjectURL(r.blob);
+    html += `<div class="card"><h3>${LABELS[name]}</h3>
+      <div class="row"><audio controls src="${url}" data-k="${name}"></audio>
+      <a href="${url}" download="ambience-${name}.wav">下载 wav</a>
+      <span style="color:#7f8ea3">事件 ${r.events} 个${r.thunders ? ` · 远雷 ${r.thunders} 次` : ''}</span></div></div>`;
+  }
+  $('cards').innerHTML = html;
+}
+$('playAll').addEventListener('click', () => {
+  const list = [...document.querySelectorAll('#cards audio')];
+  let i = 0;
+  const next = () => { if (i >= list.length) return; const a = list[i++]; a.play().then(() => { a.onended = next; }).catch(() => { say('播放被拦（先点一下页面）'); }); };
+  next();
+});
+$('go').addEventListener('click', async () => {
+  $('go').disabled = true;
+  const secs = Number($('secs').value);
+  rendered = {};
+  try {
+    for (const name of ['rain', 'snow', 'leaf', 'blossom']) {
+      say(`正在渲染「${name}」…`);
+      await new Promise((r) => setTimeout(r, 30));           // 让页面把进度画出来
+      const r = await renderTrack(name, secs);
+      r.m = measure(r.L, r.R, 2.5);                          // ★ 跳过 2.5 秒淡入再量
+      r.blob = wavBlob(r.L, r.R);
+      rendered[name] = r;
+      say(`「${name}」好了（${(r.blob.size / 1048576).toFixed(1)}MB）`);
+    }
+    paintTable();
+    paintCards();
+    say('全部渲染完成 · 下面可以试听/下载');
+  } catch (e) {
+    err('渲染失败：' + ((e && e.stack) || e));
+  } finally {
+    $('go').disabled = false;
+  }
+});
+say('就绪 · 点「开始渲染」');
+
+/**
+ * ★ **给自动化验收留的入口**（2026-10-11）：`await __renderAll()` 直接渲染 + 测量并返回一份
+ * JSON（不建音频元素、不出声），这样"数字对不对"可以在不开声音的情况下查。
+ * ⚠️ 它跟按钮走的是**同一条路**（`renderTrack` + `measure` + `driftSwing`），不是另一套实现。
+ */
+globalThis.__renderAll = async (secs = 8) => {
+  const out = {};
+  for (const name of ['rain', 'snow', 'leaf', 'blossom']) {
+    const r = await renderTrack(name, secs);
+    out[name] = { ...measure(r.L, r.R, 2.5), events: r.events, thunders: r.thunders, swing: await driftSwing(name) };
+  }
+  return out;
+};
+
+/**
+ * ★ **归一化助手**（2026-10-11 加）：把一档渲出来、量它的"床"电平，算出**要乘多少**才能落到
+ * 目标 RMS。这是"四档底噪平衡"唯一能量化的做法 —— 听感上"雪太小声、雨太大声"最后都要落到数字。
+ *
+ * 做法：直接对渲出来的样本乘系数再量（不改渲染链），因为**线性增益不改变频谱形状**，
+ * 所以"乘多少"这一步是精确的（除了爆表要另算）。
+ *
+ * `targetDb` 默认 -16dBFS（`ambience.js` 文件头写的设计目标）。
+ */
+/**
+ * ★ **逐级体检**（2026-10-11 加）：`__levels()` 把信号链**一节一节单独量**——
+ * 噪声源本身、单层（增益=1）、整档。这样"为什么这么小声"不用猜：
+ * 是哪一段的增益吃掉了电平，一眼看得出来（我这一版就是靠它定的参数）。
+ */
+globalThis.__levels = async (secs = 4) => {
+  const rawDb = (arr) => { let s = 0; for (let i = 0; i < arr.length; i += 1) s += arr[i] * arr[i]; return 20 * Math.log10(Math.max(1e-9, Math.sqrt(s / arr.length))); };
+  const out = { buffers: {}, layers: {}, tracks: {} };
+  // ① 三种噪声源本身（离线上下文里造一份，直接读样本）
+  {
+    const c = new OfflineAudioContext(1, 1024, SR);
+    const buf = makeBuffers(c);
+    for (const k of ['white', 'brown', 'pink', 'drift']) out.buffers[k] = +rawDb(buf[k].getChannelData(0)).toFixed(1);
+  }
+  // ② 每一层单独渲染（增益=1、无摆动）：看"过完滤波器还剩多少"
+  for (const name of ['rain', 'snow', 'leaf', 'blossom']) {
+    const cfg = TRACKS[name];
+    const list = [...(cfg.bed || []), ...(cfg.rumble ? [{ ...cfg.rumble, __r: 1 }] : [])];
+    out.layers[name] = [];
+    for (const lo of list) {
+      const c = new OfflineAudioContext(1, Math.round(SR * secs), SR);
+      const buf = makeBuffers(c);
+      const dest = c.createGain(); dest.gain.value = 1; dest.connect(c.destination);
+      const flat = { ...lo, g: 1, drift: null, lfo: null };      // 只留噪声+滤波，增益钉成 1
+      layer(c, buf, flat, dest, 0);
+      const res = await c.startRendering();
+      out.layers[name].push({ n: lo.n, t: lo.t, f: lo.f, q: lo.q, g: lo.g, outDb: +rawDb(res.getChannelData(0)).toFixed(1) });
+    }
+  }
+  // ③ 整档（含事件、含 master）
+  for (const name of ['rain', 'snow', 'leaf', 'blossom']) {
+    const r = await renderTrack(name, secs + 3);
+    const m = measure(r.L, r.R, 2.5);
+    out.tracks[name] = { rmsDb: +m.rmsDb.toFixed(1), peakDb: +m.peakDb.toFixed(1), events: r.events };
+  }
+  return out;
+};
+
+globalThis.__normalize = async (secs = 12, targetDb = -16) => {
+  const out = {};
+  for (const name of ['rain', 'snow', 'leaf', 'blossom']) {
+    const r = await renderTrack(name, secs);
+    const m = measure(r.L, r.R, 2.5);
+    const needDb = targetDb - m.rmsDb;
+    const need = 10 ** (needDb / 20);
+    // 乘完之后的峰值（爆表检查）
+    const peakAfterDb = m.peakDb + needDb;
+    out[name] = {
+      rmsDb: +m.rmsDb.toFixed(1),
+      peakDb: +m.peakDb.toFixed(1),
+      gainNeededDb: +needDb.toFixed(1),
+      gainNeeded: +need.toFixed(2),
+      peakAfterDb: +peakAfterDb.toFixed(1),
+      headroomOk: peakAfterDb < -3,
+      attacksPerS: +m.attacksPerS.toFixed(1),
+      events: r.events,
+    };
+  }
+  return out;
+};
+</script>
+</body>
+</html>
