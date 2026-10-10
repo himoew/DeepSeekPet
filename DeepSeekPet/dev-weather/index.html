@@ -1,0 +1,286 @@
+<!doctype html>
+<!--
+  ============================================================================
+  天气粒子 · 浏览器验收页（临时工具，不进桌宠安装包）
+  ============================================================================
+
+  用途：把 `web/fx.js` 单独拉起来，让你在浏览器里**亲手**看这一版天气粒子。
+
+  ★ 它和桌宠页面用的是**同一份** `web/fx.js`（同一个 canvas、同一套物理、同一套形状），
+    差别只有：这里的窗口是普通网页窗口（有背景色、可缩放），桌宠那边是透明覆盖层、尺寸等于整块桌面。
+
+  ★ 怎么打开：
+      · 双击本文件（Edge / Chrome）—— file:// 也能跑；
+      · 浏览器拦本地模块时：在 DeepSeekPet 目录跑 `node dev-weather/serve.cjs`，再开它打印的地址。
+
+  ★ 界面上的东西：
+      · 天气五态        —— 和桌宠悬停菜单那格循环的五个状态一致；
+      · 规模（密度倍率）—— 放大/缩小**当前天气**的发射量与上限，不是另一个模式（选它不会关掉天气）；
+      · 上限            —— 引擎的 HARD_CAP（防整屏糊住的保险），当前几颗一目了然；
+      · 冻结画面        —— 粒子停住，方便截形状（花瓣缺口 / 叶子叶脉这时看最清楚）；
+      · 撒 3 朵整花     —— 樱花里那 8% 的稀有形态，直接摆出来给你看。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<base href="../resources/app/web/">
+<title>天气粒子 · 实装验收</title>
+<style>
+  :root{
+    /* ★ 这几行就是 pet.css 里那套配色 —— fx.js 从 CSS 变量读颜色，少了它们粒子会全变兜底白
+       （这个坑踩过一次：看起来像"雪下大了"）。 */
+    --snow:#F2F7FF; --blossom:#FF9EC4; --leaf-a:#D9903A; --leaf-b:#B8572A; --leaf-c:#B09428;
+    --leaf-ink:#7A3F0E; --rain:#7FA8CF; --note:#2FD59B;
+    --blossom-ink:#D96A90; --blossom-hi:#FFE8F0; --blossom-core:#F0DC96;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#12181f;color:#dfe8f2;
+    font:13px/1.5 "Microsoft YaHei","Noto Sans SC",system-ui,sans-serif}
+  #wrap{padding:10px 12px 14px;max-width:1500px}
+  h1{margin:0 0 8px;font-size:15px;font-weight:600;color:#fff}
+  h1 small{font-weight:400;color:#7f8ea3;font-size:12px;margin-left:8px}
+  .row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 8px}
+  .row > b{color:#8fa2b8;font-weight:400;margin-right:2px;min-width:52px}
+  button{
+    font:inherit;padding:5px 11px;border-radius:8px;cursor:pointer;
+    border:1px solid #2b3947;background:#1b242e;color:#dfe8f2;transition:.12s;
+  }
+  button:hover{border-color:#3f6a8c;background:#22303c}
+  button.on{background:#1f6feb;border-color:#4a8ff7;color:#fff;font-weight:600}
+  input[type=range]{font:inherit;background:#1b242e;border:1px solid #2b3947;border-radius:8px;padding:0;width:150px}
+  #stats{
+    display:flex;flex-wrap:wrap;gap:16px;margin:0 0 8px;padding:7px 10px;border-radius:8px;
+    background:#0d1218;border:1px solid #1d2833;font-variant-numeric:tabular-nums;
+  }
+  #stats b{color:#8fa2b8;font-weight:400}
+  #stats .big{font-size:15px;font-weight:700;color:#fff}
+  #stats .warn{color:#ffcf6b}
+  #stage{position:relative;width:100%;height:calc(100vh - 210px);min-height:320px;overflow:hidden;
+    border:1px solid #2b3947;border-radius:10px;background:#20303c}
+  #fxCanvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}
+  #hint{color:#7f8ea3;margin:8px 0 0}
+  #hint code{background:#1b242e;border:1px solid #2b3947;border-radius:4px;padding:0 4px}
+  #err{color:#ff8a8a;white-space:pre-wrap;margin:6px 0 0;font-size:12px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>天气粒子 · 实装验收 <small>用的是桌宠里同一份 web/fx.js</small></h1>
+
+  <div class="row">
+    <b>天气</b>
+    <button data-k="off">关</button>
+    <button data-k="snow" class="on">雪</button>
+    <button data-k="blossom">樱花</button>
+    <button data-k="leaf">落叶</button>
+    <button data-k="rain">雨</button>
+  </div>
+
+  <div class="row">
+    <b>规模</b>
+    <button data-scale="0.4">小 40%</button>
+    <button data-scale="0.7">中 70%</button>
+    <button data-scale="1" class="on">标准 100%</button>
+    <button data-scale="1.6">大 160%</button>
+    <button data-scale="3">很大 300%</button>
+    <span style="color:#7f8ea3">（放大当前天气的发射量与上限，粒子总数仍受上限约束）</span>
+  </div>
+
+  <div class="row">
+    <b>工具</b>
+    <button id="freeze">冻结画面</button>
+    <button id="flower">撒 3 朵整花</button>
+    <button id="clear">清空粒子</button>
+  </div>
+
+  <div class="row">
+    <b>音效</b>
+    <button id="snd" class="on">环境音：开</button>
+    <span id="sndHint" style="color:#7f8ea3">（点一下先给浏览器手势；四种天气各有底噪 + 雨滴/鸟叫/远雷点缀）</span>
+  </div>
+
+  <div id="stats">
+    <span><b>粒子</b> <span class="big" id="cnt">0</span> <span id="cap" style="color:#7f8ea3"></span></span>
+    <span><b>这一帧画了</b> <span class="big" id="cost">–</span> <span id="costw" style="color:#7f8ea3"></span></span>
+    <span><b>物理+发射</b> <span id="phys">–</span></span>
+    <span><b>帧间隔</b> <span id="ms">–</span></span>
+    <span><b>FPS</b> <span id="fps">–</span></span>
+    <span><b>画布</b> <span id="cv">–</span></span>
+  </div>
+
+  <div id="stage"><canvas id="fxCanvas"></canvas></div>
+
+  <p id="hint">
+    怎么看：先点 <code>雨</code>（最费的一档）看 <code>这一帧画了</code>；
+    再用 <code>规模 → 很大 300%</code> 把粒子堆上去，看这个数字涨到多少 —— 只要它离 <code>16.7ms</code> 还远，
+    桌宠那边就不会卡。形状（花瓣 / 叶子）请按 <code>冻结画面</code> 再细看。
+  </p>
+  <div id="err"></div>
+</div>
+
+<script type="module">
+import { createFx } from './fx.js';
+import { createAmbience } from './ambience.js';
+
+/** 诊断用的可见日志（页面是给你验收的，出问题必须一眼看得见，不能只在控制台）。 */
+const diag = [];
+function say(m) { diag.push(m); document.getElementById('err').textContent = diag.slice(-8).join('\n'); }
+say('模块已执行');
+addEventListener('error', (e) => say('JS 错误：' + e.message + ' @' + e.lineno));
+addEventListener('unhandledrejection', (e) => say('未捕获：' + ((e.reason && e.reason.message) || e.reason)));
+
+const canvas = document.getElementById('fxCanvas');
+const stage = document.getElementById('stage');
+const q = new URLSearchParams(location.search);
+
+/**
+ * ★ **和桌宠页面用同一套写法**（`pet-app.js` 里就是这么建的）：
+ * 只给 canvas，**不自己算尺寸** —— `fx.js` 会按 ①`ctl.bounds` → ②画布的 CSS 尺寸 → ③视口
+ * 依次取，并且每帧校对，所以窗口一缩放它自己就跟着变。
+ *
+ * ⚠️ 这里原来自己写了个"等布局出来再开跑"的小补丁，正是那个补丁把 bug 藏住了：
+ * 页面以为尺寸是 967×408、`fx` 以为是 1×1（`ctl.bounds` 传成函数时旧代码读不出来）。
+ * 教训：**尺寸只留一个来源**，页面不要在旁边再算一遍。
+ */
+const fx = createFx({
+  canvas,
+  report: (m) => say('fx 上报：' + String(m)),
+});
+
+let weather = q.get('kind') || 'snow';
+let scaleK = Number(q.get('scale') || 1);     // 规模倍率（1 = 标准）
+let frozen = false;
+let t = 0;
+say('fx 已创建 · 天气 ' + weather + ' · 画布由窗口尺寸决定');
+/** 把 fx 眼里的尺寸摊在页面上（这条链出问题时的第一现场）。挂到 window 上方便你在控制台看。 */
+globalThis.fxSize = () => JSON.stringify({ fx: fx.size(), stage: [stage.clientWidth, stage.clientHeight], dpr: devicePixelRatio, inner: [innerWidth, innerHeight] });
+
+/* ---------- 环境音 ----------
+   ★ 和桌宠那边接线一样：手势解锁 → `switchTo()` 换底噪 → 每帧 `follow()` 排点缀
+   （雨滴 / 一片叶子擦过 / 一串鸟叫 / 雨里的远雷）。
+   ⚠️ 浏览器不许没手势就出声，所以这里默认关着；点「环境音：开」那一下才算解锁。 */
+const ambience = createAmbience({ report: (m) => say('音效上报：' + String(m)) });
+let soundOn = false;                            // 首屏默认不出声（浏览器不许没手势就出声）
+ambience.setEnabled(false);                     // ← 与按钮读数保持一致：默认真的是关的
+/** 控制台/自查看音效状态：`ambience.state()` 给出 `{on, unlocked, mode, live, ctx, failed}`。 */
+globalThis.ambienceState = () => JSON.stringify(ambience.state());
+
+/* ---------- 统计 ----------
+   ★ 分开看：`这一帧画了` 只有渲染（决定卡不卡）；`物理+发射` 是模拟部分；`帧间隔/FPS` 是交付节奏。
+   平均 30 帧再显示（单帧数字抖得没法看）。 */
+const M = { n: 0, cost: 0, phys: 0, gap: 0, fpsT: performance.now(), fpsFrames: 0, cntT: 0, frame: 0 };
+const $ = (id) => document.getElementById(id);
+function tick(gapMs, costMs, physMs) {
+  M.n += 1; M.cost += costMs; M.phys += physMs; M.gap += gapMs; M.fpsFrames += 1; M.frame += 1;
+  if (M.n >= 30) {
+    const cost = M.cost / M.n, phys = M.phys / M.n, gap = M.gap / M.n;
+    $('cost').textContent = cost.toFixed(2) + 'ms';
+    $('cost').className = 'big' + (cost > 8 ? ' warn' : '');
+    $('costw').textContent = cost > 8 ? '（接近 16.7ms 就该担心了）' : '';
+    $('phys').textContent = phys.toFixed(2) + 'ms';
+    $('ms').textContent = gap.toFixed(1) + 'ms';
+    M.n = 0; M.cost = 0; M.phys = 0; M.gap = 0;
+  }
+  const now = performance.now();
+  if (now - M.cntT >= 120) {                    // 粒子数 8Hz 刷新（放大规模后要立刻看得见）
+    $('cnt').textContent = fx.count;
+    paintCap();
+    M.cntT = now;
+  }
+  if (now - M.fpsT >= 1000) {
+    $('fps').textContent = Math.round(M.fpsFrames * 1000 / (now - M.fpsT));
+    M.fpsT = now; M.fpsFrames = 0;
+    $('cv').textContent = canvas.width + '×' + canvas.height + ' (dpr ' + devicePixelRatio + ')';
+  }
+}
+
+/* ---------- 主循环 ---------- */
+let lastT = performance.now();
+function loop(now) {
+  const gap = now - lastT;
+  const dt = Math.min(0.05, gap / 1000);
+  lastT = now;
+  t += dt;
+  if (frozen) fx.draw();                       // 冻结：只重画（不推物理，形状定住）
+  else fx.frame(dt, t, weather, scaleK);
+  if (soundOn && weather !== 'off') ambience.follow(weather, dt, now / 1000);
+  tick(gap, fx.spend(), fx.spendPhys());
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* ---------- 天气按钮 ---------- */
+const kBtns = [...document.querySelectorAll('button[data-k]')];
+function paintK() { for (const b of kBtns) b.classList.toggle('on', b.dataset.k === weather); }
+for (const b of kBtns) {
+  b.addEventListener('click', () => {
+    weather = b.dataset.k;
+    frozen = false; $('freeze').classList.remove('on');
+    fx.clear();                                // 换天气先清干净，免得两种粒子混在一起看不清
+    paintK();
+    // 音效跟着切（`off` 就是静下来）
+    try { ambience.switchTo(soundOn ? weather : 'off'); } catch (e) { /* ignore */ }
+  });
+}
+paintK();
+
+/* ---------- 环境音开关（同时充当"用户手势解锁"） ---------- */
+const snd = $('snd');
+snd.addEventListener('click', () => {
+  soundOn = !soundOn;
+  snd.classList.toggle('on', soundOn);
+  snd.textContent = '环境音：' + (soundOn ? '开' : '关');
+  if (soundOn) {
+    ambience.unlock();                              // ① 手势：把 AudioContext 解出来
+    ambience.setEnabled(true);
+    ambience.switchTo(weather);                     // ② 切到当前天气的底噪
+    $('sndHint').textContent = '（已开；换天气会自动换底噪，雨里每 14~40 秒有一次远雷）';
+  } else {
+    ambience.setEnabled(false);
+    $('sndHint').textContent = '（已关）';
+  }
+});
+// ★ 初始状态：默认关（因为要等一次用户手势）。**不要再在这里重置 `soundOn`** ——
+//   上一版把那两行写在点击处理之后，等于每次加载都把你刚点的状态覆盖回去。
+snd.classList.remove('on');
+/* ---------- 规模按钮：只改倍率，**不关天气、不冻结** ---------- */
+const sBtns = [...document.querySelectorAll('button[data-scale]')];
+function paintScale() {
+  for (const x of sBtns) x.classList.toggle('on', Number(x.dataset.scale) === scaleK);
+}
+for (const b of sBtns) {
+  b.addEventListener('click', () => {
+    scaleK = Number(b.dataset.scale);
+    paintScale();
+    // 调小规模时，现存的粒子会自己落走/过期；调大立刻开始加密
+  });
+}
+paintScale();
+
+/** 上限提示：粒子数正在贴着引擎上限时把它标出来（不然"怎么点都不涨"会被当成卡住）。 */
+function paintCap() {
+  const n = fx.count;
+  $('cap').textContent = n >= 230 ? '· 已到上限 240（HARD_CAP）' : '· 上限 240';
+}
+
+/* ---------- 工具 ---------- */
+const fr = $('freeze');
+fr.addEventListener('click', () => { frozen = !frozen; fr.classList.toggle('on', frozen); });
+$('clear').addEventListener('click', () => { fx.clear(); $('cnt').textContent = '0'; });
+$('flower').addEventListener('click', () => {
+  const { W, H } = fx.size();                  // ★ 尺寸一律问 fx（页面不自己算，免得两套尺寸打架）
+  let made = 0;
+  for (let i = 0; i < 3; i += 1) {
+    const p = fx.spawn('blossom', {
+      x: W * (0.22 + i * 0.28), y: H * 0.5, vT: 0, vy: 0, wind: 0, slip: 0, stall: 0, sway: 0, hz: 0,
+      drift: 0, alpha: 1, life: 999999, age: 900, size: 26,
+    });
+    if (p) { p.flower = true; p.size = 26; p.drift = 0; made += 1; }
+  }
+  frozen = true; fr.classList.add('on');       // 整花别让它飘走，冻住好看
+  say('摆出 ' + made + ' 朵整花（樱花里 8% 的稀有形态）');
+});
+// 缩放窗口不用做任何事：fx.js 每帧自己按画布 CSS 尺寸校对（这就是"只留一个尺寸来源"的好处）
+</script>
+</body>
+</html>

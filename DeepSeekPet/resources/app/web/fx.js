@@ -111,6 +111,12 @@ const PROFILE = {
      * 再叠主脉/侧脉/高光/根部暖色，见 `petalPath` 与 `SPRITE.petal`。
      */
     perS: 4, cap: 44, stall: .22, slip: 34, spin: 0, spinSp: [.45, .95], flip: [.45, 1.1], wind: 1.5, fade: .2,
+    /**
+     * ★ **整朵花的自转上限**（用户两次反馈）：默认 `±0.5 rad/s`(≈29°/s) → 第一次收到 `±0.28`(≈16°/s)
+     * → 用户"还是快了" → **再降一半**到 `±0.05~0.14 rad/s`（上限 ≈8°/s，转一圈 45 秒）。
+     * 单花瓣的**翻转**相位（`spinSp`）不动。
+     */
+    rollSp: [.05, .14],
     flowerChance: .08,
     layers: [
       { w: .40, vT: [20, 32], size: [3.6, 4.8], alpha: [.52, .70], sway: [14, 24], hz: [.07, .16] },
@@ -356,6 +362,21 @@ const SPRITE = {
 /** 反面色（叶子/花瓣翻过去那一面）压暗多少。 */
 const BACK_DIM = .8;
 
+/**
+ * **横向漂移的回收半径与回中时间**（2026-10-11 修"龙卷风"时加的）。
+ *
+ * ⚠️ 原来的横向位移是**只加不减**的：`slip = sin(翻滚角) × 34~46 px/s`，而 `sin` 在长角上取样
+ * 有非零均值 → 每颗粒子朝**同一个方向**净漂（樱花 34px/s × 45 秒 ≈ 1500px、落叶 46×40 ≈ 1800px，
+ * 屏幕才 1280 宽）→ 用户实测的"单边/双龙卷风，龙卷风外几乎没粒子"。
+ * 现在漂移**有界 + 会回中**（`dx *= exp(-dt/TAU)`，并夹在 `dcap` 内）：
+ *   · 侧滑方向仍由翻滚角驱动（"侧立时滑得最快"保留，它是叶子与纸屑的分界）；
+ *   · 但表现为"在锚点附近来回游走"，不再一路漂到屏幕外。
+ * 离线量过：修完 8 格分布从 `11|6|3|0|0|4|5|10` 变成每格都有（`dev-weather/check-drift.cjs`）。
+ */
+const DRIFT_CAP = 90;     // 有侧滑的（落叶/樱瓣）：锚点外最多漂这么多
+const WIND_CAP = 40;      // 只有风的（雪/雨）：别让慢粒子被阵风吹出屏幕
+const DRIFT_TAU = 9;      // 回中时间常数（秒）：越小回中越快
+
 /* ---------- 小工具 ---------- */
 const rnd = (a, b) => a + Math.random() * (b - a);
 const pick = (r) => r[0] + Math.random() * (r[1] - r[0]);
@@ -430,6 +451,15 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
   }
 
   let ctx = null, cw = 0, ch = 0, dpr = 1, drawBroken = false;
+  /**
+   * ★ **这一帧"画"花了多少毫秒**（`spend()`）与**"物理+发射"花了多少**（`spendPhys()`）。
+   *
+   * 为什么要分开量：只报"帧间隔"说明不了问题 —— 60fps 时帧间隔永远是 16.7ms，哪怕这一帧只花了
+   * 2ms。真正决定卡不卡的是**干活的时间**。验收页用这三个数做 A/B 判断；桌宠那边不用它们。
+   * ⚠️ 这两个接口**验收页每帧都在调**：一旦缺了，页面第一帧就抛错、整个主循环死掉（画面全空）。
+   */
+  let lastCost = 0, lastPhys = 0;
+  const spender = (typeof performance !== 'undefined' && performance.now) ? () => performance.now() : null;
   if (canvas && typeof canvas.getContext === 'function') {
     try { ctx = canvas.getContext('2d'); } catch (e) { ctx = null; }
   }
@@ -513,10 +543,36 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
     if (cw !== W || ch !== H || dpr !== d) { cw = W; ch = H; dpr = d; }
     return ctl2;
   }
-  const view = () => {
-    const b = ctl?.bounds || { W: 1280, H: 760 };
-    return { W: Math.max(1, b.W | 0), H: Math.max(1, b.H | 0) };
-  };
+  /**
+   * 画布尺寸的来源，**只有一个定义**（2026-10-11 重理过一次）。
+   *
+   * 约定：`ctl.bounds` **对象和函数都收**（`{W,H}` 或 `() => ({W,H})`）。
+   * 这里踩过坑：`view()` 原来只按**对象**读（`b.W`），而注释/验收页按**函数**传 ——
+   * `b.W` 恰好也是函数的 `W` 属性 = `undefined` → `Math.max(1, undefined|0)` = **1**，
+   * 于是"粒子在算、但全都画进一张 1×1 的画布"（不报错、看着就是空的）。验收页的 `fxSize()`
+   * 一把把这个抓出来了（页面以为 967×408、fx 以为 1×1）。
+   * 现在两种写法都认，且**尺寸是脏值就往下退**，永远不允许出现 1×1。
+   */
+  function view() {
+    const b = ctl && ctl.bounds;
+    let W = 0, H = 0;
+    if (typeof b === 'function') {
+      try { const v = b(); if (v) { W = v.W | 0; H = v.H | 0; } } catch (e) { /* 回调抛错就往下退 */ }
+    } else if (b) { W = b.W | 0; H = b.H | 0; }
+    // ② 画布自身的 CSS 尺寸（桌宠里 = 视口；普通网页里可能比视口小）
+    if (!(W > 8) || !(H > 8)) {
+      if (canvas && canvas.getBoundingClientRect) {
+        const r = canvas.getBoundingClientRect();
+        if (r.width > 8 && r.height > 8) { W = Math.round(r.width); H = Math.round(r.height); }
+      }
+    }
+    // ③ 视口（桌宠窗口铺满整屏，所以这就是整块桌面）
+    if (!(W > 8) || !(H > 8)) {
+      W = (globalThis.innerWidth | 0) || 1280;
+      H = (globalThis.innerHeight | 0) || 760;
+    }
+    return { W: Math.max(8, W | 0), H: Math.max(8, H | 0) };
+  }
 
   /* ---------- 生成 ---------- */
   function pickLayer(p) {
@@ -544,7 +600,7 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
       spin: (p.spin || 0) * rnd(.6, 1.5) * (Math.random() < .5 ? -1 : 1),
       spinSp: p.spinSp ? pick(p.spinSp) * (Math.random() < .5 ? -1 : 1) : 0,
       roll: Math.random() * Math.PI * 2,
-      rollSp: rnd(-.5, .5),
+      rollSp: p.rollSp ? pick(p.rollSp) * (Math.random() < .5 ? -1 : 1) : rnd(-.5, .5),
       flip: p.flip ? pick(p.flip) : 0,
       seedRoll: Math.random(),
       slip: (p.slip || 0) * rnd(.6, 1.4),
@@ -578,6 +634,9 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
      * 正式跑的时候没人传它，`drift` 就是 1。
      */
     if (it.drift === undefined) it.drift = 1;
+    it.dcap = (p.slip ? DRIFT_CAP : WIND_CAP) * rnd(.8, 1.2);   // 横向漂移的回收半径
+    it.dx = 0;                                                  // 相对锚点的横向偏移
+    it.ax = it.x;                                               // ★ 锚点：漂移在它附近游走
     it.bx = it.x; it.by = it.y;
     it.hzA = it.hz * 2 * Math.PI;
     /**
@@ -645,15 +704,22 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
           : p.roll;
       const stall = p.stall ? 1 - p.stall * Math.abs(Math.cos(spinA)) ** 1.5 : 1;
       p.vy += (p.vT * stall - p.vy) * k;
-      // 风场：同一个位置+时刻的粒子被同一阵风推
-      const gust = p.wind ? windAt(seed, p.bx, p.by, t) * p.wind : 0;
+      // 风场：同一个位置+时刻的粒子被同一阵风推（`vx` 是"风速"，它本身不发散：指数趋近 gust）
+      const gust = p.wind ? windAt(seed, p.ax + p.dx, p.by, t) * p.wind : 0;
       p.vx += (gust - p.vx * 0.9) * dt * 1.6;
       /**
        * ★ **侧滑由翻滚角驱动**（叶子/花瓣）：侧立时切风、滑得最快；正面朝风时几乎停住。
-       * 资料里这句是"叶子 vs 纸屑"的分水岭 —— 所以**不能再给 x 加独立正弦**（那读起来像 bug）。
+       * 资料里这句是"叶子 vs 纸屑"的分水岭 —— 所以**不能再给 x 加独立正弦**。
+       *
+       * ★★ 2026-10-11 修"龙卷风"：`dx` 是**相对锚点的横向偏移**，两条约束 ——
+       *   ① 回中（`exp(-dt/DRIFT_TAU)`）：风停它就飘回锚点附近；
+       *   ② 有界（`dcap`）：某段风一直朝一边吹也只许漂这么远。
        */
       const slip = p.slip ? Math.sin(spinA) * p.slip : 0;
-      p.bx += (p.vx + slip) * dt;
+      p.dx = p.dx * Math.exp(-dt / DRIFT_TAU) + (p.vx + slip) * dt;
+      const cap = p.dcap || WIND_CAP;
+      if (p.dx > cap) p.dx = cap; else if (p.dx < -cap) p.dx = -cap;
+      p.bx = p.ax + p.dx;
       p.by += p.vy * p.drift * dt;
       // 摆动：围绕 bx 算，每颗自己的频率与相位
       const ph = p.age * p.hzA + p.phase;
@@ -857,6 +923,7 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
    */
   function draw() {
     refreshPal(false);
+    const t0 = spender ? spender() : 0;
     build();
     const g = ensureCanvas();
     if (g && !drawBroken) {
@@ -909,6 +976,7 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
       S.push(o);
     }
     if (onPaint) { try { onPaint({ D: S, meta }); } catch (e) { /* 自检回调出错不影响画面 */ } }
+    lastCost = spender ? (spender() - t0) : 0;
   }
 
   /** 每帧推进（页面在帧循环里调一次）。`weather` 是当前天气（`off` 不发射），`scale` 是卡顿减量。 */
@@ -928,11 +996,17 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
      */
     const p = weather && weather !== 'off' ? PROFILE[weather] : null;
     if (p) {
-      cut += p.perS * dt * clamp(scale, .3, 1);
+      /**
+       * `scale` 是**规模倍率**：桌宠只会给 0.3~1（卡顿自动减量），验收页会给到 3（堆粒子看渲染开销）。
+       * 下限必须夹住（别变成 0 → 一颗都不发），**上限不夹** —— 真天花板是 `HARD_CAP`。
+       */
+      cut += p.perS * Math.max(.05, scale) * dt;
       let guard = 0;
-      while (cut >= 1 && guard < 6) { cut -= 1; guard += 1; emit(weather, scale); }
+      while (cut >= 1 && guard < 24) { cut -= 1; guard += 1; emit(weather, scale); }
     } else cut = 0;
+    const tPhys = spender ? spender() : 0;
     step(dt, t);
+    if (spender) lastPhys = spender() - tPhys;      // 物理+发射（不含渲染）
     draw();
   }
 
@@ -959,6 +1033,21 @@ export function createFx({ ctl, canvas, report, onPaint, onCtx } = {}) {
     },
     /** 换主题之后页面调一次（重读 CSS 变量并重烘贴图）。 */
     repaintPalette() { refreshPal(true); },
+    /**
+     * ★ **尺寸诊断**：把"fx 眼里的尺寸 / 真正的画布像素 / 画布 CSS 尺寸 / dpr / 有没有 2D 上下文"
+     * 一次给全。画布尺寸这条链出问题时会表现成"粒子在算、但一个都看不见"（踩过一次：1×1）。
+     */
+    size() {
+      const v = view();
+      const src = ctl && ctl.bounds ? (typeof ctl.bounds === 'function' ? 'ctl.bounds()' : 'ctl.bounds') : '(无)';
+      return {
+        W: v.W, H: v.H, src,
+        canvas: canvas ? [canvas.width, canvas.height] : null,
+        css: canvas && canvas.getBoundingClientRect
+          ? [Math.round(canvas.getBoundingClientRect().width), Math.round(canvas.getBoundingClientRect().height)] : null,
+        dpr, hasCtx: !!ctx, broken: drawBroken,
+      };
+    },
     /**
      * **诊断：贴图里到底有没有画上东西**（2026-10-11 加的，为一次真实事故）。
      * `drawImage` 一张**全透明**的贴图是合法的、不报错的 —— 表现就是"粒子一颗都看不见"。

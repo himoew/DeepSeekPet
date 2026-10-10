@@ -162,7 +162,15 @@ function applySoundMode(mode) {
   prefs.sound = mode !== 'off';
   prefs.sayVoice = mode === 'voice';
   sfx.set(prefs.sound);
-  // ★ 环境音跟她的音效共用一个**总闸**，但它自己还有一个开关（`weatherSound`）—— 见 `ambienceOn()`
+  /**
+   * ★ 环境音跟她的音效共用一个**总闸**，另外还有自己那一格开关（右键菜单「天气声」）。
+   * 语义（跟按钮读数一致，别让"声音：关"还留着雨声）：
+   *   · 总闸 `off` → 环境音的格子也**同步置 false**；
+   *   · 总闸开回来 → 格子**自动恢复 true**（默认就是开）；用户之后单独关它，就一直是关。
+   *   · `sfx` / `voice` 两档对环境音没有区别。
+   */
+  if (mode === 'off') prefs.weatherSound = false;
+  else prefs.weatherSound = true;
   ambience.setEnabled(ambienceOn());
   if (!prefs.sayVoice) sayAudio.next = null;    // 关掉就把还没放的丢掉
 }
