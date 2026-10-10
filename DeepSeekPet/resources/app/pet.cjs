@@ -73,7 +73,11 @@ function savePetX(x) {
 }
 
 /** 部位的中文名（台词和模型上下文都用它，对应 pet-app.js 的 REGION_AT / 这里的 AREAS）。 */
-const AREA_CN = { head: '头', body: '肚子', hand: '手', fin: '鳍', tail: '尾巴', low: '裙子', foot: '脚' };
+const AREA_CN = {
+  ahoge: '呆毛', hair: '头发', eyes: '眼睛', cheek: '脸蛋', chin: '下巴',
+  neck: '脖子', chest: '胸口', belly: '肚子', waist: '腰', skirt: '裙子',
+  hand: '手', fin: '鳍', tail: '尾巴', thigh: '大腿', foot: '脚',
+};
 
 /** 「刚发生在它身上的事」——一句话，喂给模型当上下文（它自己可不知道刚才被谁摸了头）。 */
 function eventPhrase(m) {
@@ -327,17 +331,49 @@ const PENDING_TTL_MS = 8000;
 /* ---------- 部位：同一个手势落在身上不同的地方，说不一样的话 ---------- */
 
 /**
- * 页面报上来的 `at` 是**身体部位**：由 pet-app.js 就着 whale\model.json 里的 pivots 就近判出来的
- * （那张表在 pet-app.js 的 `REGION_AT`）。这里只认名字并对上台词：
+ * 页面报上来的 `at` 是**身体部位**：由 pet-app.js 就着 whale\model.json 的部件框量出来的
+ * （那张表在 pet-app.js 的 `REGION_BOXES` + `REGION_AT`）。这里只认名字并对上台词。
  *
- *   head 头/呆毛 · body 上身/腰 · fin 两侧的鳍 · tail 尾巴 · low 裙子/腿
+ * ★ 2026-10-10 从 **7 类细化到 15 类**（用户："眼睛、脸蛋和头分开，脚掌和大腿分开，
+ * 手和肩膀分开，裙子和胸口分开，呆毛和头发分开"）：原来只有 head/body/fin/tail/low/hand/foot，
+ * 现在多出 ahoge（呆毛）、eyes（眼睛）、cheek（脸蛋）、chin（下巴/嘴）、neck+chest（脖子/胸口）、
+ * belly（肚子）、waist（腰）、thigh（大腿）。
  *
  * **不认识的（或老页面没报）就退回原来那几桶通用台词**，所以判定出错最多是"说了通用的话"，
- * 不会变成哑巴。想挪分界线去改 pet-app.js 那张表，这里不用动。
+ * 不会变成哑巴。想挪分界线去改 pet-app.js 那两张表，这里不用动。
  */
-const AREAS = new Set(['head', 'body', 'hand', 'fin', 'tail', 'low', 'foot']);
+const AREAS = new Set([
+  'ahoge', 'hair', 'eyes', 'cheek', 'chin',
+  'neck', 'chest', 'belly', 'waist', 'skirt',
+  'hand', 'fin', 'tail', 'thigh', 'foot',
+]);
+/**
+ * **"摸头"那一族**（细化之后 `head` 被拆成了这五个；见 `AREAS`）。
+ * 只有一处用它：摸这几处算**两下**好感（它最喜欢被摸头），见 `attach` 里那段。
+ */
+const HEAD_FAMILY = new Set(['ahoge', 'hair', 'eyes', 'cheek', 'chin']);
 /** 这一下落在哪个部位，没有就返回空串。 */
 const areaOf = (m) => (typeof m.at === 'string' && AREAS.has(m.at) ? m.at : '');
+
+/**
+ * ★ **细化之后的"近亲兜底"**（2026-10-10 部位从 7 类扩到 15 类时加的）。
+ *
+ * 为什么要它：15 个部位里有几个"小部位"（呆毛/眼睛/脸蛋/下巴/脖子/胸口/腰/大腿）**没打算各写一桶台词**，
+ * 但**也不能因此就不认它** —— 不认的话戳呆毛会掉回通用台词，比原来 7 类时还差。
+ * 所以查表顺序是：**本部位的桶 → `fallback[本部位]` 那一族的桶 → 该段的 all / 通用**。
+ *
+ * 想给某个小部位写专属台词：直接在 `lines.pokeArea` / `petArea` / `petting` 里加一项即可，
+ * 本部位优先，兜底表自动让位。**兜底表都在 lines.cjs 里**（`petAreaFallback` / `pettingFallback`）。
+ *
+ * ⚠️ `fallback` **必须由调用方显式传**（不是从 lines 里偷偷取一张全局的）：
+ * 每一张表该往哪一族退是不一样的（戳呆毛 ≠ 蹭呆毛），取错了会静默说出"隔壁部位"的话。
+ */
+function areaLines(table, fallback, area) {
+  if (!area || !table) return null;
+  if (table[area]) return table[area];
+  const near = fallback?.[area];
+  return (near && table[near]) || null;
+}
 
 /* ---------- 它会问你（页面里那套选择卡，以前没人用过） ---------- */
 
@@ -865,24 +901,24 @@ function reactionFor(state, m) {
   switch (m.kind) {
     case 'grab': {
       // `stage:'long'` = "拎了一会儿还没放下"（页面在 frame 里报的），按抓到的部位吭一声
-      if (m.stage === 'long') return next((area && lines.holdArea?.[area]) || lines.holdArea?.all || lines.grab);
+      if (m.stage === 'long') return next(areaLines(lines.holdArea, lines.grabFallback, area) || lines.holdArea?.all || lines.grab);
       // 抓哪儿就从哪儿拎起来：抓脚是倒吊、抓手是斜拉……台词按抓到的部位分
-      return next((area && lines.grabArea?.[area]) || lines.grab);
+      return next(areaLines(lines.grabArea, lines.grabFallback, area) || lines.grab);
     }
     case 'pet': {
       // 触点报上来的 asleep 是权威的：睡着时蹭它，它不会醒，只会做梦
       if (m.asleep) return next(lines.petAsleep);
       // **抚摸的三段**（页面侧判的"往复"手势，见 pet-app.js 的 STROKE 那段）：
       //   start 刚摸上 · good 摸舒服了 · over 够了
-      // 每段先按部位挑，没写这个部位就退回该段的 `all`，再退回通用的「蹭」。
+      // 每段先按部位挑、再按 `pettingFallback` 落到同族，最后退回该段的 `all`、再退回通用的「蹭」。
       const stage = m.stage && lines.petting?.[m.stage];
-      if (stage) return next((area && stage[area]) || stage.all || lines.pet);
+      if (stage) return next(areaLines(stage, lines.pettingFallback, area) || stage.all || lines.pet);
       // 老页面、或者上游 pet-core 自己发的那种（没有 stage）：还是按部位的通用"蹭"
-      return next((area && lines.petArea[area]) || lines.pet);
+      return next(areaLines(lines.petArea, lines.petAreaFallback, area) || lines.pet);
     }
     case 'drop':
       // 放下也说抓到的那个部位的话（页面在 drop 上带了 `at`）
-      return next((area && lines.dropArea?.[area]) || lines.drop);
+      return next(areaLines(lines.dropArea, lines.grabFallback, area) || lines.drop);
     case 'throw':
       return next(lines.throw);
     case 'crash':
@@ -1393,8 +1429,12 @@ function attach(ws) {
         // **只有"摸舒服了"那一段攒好感**：抚摸现在是三段的（start/good/over），三段都算的话
         // 一次抚摸就把卡问出来了。没有 stage 的（老页面 / pet-core 自己发的）照旧算一次。
         // **摸头算两下**：那是它最喜欢的，也让它快点开口（两下头 = 摸够了）。
+        // ★ 2026-10-10 部位细化之后："头"不再是一个部位，而是**一整族**
+        // （呆毛/头发/眼睛/脸蛋/下巴都算"摸头"），所以这里按族判断；
+        // 尾巴上的 `'head'` 是**老页面兼容**（它只会报 7 类那套名字）。
         if (m.kind === 'pet' && !m.asleep) {
-          const points = (m.stage === undefined || m.stage === 'good') ? (m.at === 'head' ? 2 : 1) : 0;
+          const headPet = HEAD_FAMILY.has(m.at) || m.at === 'head';
+          const points = (m.stage === undefined || m.stage === 'good') ? (headPet ? 2 : 1) : 0;
           state.pets += points;
           if (points && state.pets >= ASK_AFTER_PETS) { state.pets = 0; askQuestion(); }
         }

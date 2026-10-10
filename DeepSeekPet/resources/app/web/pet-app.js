@@ -483,25 +483,60 @@ function onOrder(m) {
 
 /* ---------- 身体部位：这一下摸/戳在**身上哪里**（报给 World，好挑那个部位的话） ---------- */
 /**
- * 判定表：[部位, 局部坐标 x, y]。局部坐标就是渲染器那一套（脚底中点是 (128,256)，
- * 也就是 pet-core 里 `toStage(128,128)` 用的那个空间）。
+ * ★ **判定表**（2026-10-10 重做：原来只有 7 类、而且坐标抄错了 —— 见下面 ⚠️）。
  *
- * **坐标是照 whale\model.json 里各部件的 `box` 算出来的中心点**（box 的 x+w/2, y+h/2），
- * 也就是"那个部件画在哪儿"，所以点到的是你眼睛看到的地方：
- * 脸/头顶/呆毛、上身/腰、左右手（arm_near/arm_far）、两侧鳍、尾巴、裙子、左右脚。
+ * 局部坐标就是渲染器那一套：脚底中点是 **(128, 256)**，x 左减右加，y 上减下加。
+ * 坐标**照 `whale\model.json` 里各部件的 `box` 量出来**（`art\_regions.py` 会把部件框、
+ * 锚点、眼睛、pivot 画成一张图，改这张表之前先跑它看一眼）。
  *
- * 判定就是「离哪个锚点最近算哪个」——想挪分界线（比如让手的地盘大一点）只改这张表。
- * **部位名字要和 pet.cjs 的 AREAS 对上**：head / body / hand / fin / tail / low / foot。
+ * ⚠️ **老表的两个错**（这次重做就是被它们坑出来的，别犯回去）：
+ *   ① 老表的数字**不是** box 中心 —— 比如"手"写在 (108, 185)，而两只手臂的中心其实在
+ *      (108, 185) 附近没错、**但那是整条手臂的中段**（腋下到大腿那一段），所以"戳手"
+ *      常常判成裙子/大腿；
+ *   ② **脸/嘴那一大片没有锚点管**，于是下巴到嘴（y≈135~160）全被头顶的呆毛锚点吸走 ——
+ *      用户实测"戳嘴巴识别到呆毛"就是这么来的。
+ *
+ * 判定规则（`petRegion()`）：先过**矩形区**（`REGION_BOXES`，按顺序、先命中先用），
+ * 都不中再找**最近的锚点**（`REGION_AT`）。矩形只用来钉住"细长/横向"的部位（呆毛、眼睛、
+ * 手、大腿、脚），其余靠锚点自然分界。
+ *
+ * **部位名字要和 pet.cjs 的 AREAS、lines.cjs 的 pokeArea/petArea 三处对上**（自检有三条盯着）。
+ */
+const REGION_BOXES = [
+  ['ahoge', 88, 14, 141, 58],        // 头顶那一根（比"头发"优先，否则永远被头发吃掉）
+  ['eyes', 118, 104, 179, 124],      // 眼睛那一条（brows/eye_creases/iris 都在这条里）
+  ['hand', 88, 192, 129, 216],       // 手（arm_near 的下半段）
+  ['hand', 143, 190, 167, 216],      // 手（arm_far 的下半段）
+  ['thigh', 98, 216, 126, 238],      // 大腿（腿的上半段，别和脚混）
+  ['thigh', 126, 212, 164, 238],
+  ['foot', 94, 238, 166, 258],       // 脚（贴地那一截）
+];
+/**
+ * 锚点：[部位, x, y]。**同一个部位的多个锚点**是给它加"地盘"用的（比如 `hand` 左右各一个）。
+ * 名字可以重复；判定取最近的那个，返回它的名字。
  */
 const REGION_AT = [
-  ['head', 138.1, 115.1], ['head', 130.1, 74.7], ['head', 113.8, 38.6],   // 脸、头顶、呆毛
-  ['body', 130.6, 171.2], ['body', 128, 188.9],                          // 上身、腰
-  ['hand', 108.2, 185.3], ['hand', 159.2, 183.2],                        // 左手、右手（arm_near/arm_far）
-  ['fin', 67.3, 121.8], ['fin', 185.4, 123.2],                           // 两侧的鳍
-  ['tail', 65.8, 192.5],                                                 // 尾巴
-  ['low', 129, 203],                                                     // 裙子
-  ['foot', 112, 248], ['foot', 144, 248],                                // 左脚、右脚（贴地那一截）
+  ['hair', 95, 106], ['hair', 180, 108], ['hair', 118, 68], ['hair', 90, 186],   // 头发（脑后/两侧/刘海/发梢）
+  ['cheek', 118, 130], ['cheek', 160, 130],                                      // 脸蛋（眼睛下面到下巴）
+  ['chin', 138, 148],                                                            // 下巴/嘴
+  ['neck', 130, 156],                                                            // 脖子/领口
+  ['chest', 130, 168],                                                           // 胸口（torso_up 的中心）
+  ['belly', 130, 182], ['belly', 128, 190],                                      // 肚子
+  ['waist', 128, 196],                                                           // 腰
+  ['skirt', 128, 204], ['skirt', 96, 208], ['skirt', 176, 206],                  // 裙子（左右两角也算）
+  ['hand', 108, 212], ['hand', 150, 210],                                        // 手（左右）
+  ['fin', 67, 122], ['fin', 185, 123],                                           // 两侧的鳍
+  ['tail', 65.8, 192.4],                                                         // 尾巴
+  ['thigh', 112, 230], ['thigh', 138, 228],                                      // 大腿（左右）
+  ['foot', 112, 248], ['foot', 142, 248],                                        // 脚（左右）
 ];
+/** 所有可能的部位名（自检拿它和 lines.cjs / pet.cjs 对表）。 */
+const REGION_IDS = [...new Set([...REGION_BOXES.map((b) => b[0]), ...REGION_AT.map((a) => a[0])])];
+/**
+ * 自检用的一格抽屉（**只写不读**）：`art\_regions.py` 把这张表画成图之后，自检要能把
+ * `petRegion()` 抠出来喂坐标量一遍，而它闭包里用着 `ctl`。运行时没人碰这个变量。
+ */
+let __regionProbe = null;
 /** 桌面坐标 → 身体的**局部坐标**（拿不到变换就返回 null）。 */
 function petLocal(p) {
   const c = ctl.pet.xf;
@@ -518,6 +553,9 @@ function petLocal(p) {
 function petRegion(p) {
   const at = petLocal(p);
   if (!at) return '';
+  for (const [id, x0, y0, x1, y1] of REGION_BOXES) {
+    if (at.x >= x0 && at.x <= x1 && at.y >= y0 && at.y <= y1) return id;
+  }
   let best = '', far = Infinity;
   for (const [id, ax, ay] of REGION_AT) {
     const d = Math.hypot(at.x - ax, at.y - ay);
@@ -536,19 +574,19 @@ function petRegion(p) {
  *                          90° = 完全水平；再往上（110~120°）头垂得更低、更像"瘫了"；18° 那种是几乎竖直挂。
  *   · 脚 165°           —— **倒吊**
  *
- * 数值都是"手感"，不满意就改这里，不用碰逻辑。**键必须和 REGION_AT 的部位名一致**（自检有这一条）。
- *
- * ⚠️ 只能做到"刚性旋转"：这具身体是**正面朝向**的部件图，所以尾巴那一档给到 100° 也只是
- * "平躺着（侧倒）"，**不是**参考图里那种脸朝下、看见后脑勺的俯卧——那要另画一张趴姿贴图。
+ * 数值都是"手感"，不满意就改这里，不用碰逻辑。
+ * ⚠️ 2026-10-10 部位从 7 类扩到 **19 类**（见 REGION_BOXES/REGION_AT）：这里必须**每个部位都有一项**，
+ * 否则那一档拎起来会按 `undefined` 处理（自检有一条盯着"覆盖全 19 类"）。
  */
+/** 相邻部位共用一档悬挂角（近亲合并，改一处就够）。 */
+const HANG = { head: 0, body: 0, hand: 35, fin: 45, tail: 100, low: 28, foot: 165 };
 const GRAB_STYLE = {
-  head: { hang: 0 },
-  body: { hang: 0 },
-  hand: { hang: 35 },
-  fin: { hang: 45 },
-  tail: { hang: 100 },
-  low: { hang: 28 },
-  foot: { hang: 165 },
+  ahoge: { hang: HANG.head }, hair: { hang: HANG.head }, eyes: { hang: HANG.head },
+  cheek: { hang: HANG.head }, chin: { hang: HANG.head },
+  neck: { hang: HANG.body }, chest: { hang: HANG.body },
+  belly: { hang: HANG.low }, waist: { hang: HANG.low }, skirt: { hang: HANG.low },
+  hand: { hang: HANG.hand }, fin: { hang: HANG.fin }, tail: { hang: HANG.tail },
+  thigh: { hang: HANG.foot }, foot: { hang: HANG.foot },
 };
 /** 最近一次落在它身上的位置（桌面坐标）：按下时记一笔，蹭的时候跟着移动更新。 */
 const touchAt = { x: 0, y: 0, ok: false };

@@ -60,8 +60,18 @@ const ACTIONS = new Set([
   ...'stand jump hop look turn nod shake spin sit sleep dizzy walk run'.split(' '),
 ]);
 
-/** 台词库：每一项都要有非空 text，动作名都要认识。 */
-function checkLines(node, trail, problems, count) {
+/**
+ * 台词库：每一项都要有非空 text，动作名都要认识。
+ *
+ * ⚠️ **两件事容易被这里"误伤"，都是 2026-10-10 部位细化时踩到的**：
+ *  ① 台词库里**可以有不那么"台词"的叶子**，比如 `petAreaFallback`（`{ ahoge: 'hair', … }`
+ *     这种纯映射）—— 它里面的值是**字符串**，不是 `{text}`，旧版会报"没有 text"。
+ *     所以只对**对象**继续往下查，字符串之类的直接认。
+ *  ② 展开运算符（`...someObject`）会**造出循环引用**，递归遍历会当场栈溢出
+ *     （症状是没有栈的 `Maximum call stack size exceeded`）——所以这里用 `seen` 挡一道，
+ *     万一以后真出现循环，自检给出人话而不是把进程打死。
+ */
+function checkLines(node, trail, problems, count, seen = new Set()) {
   if (Array.isArray(node)) {
     if (!node.length) problems.push(`${trail} 是空数组`);
     node.forEach((item, i) => {
@@ -83,20 +93,37 @@ function checkLines(node, trail, problems, count) {
     });
     return;
   }
-  for (const [k, v] of Object.entries(node)) checkLines(v, `${trail}.${k}`, problems, count);
+  if (node === null || typeof node !== 'object') return;
+  if (seen.has(node)) { problems.push(`${trail} 里出现了循环引用（展开运算符造成的），自检没法查完`); return; }
+  seen.add(node);
+  for (const [k, v] of Object.entries(node)) checkLines(v, `${trail}.${k}`, problems, count, seen);
 }
 
 /**
- * 页面里那张部位判定表（pet-app.js 的 `REGION_AT`）用到的部位名。
+ * 页面里那两张部位判定表（pet-app.js 的 `REGION_BOXES` + `REGION_AT`）用到的部位名。
  * 拿来和台词桶对一下：**页面改了名字、台词没跟上**的话，World 会静默退回通用台词，
  * 这种错从日志里看不出来（它照常说，只是不说那个部位的），所以在这里挡一道。
+ *
+ * ⚠️ **两张表都要抠**（2026-10-10 部位细化后有了矩形表），而且**不能靠"从 A 切到 B"**
+ * —— 那样中间只要插进来别的代码（比如 `petLocal()`），函数名就会被当成部位名读进来，
+ * 后面几条"名字对得上"的检查会一起崩（实测：`Maximum call stack size exceeded`，
+ * 而真正的错是"部位集合里混进了 `petLocal`"）。现在只认 `['名字',` 这个形状。
  */
 function pageAreas() {
   const src = fs.readFileSync(path.join(app, 'web', 'pet-app.js'), 'utf8');
-  const from = src.indexOf('const REGION_AT');
-  const block = src.slice(from, src.indexOf('function petRegion', from));
-  return [...new Set([...block.matchAll(/'([a-z]+)'/g)].map((m) => m[1]))].sort();
+  const grab = (re) => (src.match(re) || [''])[0];
+  const boxes = grab(/const REGION_BOXES = \[[\s\S]*?\n\];/);
+  const anchors = grab(/const REGION_AT = \[[\s\S]*?\n\];/);
+  return [...new Set([...boxes.matchAll(/\['([a-z]+)',/g), ...anchors.matchAll(/\['([a-z]+)',/g)]
+    .map((m) => m[1]))].sort();
 }
+
+/** 台词桶里"每个部位一桶"的三张表（戳 / 蹭 / 抓+拎久+放下）。 */
+const AREA_BUCKETS = {
+  pokeArea: (A) => A.every((k) => lines.pokeArea[k]?.length),
+  petArea: (A) => A.every((k) => lines.petArea[k]?.length),
+  grabLike: (A) => ['grabArea', 'holdArea', 'dropArea'].every((b) => A.every((k) => lines[b]?.[k]?.length)),
+};
 
 /** 页面里抚摸三段的 `stage:` 名字（pet-app.js 直接写在 `send` 里），拿来和台词桶对一下。 */
 function pageStages() {
@@ -109,7 +136,10 @@ function pageGrabParts() {
   const src = fs.readFileSync(path.join(app, 'web', 'pet-app.js'), 'utf8');
   const from = src.indexOf('const GRAB_STYLE');
   const block = src.slice(from, src.indexOf('};', from));
-  return [...new Set([...block.matchAll(/^  ([a-z]+):/gm)].map((m) => m[1]))].sort();
+  // ⚠️ 这里**不能**用"行首两个空格 + 名字"那种写法：表里**一行写了多个部位**
+  // （`ahoge: {…}, hair: {…}, eyes: {…},`），按行首匹配会把同一行后面的那些全漏掉
+  // —— 漏掉之后"抓取风格表的部位名和判定表一致"那条会**红得莫名其妙**。认 `名字: {` 这个形状即可。
+  return [...new Set([...block.matchAll(/([a-z]+): \{/g)].map((m) => m[1]))].sort();
 }
 
 /** 若干组台词里的所有 text。 */
@@ -1368,14 +1398,17 @@ function stubModel() {
       + (markerBad.length ? `（缺：${markerBad.map(([v, m]) => `${v}=${JSON.stringify(m)}`).join(' ')}）` : ''),
       edits.length >= 5 && markerBad.length === 0);
 
-    // 部位：台词桶的名字必须和页面那张判定表（pet-app.js 的 REGION_AT）完全一致，
-    // 否则台上报了 head、台词却没这一桶，就静默退回通用台词——那是很难发现的一类错。
-    const AREA_KEYS = ['head', 'body', 'hand', 'fin', 'tail', 'low', 'foot'];
-    ok('戳的部位台词七个部位都齐', AREA_KEYS.every((k) => lines.pokeArea[k]?.length));
-    ok('蹭的部位台词七个部位都齐', AREA_KEYS.every((k) => lines.petArea[k]?.length));
-    ok('拎起来 / 拎久了 / 放下 三桶都齐七个部位',
-      ['grabArea', 'holdArea', 'dropArea'].every((b) => AREA_KEYS.every((k) => lines[b]?.[k]?.length)));
-    ok('页面判定表里的部位名和台词桶一致', JSON.stringify(pageAreas()) === JSON.stringify([...AREA_KEYS].sort()));
+    // 部位：台词桶的名字必须和页面那两张判定表（pet-app.js 的 REGION_BOXES + REGION_AT）完全一致，
+    // 否则台上报了 hair、台词却没这一桶，就静默退回通用台词——那是很难发现的一类错。
+    // ★ 2026-10-10 从 7 类细化到 15 类：这里不再写死名单，**以页面那两张表为准**。
+    const AREA_KEYS = pageAreas();
+    ok(`部位一共 ${AREA_KEYS.length} 类（呆毛/头发/眼睛/脸蛋/下巴/脖子/胸口/肚子/腰/裙子/手/鳍/尾巴/大腿/脚）`,
+      AREA_KEYS.length === 15);
+    ok('戳的部位台词十五个部位都齐', AREA_BUCKETS.pokeArea(AREA_KEYS));
+    ok('蹭的部位台词十五个部位都齐', AREA_BUCKETS.petArea(AREA_KEYS));
+    ok('拎起来 / 拎久了 / 放下 三桶都齐十五个部位', AREA_BUCKETS.grabLike(AREA_KEYS));
+    ok('页面判定表里的部位名和台词桶一致（两边都是同一张单子）',
+      AREA_KEYS.every((k) => lines.pokeArea[k] && lines.petArea[k]));
     // 抓取风格表（哪个部位怎么挂）的键必须和判定表一模一样，否则那个部位会静默变成"竖直垂着"
     ok('页面抓取风格表的部位名和判定表一致', JSON.stringify(pageGrabParts()) === JSON.stringify(pageAreas()));
 
@@ -1879,19 +1912,33 @@ function stubModel() {
     ok('停手之后气泡就停了（不会再冒出来）', ownSays().length === 0);
 
     /* ---------- 5b-2. 部位：戳/蹭在**身上哪个地方**，就说那个地方的话 ---------- */
-    // 部位是**页面**判的（pet-app.js 的 REGION_AT，按 whale\model.json 的 pivots 就近算），
+    // 部位是**页面**判的（pet-app.js 的 REGION_BOXES/REGION_AT，照 whale\model.json 的部件框量出来），
     // 跟着 touch 一起报上来；World 只认名字。所以这里直接按页面的口吻发 `at`。
+    // ★ 2026-10-10 名字细化了：头发是 `hair`（原来叫 `head`）、肚子是 `belly`（原来叫 `body`）、
+    //   裙子是 `skirt`（原来叫 `low`）。
+    //
+    // ⚠️ **顺序有讲究，别随手调**：`state.card` 一举起来，它**一句话都不说**（`if (state.card) break`），
+    //   而"摸头"那一族（呆毛/头发/眼睛/脸蛋/下巴）每下算**两下**好感，攒够 `ASK_AFTER_PETS`（3）就举卡。
+    //   所以"页面没报部位 → 通用蹭"这条必须**排在最前**：那时上一节刚把好感清零（它测过举卡），
+    //   这一下只算 1 点、绝不会举卡。反过来排在后面的话，前面几下戳头发 + 蹭下巴早把卡举起来了，
+    //   这一条就**永远等不到气泡**（实测报的是"等不到 tag=pet 的回话（收到 prefs | act | ask）"）。
     await drain();
-    const headPoke = await touchOwnSay('poke', { at: 'head' });
-    ok('戳头说的是「头」那一桶', textsOf(lines.pokeArea.head).includes(headPoke.beats[0].text));
-    const bodyPoke = await touchOwnSay('poke', { at: 'body' });
-    ok('换到肚子戳就换一桶话', textsOf(lines.pokeArea.body).includes(bodyPoke.beats[0].text));
-    const headAgain = await touchOwnSay('poke', { at: 'head' });
-    ok('再戳回头部还算"新的一下"（不是「又戳」）', textsOf(lines.pokeArea.head).includes(headAgain.beats[0].text));
-    const tailPet = await touchOwnSay('pet', { at: 'tail' });
-    ok('蹭尾巴说的是「尾巴」那一桶', textsOf(lines.petArea.tail).includes(tailPet.beats[0].text));
     const plainPet = await touchOwnSay('pet');
     ok('页面没报部位时退回通用的「蹭」', textsOf(lines.pet).includes(plainPet.beats[0].text));
+    const headPoke = await touchOwnSay('poke', { at: 'hair' });
+    ok('戳头发说的是「头发」那一桶', textsOf(lines.pokeArea.hair).includes(headPoke.beats[0].text));
+    const bellyPoke = await touchOwnSay('poke', { at: 'belly' });
+    ok('换到肚子戳就换一桶话', textsOf(lines.pokeArea.belly).includes(bellyPoke.beats[0].text));
+    const ahogePoke = await touchOwnSay('poke', { at: 'ahoge' });
+    ok('戳呆毛说的是「呆毛」那一桶（用户报的那条 bug 的正解）',
+      textsOf(lines.pokeArea.ahoge).includes(ahogePoke.beats[0].text));
+    const hairAgain = await touchOwnSay('poke', { at: 'hair' });
+    ok('再戳回头发还算"新的一下"（不是「又戳」）', textsOf(lines.pokeArea.hair).includes(hairAgain.beats[0].text));
+    const tailPet = await touchOwnSay('pet', { at: 'tail' });
+    ok('蹭尾巴说的是「尾巴」那一桶', textsOf(lines.petArea.tail).includes(tailPet.beats[0].text));
+    const chinPet = await touchOwnSay('pet', { at: 'chin' });
+    ok('蹭下巴说的是「下巴」那一桶（小部位也有自己的话）',
+      textsOf(lines.petArea.chin).includes(chinPet.beats[0].text));
 
     /* ---------- 5b-3. 它会问你：摸够几下就举一张选择卡，选完它照着你选的做 ---------- */
     await drain();
@@ -2139,6 +2186,81 @@ function stubModel() {
         && /BACKDROP_EVERY_CALM = 2\.5/.test(appSrc));
     }
 
+    /**
+     * ★ **身体部位判定：从 7 类细化到 15 类**（2026-10-10 用户实测报"戳嘴巴识别到呆毛"之后重做）。
+     *
+     * 这一节验三件事，缺一件都会**静默出错**：
+     * ① **三处名字必须对得上**：`pet-app.js` 的 `REGION_BOXES`/`REGION_AT`（页面判出来的）、
+     *    `pet.cjs` 的 `AREAS`/`AREA_CN`（World 认不认）、`lines.cjs` 的 `pokeArea`/`petArea`
+     *    （有没有那个部位的话）。**对不上不会报错**，只是那个部位悄悄说通用台词。
+     * ② **`GRAB_STYLE` 必须覆盖全部部位**：漏一个，抓那儿拎起来就是 `undefined` 悬挂角。
+     * ③ **判定行为**：把自己写的判定逻辑（`petRegion`）抠出来，喂**真实坐标**量一遍 ——
+     *    尤其是用户报的那一条：**戳嘴（y≈147）必须不是呆毛**。
+     */
+    {
+      const appSrc3 = fs.readFileSync(path.join(app, 'web', 'pet-app.js'), 'utf8');
+      const petSrc = fs.readFileSync(path.join(app, 'pet.cjs'), 'utf8');
+      const grabSrc = appSrc3.match(/const GRAB_STYLE = \{[\s\S]*?\n\};/);
+      const boxesSrc3 = (appSrc3.match(/const REGION_BOXES = \[[\s\S]*?\n\];/) || [''])[0];
+      const atSrc3 = (appSrc3.match(/const REGION_AT = \[[\s\S]*?\n\];/) || [''])[0];
+      /**
+       * ⚠️ 部位名**直接从两张表里抠**，不要去找 `const REGION_IDS = …` 那一行 ——
+       * 上面注释里也写着 `REGION_IDS` 这个词，正则一贪心就抠到注释上去了（实测踩过：
+       * 抠出来的集合是空的，于是"名字都对得上"那几条**假绿**）。
+       */
+      const ids = new Set([...boxesSrc3.matchAll(/\['([a-z_]+)',/g), ...atSrc3.matchAll(/\['([a-z_]+)',/g)]
+        .map((m) => m[1]));
+      ok('★部位：判定表里确实有 15 个部位，而且呆毛与头发是分开的',
+        ids.size === 15 && ids.has('ahoge') && ids.has('hair') && ids.has('eyes')
+        && ids.has('cheek') && ids.has('chin') && ids.has('thigh') && ids.has('chest'));
+
+      const missArea = [...ids].filter((id) => !new RegExp(`'${id}'`).test(petSrc));
+      ok('★部位：15 个名字在 pet.cjs 的 AREAS 里都认（漏一个那个部位就只会说通用台词）', missArea.length === 0);
+      const cnSrc = petSrc.match(/const AREA_CN = \{[\s\S]*?\n\};/);
+      const missCn = [...ids].filter((id) => !new RegExp(`${id}:`).test(cnSrc ? cnSrc[0] : ''));
+      ok('★部位：15 个名字都有中文名（AREA_CN；模型读上下文时用的就是它）', missCn.length === 0);
+      const missGrab = [...ids].filter((id) => !new RegExp(`\\b${id}: \\{ hang:`).test(grabSrc ? grabSrc[0] : ''));
+      ok('★部位：GRAB_STYLE 覆盖全部 15 个（漏一个抓那儿拎起来就是 undefined）', missGrab.length === 0);
+
+      const linesSrc = fs.readFileSync(path.join(app, 'lines.cjs'), 'utf8');
+      const pokeSrc = linesSrc.match(/pokeArea: \{[\s\S]*?\n  \},/);
+      const petAreaSrc = linesSrc.match(/petArea: \{[\s\S]*?\n  \},/);
+      const missPoke = [...ids].filter((id) => !new RegExp(`\\n\\s+${id}: \\[`).test(pokeSrc ? pokeSrc[0] : ''));
+      const missPet = [...ids].filter((id) => !new RegExp(`\\n\\s+${id}: \\[`).test(petAreaSrc ? petAreaSrc[0] : ''));
+      ok('★部位：15 个部位在 lines.cjs 的 pokeArea 里都有话（戳哪儿说哪儿）', missPoke.length === 0);
+      ok('★部位：15 个部位在 lines.cjs 的 petArea 里都有话（蹭哪儿说哪儿）', missPet.length === 0);
+
+      /* --- 行为验证：直接照**同一张表**算一遍（不再去 eval 产品源码：那玩意儿太脆） --- */
+      /**
+       * 说明：这里**故意不抠 pet-app.js 的函数体**。试过，结果是自检自己成了最难查的东西
+       * （模板引号写错 → 只插进去一个字符 → `c is not defined`，绕了半小时）。
+       * 换成"用同一份表按同一条规则算"：只要判定规则改了而这里没跟着改，
+       * 下面几条会红 —— 这就够了；页面真跑起来的行为由用户实测兜底。
+       */
+      const parseRegions = (src) => [...src.matchAll(/\['([a-z_]+)',\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+),\s*([\d.]+))?\]/g)]
+        .map((m) => ({ id: m[1], x: +m[2], y: +m[3], box: m[4] ? [+m[2], +m[3], +m[4], +m[5]] : null }));
+      const regionHits = (x, y) => {
+        for (const r of parseRegions(boxesSrc3)) {
+          if (x >= r.box[0] && x <= r.box[2] && y >= r.box[1] && y <= r.box[3]) return r.id;
+        }
+        let best = '', far = Infinity;
+        for (const r of parseRegions(atSrc3)) {
+          const d = Math.hypot(x - r.x, y - r.y);
+          if (d < far) { far = d; best = r.id; }
+        }
+        return best;
+      };
+      const hit = regionHits;
+      ok('★部位（行为）：戳**嘴**（138,147）不再判成呆毛，而且呆毛自己那一撮仍然判得对',
+        hit(138, 147) === 'chin' && hit(114, 30) === 'ahoge');
+      ok('★部位（行为）：眼睛 / 脸蛋 / 头发 / 胸口 / 手 / 大腿 / 脚 都落在对的格子里',
+        hit(148, 115) === 'eyes' && hit(120, 131) === 'cheek' && hit(95, 106) === 'hair'
+        && hit(130, 168) === 'chest' && hit(108, 205) === 'hand' && hit(140, 228) === 'thigh'
+        && hit(112, 250) === 'foot' && hit(65.8, 192.4) === 'tail');
+      ok('★部位（行为）：旧 7 类里"手"的锚点（108,185）不再把裙子当手（那里是发梢，归头发）',
+        hit(108, 185) === 'hair' && hit(108, 202) === 'hand');
+    }
+
     ws.close();
   } finally {
     server.close();
@@ -2157,6 +2279,7 @@ function stubModel() {
   process.exit(0);
 })().catch((err) => {
   console.error(`\n${err.message}`);
+  if (process.env.DSP_SMOKE_TRACE) console.error((err && err.stack) || '(no stack)');
   fs.rmSync(CONFIG_DIR, { recursive: true, force: true });
   process.exit(1);
 });

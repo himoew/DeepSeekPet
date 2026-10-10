@@ -69,7 +69,9 @@
 | ★ **桌面接地光**：`probeBackdrop` 同时算身后的平均色 → 轮廓光颜色改成**和桌面反着来**（浅桌面给暗轮廓、深桌面给亮轮廓，明度差 0.32），她脚下那块影子改用桌面色相染色（保持很淡：0.15~0.26）。`--shadow` 那套（气泡/菜单投影）没动 | web/pet-app.js（probeBackdrop / stepBackdrop）、web/pet.html 的 `#haloFlood` |
 | **抓屏节奏**：轮廓光开着时 0.8 秒一次，平时 2.5 秒一次（收掉 HANDOVER 10.1① 那条开销项） | web/pet-app.js（`BACKDROP_EVERY_CALM`） |
 | **修掉一个真 bug**：OKLab 正向变换里 m/s 的系数被抄成了逆矩阵的 → 灰正常、彩色悄悄偏色（(40,90,200) 的 g 从 90 掉到 69）。已改正，并加"往返不掉色"的行为验证钉住 | web/pet-app.js（oklab） |
-| 自检 **+12 条**（延迟跟随时序与竖直分量、无历史兜底、`save/restore` 包住、眨眼不被脏检查跳过、OKLab 往返、轮廓光反着来、抓屏节奏） | test/smoke.cjs（319 → **331**） |
+| 自检 **+24 条**（①②各 12 条：延迟跟随时序与竖直分量、无历史兜底、`save/restore` 包住、眨眼不被脏检查跳过、OKLab 往返、轮廓光反着来、抓屏节奏） | test/smoke.cjs（319 → **343**） |
+| ★ **身体部位判定重做：7 类 → 15 类**（用户实测报"戳嘴巴识别到呆毛"）：新增 `REGION_BOXES` 矩形表（呆毛/眼睛/手/大腿/脚），锚点表按 `model.json` 的**真实部件框**重量。部位：呆毛/头发/眼睛/脸蛋/下巴/脖子/胸口/肚子/腰/裙子/手/鳍/尾巴/大腿/脚 | web/pet-app.js（REGION_BOXES + REGION_AT + GRAB_STYLE 15 项）· pet.cjs（AREAS/AREA_CN 15 项 + `areaLines` 近亲兜底）· lines.cjs（pokeArea/petArea/grabArea/holdArea/dropArea 各 15 桶 + `petAreaFallback`/`pettingFallback`/`grabFallback`） |
+| ★ **修掉自检自己的一串坑**：`checkLines` 撞上循环引用会栈溢出（加了 `seen` 防环 + 只对对象下钻）；`pageAreas()` 用"从 A 切到 B"抠源码，中间插进来一个函数就把函数名当部位名；`pageGrabParts()` 按行首匹配，漏掉"一行写多个部位"的那些 | test/smoke.cjs |
 | **工作区清理**：art 的 215 个美术过程稿（58.6MB）、`whale/schemes/` 255 个（6.3MB，`model.json` 只注册 deepseek，程序永远读不到）、2 个 `__pycache__`、3 个 0 字节 png、6 张过期对照面板。**保留**：即梦原图/参考图、`art/parts-spec/`、`tools/check-outfit.py` 那批换装工具、`whale/preview.png` | 工作区（不进安装包） |
 ## 2026-10-10 凌晨 修：右键菜单按钮全失效 + 菜单头换成小肥鱼
 
