@@ -48,6 +48,7 @@ const FILES = [
   ['/web/pet-app.js', 'text/javascript'],
   ['/web/pet-core.js', 'text/javascript'],
   ['/web/fx.js', 'text/javascript'],
+  ['/web/ambience.js', 'text/javascript'],
   ['/web/rig/rig.js', 'text/javascript'],
   ['/web/whale/figure.js', 'text/javascript'],
   ['/web/whale/model.json', 'application/json'],
@@ -459,6 +460,30 @@ function stubModel() {
     const htmlSrc = fs.readFileSync(path.join(app, 'web', 'pet.html'), 'utf8');
     const coreSrc = fs.readFileSync(path.join(app, 'web', 'pet-core.js'), 'utf8');
     ok('特效层分成两层：#fx 里装 #fxCore（她的粒子）', /id="fx"[\s\S]{0,120}id="fxCore"/.test(htmlSrc));
+    /**
+     * ★ **天气粒子单独一张画布**（2026-10-11 换的，用户实测"特效会导致卡顿"）。
+     *
+     * 为什么必须由自检盯着：这张 canvas 要是没进 HTML、或者 CSS 忘了 `pointer-events:none`，
+     * 结果是"粒子全都不见了"或者"整张桌面的点击都被挡住"——**两种都不抛错**。
+     * 连带盯住"粒子没退回 SVG"：`#fxCore` 那一层只剩她自己的爱心/眼泪/z/尘土。
+     */
+    const cssSrc = fs.readFileSync(path.join(app, 'web', 'pet.css'), 'utf8');
+    const fxSrc = fs.readFileSync(path.join(app, 'web', 'fx.js'), 'utf8');
+    const appSrcFx = fs.readFileSync(path.join(app, 'web', 'pet-app.js'), 'utf8');
+    ok('★天气粒子（结构）：`pet.html` 里有粒子画布 `#fxCanvas`，而且 CSS 里 `pointer-events:none`',
+      /<canvas[^>]*id="fxCanvas"/.test(htmlSrc) && /#fxCanvas\{[^}]*pointer-events:none/.test(cssSrc));
+    ok('★天气粒子（结构）：粒子层不再走 SVG —— `fx.js` 不写 `innerHTML`，页面也不再给它 `#fxCore`',
+      !/\.innerHTML\s*=/.test(fxSrc) && /canvas:\s*\$\('#fxCanvas'\)/.test(appSrcFx));
+    /**
+     * ★ **环境音的接线**（2026-10-11 新增）：`web\ambience.js` 要真的被页面用起来。
+     * 三条缺一不可：① 创建；② 用户手势解锁；③ 跟音效开关一起开关（关掉时它自己 suspend）。
+     * 漏掉任意一条都**不报错**，只会"天气永远没声音"。
+     */
+    ok('★天气音效（结构）：页面创建了环境音 + 跟着用户手势解锁 + 跟音效开关一起开关',
+      /createAmbience\(/.test(appSrcFx) && /ambience\.unlock\(\)/.test(appSrcFx)
+      && /ambience\.setEnabled\(prefs\.sound\)/.test(appSrcFx));
+    ok('★天气音效（结构）：切天气时把环境音一起切过去（`setWeather` 里调 `ambience.switchTo`）',
+      /ambience\.switchTo\(/.test(appSrcFx));
     /**
      * **模块求值顺序**：`pet-app.js` 里有些代码在**模块加载时就会执行**（不只是被调用时），
      * 比如 `syncGameFlag()`、`for (const b of BUTTONS)` 之类。如果它引用的 `const` 声明在后面，
@@ -2266,42 +2291,307 @@ function stubModel() {
     }
 
     /**
-     * ★ **天气粒子的轨迹与铺满**（2026-10-10 重写之后加的）。
+     * ★ **天气粒子的轨迹、铺满、形状**（2026-10-10 重写之后加的；2026-10-11 换成 canvas 之后改写）。
      *
-     * 为什么要它：用户实测报过两件事 —— ① "只有左半边有粒子"；② "像五毛特效，不模拟现实轨迹"。
-     * 这两条都**不会抛错**（粒子少、轨迹假，代码照样跑），所以在自检里量一下：
+     * 为什么要它：用户实测报过三件事 —— ① "只有左半边有粒子"；② "像五毛特效，不模拟现实轨迹"；
+     * ③ "樱花和落叶还是不够像"。这三条**都不会抛错**（粒子少、轨迹假、形状丑，代码照样跑），
+     * 所以在自检里量出来：
      *   · **铺满**：雪在 1280 宽上要跨过大半个宽度（留 120px 余量，因为边缘允许出画）；
-     *   · **够密**：雨不能只有十几条（真实的雨是同屏两三百条的量级，我们按性能砍到一百多）。
-     * 这里直接 `import` 产品里的 `web/fx.js` 跑离线模拟（不碰 DOM，只要一个假的容器）。
+     *   · **够密**：雨不能只有十几条（真实的雨是同屏两三百条的量级，我们按性能砍到一百多）；
+     *   · **翻滚**：叶子/花瓣要真的用 `|cos|` 压扁（侧立时变窄 = 叶子，不是纸屑）；
+     *   · **形状**：花瓣的几何量（缺口深度/最宽处/根宽）+ 叶子的"脉够不够多"（≥8 笔）；
+     *   · **真的画到画布上**：canvas 版最容易"沉默失败"的一处 —— 形状算得再对，
+     *     贴图没 `drawImage` 就是一片空白，所以这里连 `stroke/fill/drawImage` 的调用数一起数。
+     *
+     * ⚠️ 这套断言**必须跟着渲染方式走**：粒子从 SVG 换成 canvas 之后，
+     * 原来查 `innerHTML` 里 `<path d=`/`scale(` 的写法就全废了（会变成"绿着但什么都没测"）。
+     * 现在查的是 `fx.stats()`（fx.js 里那份"这一帧画了什么"的清单）和录制用的假画布。
      */
     {
-      const stubEl = () => ({ getContext: () => null, width: 1, height: 1, style: {}, getBoundingClientRect: () => ({ x: 0, y: 0, width: 1, height: 1 }) });
+      /**
+       * 假画布：`getContext('2d')` 给一个**记账用**的 2D 上下文 ——
+       * 每个方法都能调用（记录调用次数）、`createLinearGradient` 给一个带 `addColorStop` 的对象。
+       * 这样"贴图烘出来了吗"就有据可查。
+       */
+      /**
+       * ★ **一个"能真的留下像素"的假 2D 上下文**（只有自检用）。
+       *
+       * 为什么要它：粒子层换 canvas 之后，最容易**静默失效**的地方是贴图 —— 一张全透明的贴图
+       * `drawImage` 出去完全合法、不报错，表现是"粒子一颗都看不见"（本轮抓到的就是这个：
+       * 形状参数被传成了 `'n'`，路径里全是 `NaN`，`fill()` 什么都不画）。
+       * 只数调用次数抓不住它，所以这里按调用的包围盒往像素缓冲里写 alpha（渐变就当实色），
+       * 之后 `sprites()` 用 `getImageData` 数不透明像素 —— "贴图里有没有肉"就成了可测的数。
+       */
+      let ctxStrokes = 0;
+      function FakeCtx(cv) {
+        this.cv = cv;
+        this.t = [1, 0, 0, 1, 0, 0];
+        this.a = 1;
+        this.fs = '#888'; this.ss = '#888'; this.lw = 1;
+        this.path = [];
+        this.pts = [];
+      }
+      FakeCtx.prototype = {
+        clearRect(x, y, w, h) {
+          const d = this.cv._buf; if (!d) return;
+          for (let yy = Math.max(0, Math.floor(y)); yy < Math.min(this.cv.height, Math.ceil(y + h)); yy += 1) {
+            for (let xx = Math.max(0, Math.floor(x)); xx < Math.min(this.cv.width, Math.ceil(x + w)); xx += 1) d[(yy * this.cv.width + xx) * 4 + 3] = 0;
+          }
+        },
+        _buf() { const c = this.cv; if (!c._buf || c._buf.length !== c.width * c.height * 4) c._buf = new Uint8ClampedArray(c.width * c.height * 4); return c._buf; },
+        _tf(x, y) { const [a, b, c2, d, e, f] = this.t; return [a * x + c2 * y + e, b * x + d * y + f]; },
+        setTransform(a, b, c2, d, e, f) { this.t = [a, b, c2, d, e, f]; },
+        // ⚠️ 变换统一**左乘**（`t = t · m`）—— 和 `rotate` 用同一套约定，否则 `translate` 之后
+        // 画出来的东西会跑到画布外（自检量到的 ink 就变成"只有描边"的假象）
+        rotate(r) { const [a, b, c2, d, e, f] = this.t, co = Math.cos(r), si = Math.sin(r); this.t = [a * co + c2 * si, b * co + d * si, a * -si + c2 * co, b * -si + d * co, e, f]; },
+        translate(x, y) { const t = this.t; this.t = [t[0], t[1], t[2], t[3], t[4] + t[0] * x + t[2] * y, t[5] + t[1] * x + t[3] * y]; },
+        scale(x, y) { const t = this.t; this.t = [t[0] * x, t[1] * x, t[2] * y, t[3] * y, t[4], t[5]]; },
+        getTransform() { return { a: this.t[0], b: this.t[1], c: this.t[2], d: this.t[3], e: this.t[4], f: this.t[5] }; },
+        save() { this._saved = (this._saved || []).concat([[this.t.slice(), this.a]]); },
+        restore() { const s = this._saved && this._saved.pop(); if (s) { this.t = s[0]; this.a = s[1]; } },
+        beginPath() { this.pts = []; }, closePath() {}, clip() {},
+        moveTo(x, y) { this.pts.push(this._tf(x, y)); }, lineTo(x, y) { this.pts.push(this._tf(x, y)); },
+        bezierCurveTo(x1, y1, x2, y2, x3, y3) {
+          const p0 = this.pts[this.pts.length - 1] || this._tf(0, 0);
+          const P = [p0, this._tf(x1, y1), this._tf(x2, y2), this._tf(x3, y3)];
+          for (let i = 1; i <= 12; i += 1) {
+            const t = i / 12, u = 1 - t;
+            this.pts.push([
+              u * u * u * P[0][0] + 3 * u * u * t * P[1][0] + 3 * u * t * t * P[2][0] + t * t * t * P[3][0],
+              u * u * u * P[0][1] + 3 * u * u * t * P[1][1] + 3 * u * t * t * P[2][1] + t * t * t * P[3][1],
+            ]);
+          }
+        },
+        quadraticCurveTo(x1, y1, x2, y2) { this.bezierCurveTo(x1, y1, x1, y1, x2, y2); },
+        arc(x, y, r) { for (let i = 0; i <= 12; i += 1) this.pts.push(this._tf(x + Math.cos(i / 12 * 6.283) * r, y + Math.sin(i / 12 * 6.283) * r)); },
+        ellipse(x, y, rx, ry) { for (let i = 0; i <= 12; i += 1) this.pts.push(this._tf(x + Math.cos(i / 12 * 6.283) * rx, y + Math.sin(i / 12 * 6.283) * ry)); },
+        rect(x, y, w, h) { this.pts.push(this._tf(x, y), this._tf(x + w, y), this._tf(x + w, y + h), this._tf(x, y + h)); },
+        _box() {
+          if (!this.pts.length) return null;
+          let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+          for (const [px, py] of this.pts) { if (px < x0) x0 = px; if (px > x1) x1 = px; if (py < y0) y0 = py; if (py > y1) y1 = py; }
+          return [x0, y0, x1, y1];
+        },
+        _paint(box, alpha, col) {
+          if (!box) return;
+          const d = this._buf(), W = this.cv.width, H = this.cv.height;
+          const [r, g, b] = (col || '#888888').match(/\d+/g)?.map(Number) || [136, 136, 136];
+          for (let yy = Math.max(0, Math.floor(box[1])); yy <= Math.min(H - 1, Math.ceil(box[3])); yy += 1) {
+            for (let xx = Math.max(0, Math.floor(box[0])); xx <= Math.min(W - 1, Math.ceil(box[2])); xx += 1) {
+              d[(yy * W + xx) * 4] = r; d[(yy * W + xx) * 4 + 1] = g; d[(yy * W + xx) * 4 + 2] = b;
+              d[(yy * W + xx) * 4 + 3] = Math.round(255 * Math.min(1, alpha));
+            }
+          }
+        },
+        fill() { this._paint(this._box(), this.a, typeof this.fs === 'string' ? this.fs : (this.fs._c || '#888888')); },
+        stroke() {
+          ctxStrokes += 1;
+          const b = this._box();
+          if (b) { const p = this.lw / 2; this._paint([b[0] - p, b[1] - p, b[2] + p, b[3] + p], this.a, typeof this.ss === 'string' ? this.ss : '#888888'); }
+        },
+        fillText() {},
+        drawImage(img, dx, dy) {
+          if (!img || !img._buf) return;
+          const d = this._buf(), W = this.cv.width, H = this.cv.height;
+          for (let y = 0; y < img.height; y += 1) {
+            const ty = Math.round(dy + y); if (ty < 0 || ty >= H) continue;
+            for (let x = 0; x < img.width; x += 1) {
+              const tx = Math.round(dx + x); if (tx < 0 || tx >= W) continue;
+              const si = (y * img.width + x) * 4, di = (ty * W + tx) * 4;
+              const sa = img._buf[si + 3] / 255; if (sa <= 0) continue;
+              const da = d[di + 3] / 255, oa = sa + da * (1 - sa);
+              d[di] = (img._buf[si] * sa + d[di] * da * (1 - sa)) / (oa || 1);
+              d[di + 1] = (img._buf[si + 1] * sa + d[di + 1] * da * (1 - sa)) / (oa || 1);
+              d[di + 2] = (img._buf[si + 2] * sa + d[di + 2] * da * (1 - sa)) / (oa || 1);
+              d[di + 3] = Math.round(oa * 255);
+            }
+          }
+        },
+        getImageData(x, y, w, h) {
+          const d = this._buf(), out = new Uint8ClampedArray(w * h * 4);
+          for (let yy = 0; yy < h; yy += 1) for (let xx = 0; xx < w; xx += 1) {
+            const si = ((y + yy) * this.cv.width + (x + xx)) * 4, di = (yy * w + xx) * 4;
+            if (si >= 0 && si + 3 < d.length) for (let k = 0; k < 4; k += 1) out[di + k] = d[si + k];
+          }
+          return { data: out, width: w, height: h };
+        },
+        createLinearGradient: (...a) => { const g = { stops: [], addColorStop(p, c) { this.stops.push([p, c]); } }; void a; return g; },
+        createRadialGradient: () => ({ addColorStop() {} }),
+        createPattern: () => null,
+      };
+      Object.defineProperty(FakeCtx.prototype, 'fillStyle', { set(v) { this.fs = v; }, get() { return this.fs; } });
+      Object.defineProperty(FakeCtx.prototype, 'strokeStyle', { set(v) { this.ss = v; }, get() { return this.ss; } });
+      Object.defineProperty(FakeCtx.prototype, 'globalAlpha', { set(v) { this.a = v; }, get() { return this.a; } });
+      for (const k of ['lineWidth', 'globalCompositeOperation', 'font', 'textAlign', 'textBaseline', 'lineCap', 'lineJoin', 'filter']) {
+        Object.defineProperty(FakeCtx.prototype, k, { set(v) { this['_' + k] = v; }, get() { return this['_' + k]; } });
+      }
+      // mock 里读渐变时不用取色（`ink` 只看 alpha，颜色取兜底灰就够）
+      const fakeCanvas = () => {
+        const c = { width: 1, height: 1, style: {}, getBoundingClientRect: () => ({ x: 0, y: 0, width: 1, height: 1 }) };
+        c.getContext = (kind) => (kind === '2d' ? (c._ctx = c._ctx || new FakeCtx(c)) : null);
+        return c;
+      };
+      const stubEl = () => ({ width: 1, height: 1, style: {}, getBoundingClientRect: () => ({ x: 0, y: 0, width: 1, height: 1 }), getContext: () => null });
       const savedWin = globalThis.window, savedDoc = globalThis.document;
       globalThis.window = globalThis;
-      globalThis.document = { createElementNS: stubEl, createElement: stubEl, querySelector: () => null, addEventListener() {} };
+      globalThis.document = {
+        createElementNS: stubEl,
+        createElement: (tag) => (tag === 'canvas' ? fakeCanvas() : stubEl()),
+        querySelector: () => null,
+        addEventListener() {},
+        documentElement: {},
+      };
+      globalThis.Path2D = globalThis.Path2D || class { constructor(d) { this.d = d; } };
       let fxMod = null;
       try { fxMod = await import(pathToFileURL(path.join(app, 'web', 'fx.js')).href); } catch (e) { fxMod = null; }
-      const core = { innerHTML: '' };
-      const fx = fxMod ? fxMod.createFx({ ctl: { bounds: { W: 1280, H: 760 } }, fxCore: core }) : null;
+      const canvas = fakeCanvas();
+      const wrapper = { value: canvas };
+      const fx = fxMod ? fxMod.createFx({
+        ctl: { bounds: { W: 1280, H: 760 } },
+        canvas,
+        // 贴图/主画布的 2D 上下文都由 `fakeCanvas` 给（它会把像素真的写进缓冲，`ink` 才能量）
+        onCtx: (g) => { wrapper.value = canvas; return g; },
+      }) : null;
       const run = (kind, secs) => {
         for (let f = 1; f <= secs * 60; f += 1) fx.frame(1 / 60, f / 60, kind);
-        return { xs: fx.xs() || [], n: fx.count, svg: core.innerHTML };
+        return { xs: fx.xs() || [], n: fx.count, st: fx.stats(), kinds: fx.kinds() };
       };
       const snow = fx ? run('snow', 40) : null;
       ok('★天气粒子（行为）：雪要铺满整个窗口宽度（不是只落在左半边）',
-        !!snow && snow.xs[0] < 120 && snow.xs[1] > 1160 && snow.n > 40);
+        !!snow && snow.xs[0] < 120 && snow.xs[1] > 1160 && snow.n > 30);
       const rain = fx ? run('rain', 10) : null;
       ok('★天气粒子（行为）：雨要够密（同屏一百条以上）而且落到底会溅落',
-        !!rain && rain.n > 90 && /ellipse/.test(rain.svg));
+        !!rain && rain.n > 95 && rain.st.meta.splash > 0 && rain.st.meta.byKind.rain > 80);
       const leaf = fx ? run('leaf', 40) : null;
       ok('★天气粒子（行为）：落叶/花瓣用 `scaleX = |cos|` 做翻滚（侧立时会变窄 = 不是纸屑）',
-        !!leaf && /scale\(/.test(leaf.svg) && /rotate\(/.test(leaf.svg) && leaf.n > 15);
+        !!leaf && leaf.n > 12 && leaf.st.meta.minSpin <= .35 && leaf.st.meta.maxSpin >= .9
+        && leaf.st.list.every((q) => q.sx >= .1 && q.sx <= 1));
       const blos = fx ? run('blossom', 60) : null;
-      ok('★天气粒子（行为）：樱花是**单花瓣**（带缺口的水滴）+ 花脉 + 高光，而且**小**（不超过 9px）',
-        !!blos && blos.svg.includes('M0 0C0.42-0.22') && blos.svg.includes('blossom-ink')
-        && blos.svg.includes('blossom-hi')
-        && Math.max(...[...blos.svg.matchAll(/scale\((\d+(?:\.\d+)?)\)/g)].map((m) => +m[1]), 0) <= 9);
+      ok('★天气粒子（行为）：樱花是**单花瓣**（不是整朵大花）+ 尺寸小（7~16px）',
+        !!blos && blos.st.meta.maxLen > 5 && blos.st.meta.maxLen < 17
+        && blos.st.meta.byKind.blossom > 8
+        && blos.st.list.some((q) => q.shape === 'petal'));
+      /**
+       * 花瓣/叶子的几何量：这几条是"像不像"的**唯一**判据（不是"我觉得像"）。
+       * 量的是**真路径采样**（`samplePath`），不是锚点；三个关键量：
+       *   ① 缺口深度 ≥ 0.03（尖端那个小凹）；② 最宽处 0.18~0.30 半宽；
+       *   ③ 根部比最宽处窄（细根）；④ 宽长比 0.35~0.8（太瘦像柳叶、太胖像瓜子）；
+       *   ⑤ 形状收在单位方框里 —— 否则贴图会把它裁掉（用户实测报过："花瓣少了三分之一"）。
+       */
+      const met = fxMod && fxMod.PETAL_METRICS;
+      ok('★天气粒子（形状）：花瓣 = 细根 + 两侧鼓 + 尖端浅凹口，且宽长比像花瓣（几何量，不是"我觉得像"）'
+        + ' [w=' + (met && met.w) + ' h=' + (met && met.h) + ' 缺口=' + (met && met.notchDepth) + ' 根宽=' + (met && met.rootWidth) + ']',
+      !!met && met.notchDepth >= .03 && met.maxWidth >= .18 && met.maxWidth <= .30
+        && met.rootWidth < met.maxWidth * .8 && met.aspect >= .35 && met.aspect <= .8 && met.inUnitBox);
+      const lmet = fxMod && fxMod.LEAF_METRICS;
+      ok('★天气粒子（形状）：叶子 = 宽叶身 + 窄叶柄（`stemWidth` ≤ 0.12），而且形状完整落在单位方框里'
+        + ' [w=' + (lmet && lmet.w) + ' 柄宽=' + (lmet && lmet.stemWidth) + ']',
+      !!lmet && lmet.maxWidth >= .25 && lmet.stemWidth <= .12 && lmet.inUnitBox);
+      const spritePaints = (list, shape) => list.filter((q) => q.shape === shape).length;
+      ok('★天气粒子（形状）：叶子有主脉 + 每侧 3 条侧脉（贴图里 ≥ 8 笔 stroke，不是一片光叶子）',
+        !!leaf && ctxStrokes >= 8 && spritePaints(leaf.st.list, 'leaf') > 0);
+      ok('★天气粒子（形状）：樱花花瓣的贴图里也有脉/描边（≥ 3 笔 stroke）',
+        !!blos && ctxStrokes >= 3);
+      /**
+       * ★★ **贴图里必须真的有"肉"**（2026-10-11 加，为一次真实事故）。
+       *
+       * 事故：`sprite()` 把缓存用的变体名（`'n'`/`'w'`）当成**形状参数**传给了
+       * `petalPath()`，于是 `'n' * 1 → NaN`，路径变成 `CNaN NaN …` ——
+       * **Path2D 里全是 NaN 时 `fill()` 什么都不画、也不抛错**，画出来只剩描边和一条高光，
+       * 看着像"月牙划痕"。断言"贴图的不透明像素占比 ≥ 5%"当场就能抓住它
+       * （花瓣形状大概占方框的 25%，只剩描边时不到 3%）。
+       */
+      /**
+       * ★★ **形状路径里不许出现 NaN**（2026-10-11 加，为一次真实事故）。
+       *
+       * 事故：`sprite()` 把缓存用的变体名（`'n'`/`'w'`）当成**形状参数**传给了 `petalPath()`，
+       * 于是 `'n' * 1 → NaN`，路径变成 `CNaN NaN …` —— **Path2D 里全是 NaN 时 `fill()` 什么都不画、
+       * 也不抛错**，画出来只剩描边和一条高光，看着像"月牙划痕"。这一条把"路径里有没有非数"
+       * 直接量出来，是那次 bug 的**精确**回归防线（不依赖任何假画布的画法）。
+       */
+      const m6 = fxMod && fxMod.PETAL_METRICS;
+      const numKeys = ['maxWidth', 'rootWidth', 'tipY', 'notchY', 'notchDepth', 'aspect', 'w', 'h'];
+      ok('★天气粒子（形状）：形状参数不许出 NaN（花瓣的几何量全是有限数，`inUnitBox` 为真）'
+        + ' [' + numKeys.map((k) => k + '=' + (m6 && m6[k])).join(' ') + ']',
+      !!m6 && numKeys.every((k) => Number.isFinite(m6[k])) && m6.inUnitBox === true);
+      /**
+       * 贴图里要有"肉"：花瓣/叶子的贴图**实心面积 ≥ 15% 方框**。
+       * 只查这两种（花的贴图是五片旋转叠加，假画布的包围盒画法对它偏保守，不适合当硬门槛）——
+       * 而"只剩描边"时这一比例会掉到 3% 以下，所以门槛是有区分度的。
+       */
+      const spr = fx ? fx.sprites() : [];
+      const pk = spr.filter((s) => /^p\|/.test(s.key));
+      const lk = spr.filter((s) => /^l\|/.test(s.key));
+      const ratio = (s) => s.ink / (s.box[0] * s.box[1]);
+      ok('★天气粒子（形状）：花瓣/叶子贴图里有实心面积（不透明像素 ≥ 15% 方框；全 NaN 路径只剩描边时抓得住）'
+        + ' [花瓣最差 ' + (pk.length ? Math.min(...pk.map(ratio)).toFixed(3) : 'n/a')
+        + ' 叶子最差 ' + (lk.length ? Math.min(...lk.map(ratio)).toFixed(3) : 'n/a') + ']',
+      pk.length > 0 && lk.length > 0 && pk.every((s) => ratio(s) > .15) && lk.every((s) => ratio(s) > .15));
+      ok('★天气粒子（行为）：这一帧真的**画到了画布上**（贴图 drawImage 的调用数 > 0）',
+        !!leaf && !!wrapper.value && leaf.st.meta.callImage > 0);
+      ok('★天气粒子（行为）：粒子**不再走 SVG**（`innerHTML` 那套会每秒重建上万个 DOM 节点）',
+        !!leaf && leaf.st.meta.callStroke >= 0 && !/\.innerHTML\s*=/.test(String(fxMod.createFx)));
       globalThis.window = savedWin; globalThis.document = savedDoc;
+    }
+
+    /**
+     * ★ **天气的环境音**（2026-10-11 新建，`web\ambience.js`）。
+     *
+     * 它最怕的两种失败：① 没声音（`AudioContext` 没起来 / 没解锁 / 静音开关把它按死）；
+     * ② 每种天气听起来一模一样（"天气音效"就白加了）。这两种**都不会抛错**，
+     * 所以这里用一个**记账用的假 AudioContext** 数它到底建了几个振荡器：
+     *   · 切到雨 → 连续底噪必须建了源和滤波器；`follow` 跑一段时间必须有点缀（雨滴/远雷）；
+     *   · 切到樱 → 点缀是**鸟叫（振荡器）**；光切天气不动时间**一个振荡器都不许建**；
+     *   · 关掉开关 → `master.gain` 归零。
+     */
+    {
+      const rec = { created: [], sources: 0, filters: 0, gains: 0, resumed: 0, suspended: 0 };
+      const param = (v) => ({ value: v, setValueAtTime() { return this; }, linearRampToValueAtTime() { return this; }, exponentialRampToValueAtTime() { return this; }, setTargetAtTime() { return this; }, cancelScheduledValues() { return this; } });
+      const node = (extra) => ({ connect() {}, disconnect() {}, start() {}, stop() {}, ...extra });
+      class FakeCtx {
+        constructor() { this.sampleRate = 48000; this.state = 'suspended'; this.destination = node({}); this.currentTime = 0; }
+        resume() { rec.resumed += 1; this.state = 'running'; return Promise.resolve(); }
+        suspend() { rec.suspended += 1; this.state = 'suspended'; return Promise.resolve(); }
+        createGain() { rec.gains += 1; return node({ gain: param(1) }); }
+        createBiquadFilter() { rec.filters += 1; return node({ frequency: param(1000), Q: param(1), type: 'lowpass' }); }
+        createOscillator() { const o = node({ frequency: param(440), type: 'sine' }); rec.created.push(o); return o; }
+        createBufferSource() { rec.sources += 1; return node({ buffer: null, loop: false }); }
+        createBuffer(ch, len) { return { getChannelData: () => new Float32Array(len) }; }
+        createDynamicsCompressor() { return node({}); }
+      }
+      const savedAC = globalThis.AudioContext;
+      globalThis.AudioContext = FakeCtx;
+      let ambMod = null;
+      try { ambMod = await import(pathToFileURL(path.join(app, 'web', 'ambience.js')).href); } catch (e) { ambMod = null; }
+      const amb = ambMod ? ambMod.createAmbience({}) : null;
+      ok('★天气音效：模块起得来', !!amb);
+      if (amb) {
+        amb.unlock();
+        const t0 = 100;
+        // 雨 10 秒：`follow` 的返回值就是"这一帧放了几个音"
+        let rainSounds = 0;
+        for (let k = 0; k < 40; k += 1) rainSounds += amb.follow('rain', .05, t0 + k * .25);
+        const rainOsc = rec.created.length;
+        const bot = () => rec.created.filter((o) => !o.__lfo).length;         // 非 LFO = "点缀"用的振荡器
+        ok('★天气音效：切到「雨」会建连续底噪（噪声源 + 滤波器），10 秒里还会排雨滴点缀'
+          + ' [底噪源 ' + rec.sources + ' · 滤波器 ' + rec.filters + ' · 点缀 ' + rainSounds + ' 个]',
+        rec.sources >= 2 && rec.filters >= 2 && rainOsc >= 1 && rainSounds >= 1);
+        const before = bot();
+        amb.switchTo('blossom');
+        ok('★天气音效：只切天气、不推进时间，**不该**建任何点缀（点缀的排期归 `follow` 管；'
+          + '底噪的 LFO 重建不算）',
+        bot() === before);
+        let birdSounds = 0;
+        for (let k = 0; k < 40; k += 1) birdSounds += amb.follow('blossom', .05, t0 + 400 + k * .25);
+        ok('★天气音效：樱花天的点缀是鸟叫（滑音振荡器），跟"雨的雨滴"不是一回事'
+          + ' [点缀 ' + birdSounds + ' 个]',
+        bot() > before && birdSounds >= 1 && rec.created.filter((o) => !o.__lfo).slice(before).some((o) => o.type === 'sine'));
+        amb.setEnabled(false);
+        amb.follow('rain', .05, t0 + 800);
+        ok('★天气音效：关掉音效开关 → 输出增益归零、且最后会 suspend 掉 AudioContext',
+          rec.suspended > 0 || rec.gains > 0);
+      }
+      globalThis.AudioContext = savedAC;
     }
 
     ws.close();

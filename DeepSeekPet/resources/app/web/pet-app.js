@@ -14,6 +14,7 @@ import { createGame } from './game.js';
 import { applyTheme, createPet, createSfx, clamp, f, mini, normalizeSkin, skinCss, EXPRESSIONS, HEAD_TOP, ICONS } from './pet-core.js';
 // 天气粒子/音符的物理与外观（2026-10-10 新增，见那个文件开头的说明）
 import { createFx } from './fx.js';
+import { createAmbience } from './ambience.js';
 
 const $ = (s) => document.querySelector(s);
 const host = window.petHost || null;
@@ -62,6 +63,13 @@ const prefs = {
 };
 const sfx = createSfx();
 /**
+ * ★ **天气的环境音**（2026-10-11 新建，`web\ambience.js`）：用户要"天气有音效"。
+ * 跟她的音效**共用一个开关**（`prefs.sound`，见 `applySoundMode`），所以这里只创建、不决定响不响：
+ *   · `unlock()` 跟着 `sfx.unlock()` 一起调（同一个用户手势）；
+ *   · `follow()` 每帧在 `stepWeather` 里调（排雨滴/落叶/鸟叫/远雷那种**非周期**点缀）。
+ */
+const ambience = createAmbience({ report: (m) => report(m) });
+/**
  * 球拍模式（见下面 `stage` 的 pointerdown）：`flags.gameMode` 由 `syncGameFlag()` 回填，
  * `swat` 是鼠标最近一次的位置与时间（用来算"甩动速度"）。
  * **必须声明在模块顶部**：指针监听和 `syncGameFlag()` 都在模块求值时就会碰到它们。
@@ -78,8 +86,7 @@ const PADDLE_WAKE = 110;
 /** 离开多久之后才把鼠标放过去（防抖动；进来要快、出去要慢）。 */
 const PADDLE_KEEP_MS = 220;
 const paddleKeep = { until: 0 };
-if (host) sfx.unlock();
-else ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, () => sfx.unlock(), { capture: true }));
+if (host) { sfx.unlock(); ambience.unlock(); } else ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, () => { sfx.unlock(); ambience.unlock(); }, { capture: true }));
 
 /* ---------- the pet's own voice: speech the World synthesized on this machine ---------- */
 /**
@@ -147,6 +154,8 @@ function applySoundMode(mode) {
   prefs.sound = mode !== 'off';
   prefs.sayVoice = mode === 'voice';
   sfx.set(prefs.sound);
+  // ★ 环境音跟她的音效共用这一个开关（`web\ambience.js`）：关掉时它会 suspend 掉自己的 AudioContext
+  ambience.setEnabled(prefs.sound);
   if (!prefs.sayVoice) sayAudio.next = null;    // 关掉就把还没放的丢掉
 }
 
@@ -2335,17 +2344,26 @@ const weather = {
   chatAt: 0,
   /** 帧时间监控：这一段的帧数与累计毫秒 · 砍发射量的截止时刻 · 上次留痕的时刻。 */
   n: 0, ms: 0, slowUntil: 0, warnedAt: -1e9,
+  /**
+   * ★ **卡顿自动减量**（2026-10-11）：连续 3 秒平均帧超过 `SLOW_MS` 就把**发射速率与上限**
+   * 一起砍到 40%，20 秒后自动恢复（`slowUntil`）。它是"兜底"，不是主要手段 ——
+   * 主要手段是 `web\fx.js` 换成了 canvas 渲染。
+   */
+  density: 1,
 };
-const weatherEl = $('#weatherTint');
 const SLOW_MS = 26;
+/** 卡顿时减到几成（0.4 = 粒子少一半多，视觉上还看得出是雪/雨，但不糊成一团）。 */
+const SLOW_DENSITY = .4;
+const weatherEl = $('#weatherTint');
 /** 现在这条天气的配置（`off` 时 `kind` 是 undefined）。 */
 const weatherNow = () => WEATHER[weather.mode] || WEATHER.off;
 /**
- * ★ **粒子系统**（物理与外观都在 `web\fx.js`，2026-10-10 从 pet-core 里搬出来重写的）。
- * 它自己管：风场、景深、六角雪花、落叶翻滚、雨丝与溅落、封顶数量。
- * 这里只负责"什么时候发射"（当前天气）和"她怎么反应"。
+ * ★ **粒子系统**（物理、外观、渲染都在 `web\fx.js`）。
+ *   · 2026-10-10：从 pet-core 搬出来，按现实轨迹重写（风场/景深/翻滚/雨丝）；
+ *   · 2026-10-11：**从 SVG 换成整层 canvas**（用户实测"特效会导致卡顿"）。
+ *     现在这里给它的是 `#fxCanvas`，**不是** `#fxCore`（那个 SVG 层只剩她自己的爱心/眼泪/z/尘土）。
  */
-const fx = createFx({ ctl, fxCore: $('#fxCore'), report });
+const fx = createFx({ ctl, canvas: $('#fxCanvas'), report });
 /** 她说话时从嘴边冒音符（页面在打字循环里调，见 `typeText`）。 */
 function noteAt(x, y) { fx.note(x, y); }
 /**
@@ -2364,6 +2382,12 @@ function setWeather(mode, { fromServer = false } = {}) {
    */
   weather.reactAt = ctl.time + .7 + Math.random() * 1.7;
   weather.chatAt = ctl.time + 18 + Math.random() * 40;
+  weather.density = 1;                       // 换了天气就把"卡顿减量"清掉，重新看这一档的表现
+  /**
+   * ★ **环境音跟着切**（`web\ambience.js`）：`off` = 静下来，其他四种各有一套底噪。
+   * 它是"按钮按下去就该有的反馈"，所以立刻切，不等那 0.7~2.4 秒的反应。
+   */
+  try { ambience.switchTo(WEATHER[mode].kind || 'off'); } catch (err) { /* 没声音也不影响画面 */ }
   if (weatherEl) weatherEl.style.setProperty('--weather-tint', weatherNow().tint || 'transparent');
   if (!fromServer) {
     send({ t: 'prefs', weather: mode });
@@ -2393,11 +2417,14 @@ function stepWeather(dt) {
     const avg = weather.ms / weather.n;
     if (avg > SLOW_MS && ctl.time >= weather.slowUntil) {
       weather.slowUntil = ctl.time + 20;
+      weather.density = SLOW_DENSITY;
       if (ctl.time - weather.warnedAt > 60) {
         weather.warnedAt = ctl.time;
-        try { report(`[天气] 帧时间偏慢（${avg.toFixed(1)}ms/帧，${fx.count} 颗粒子）→ 这 20 秒把发射量降到 35%`); } catch { /* ignore */ }
+        try { report(`[天气] 帧时间偏慢（${avg.toFixed(1)}ms/帧，${fx.count} 颗粒子）→ 这 20 秒把密度降到 ${Math.round(SLOW_DENSITY * 100)}%`); } catch { /* ignore */ }
       }
     }
+    // 减速期过了就把密度还回来（不然一次卡顿会永久留在这个档上）
+    if (weather.density < 1 && ctl.time >= weather.slowUntil) weather.density = 1;
     weather.n = 0; weather.ms = 0;
     /**
      * ★ **诊断：粒子到底铺到哪儿了**（用户实测报"只有桌面的左半边有粒子"）。
@@ -2408,15 +2435,24 @@ function stepWeather(dt) {
      */
     if (weatherNow().kind && FRAME_DIAG) {
       const xs = fx.xs();
+      const st = fx.stats();
       try {
         report(`[天气] 窗口 ${innerWidth}x${innerHeight} · 屏 ${screen.width}x${screen.height} · dpr ${devicePixelRatio}`
-          + ` · 粒子 ${fx.count} 颗` + (xs ? ` · x 范围 ${xs[0]}~${xs[1]}（中位 ${xs[2]}）` : ''));
+          + ` · 粒子 ${fx.count} 颗 · 画了 ${st.n} 个形状（fill ${st.meta.fills}/stroke ${st.meta.strokes}/图 ${st.meta.images}，最长 ${st.meta.maxLen.toFixed(1)}px）`
+          + (xs ? ` · x 范围 ${xs[0]}~${xs[1]}（中位 ${xs[2]}）` : ''));
       } catch { /* ignore */ }
     }
   }
   const cfg = weatherNow();
-  // ② 粒子：物理与发射节奏都在 fx.js 里（这一行的 weather 决定发哪种）
-  fx.frame(dt, ctl.time, cfg.kind || 'off');
+  // ② 粒子：物理、外观、发射节奏、渲染都在 fx.js 里（`weather.density` 是卡顿减量，见上面 ①）
+  fx.frame(dt, ctl.time, cfg.kind || 'off', weather.density);
+  /**
+   * ③ **环境音**（`web\ambience.js`）：连续的底噪由 `setWeather` 那边切换，
+   * 这里每帧只做"到点该响就响"的点缀（雨滴打在窗户上、一片叶子擦过、鸟叫、雨里的远雷）。
+   * ⚠️ 传的是 `performance.now()` 的**真实秒数**（`ctl.time` 是页面自己的时间轴，
+   * 重连/进比赛时会跳），音频的排期必须跟墙上的钟走。
+   */
+  if (cfg.kind) ambience.follow(cfg.kind, dt, performance.now() / 1000);
   if (cfg.kind && !weather.chatAt) weather.chatAt = ctl.time + 20;
   // ③ 切完之后的反应（只在"没在说话、也没举卡"时做，免得撞台词）
   if (weather.reactAt && ctl.time >= weather.reactAt) {

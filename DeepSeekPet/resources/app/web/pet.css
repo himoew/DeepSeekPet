@@ -48,6 +48,16 @@ body.desk{background:transparent}
 body.desk .floor{display:none}
 .stage{position:fixed; inset:0; touch-action:none}
 .stage svg{position:absolute; inset:0; width:100%; height:100%; display:block; overflow:visible}
+/**
+ * ★ **天气粒子的画布**（2026-10-11，见 `web\fx.js` 的文件头）。
+ *   · 和 `.stage svg` **同一套定位与坐标系**：`inset:0` + `width/height:100%`，
+ *     而 canvas 的 `width/height` 属性由 `fx.js` 按 `innerWidth × dpr` 设（dpr 上限 2），
+ *     所以 1 用户单位 = 1 CSS 像素，粒子的坐标和她的身体完全对齐；
+ *   · **不设 z-index**：让它按 DOM 顺序压在 `svg` 上面（粒子在"她"前面飘），
+ *     而小球 `#fx`、气泡（z-index:3+）都在它上面 —— 别在这里抢层级；
+ *   · `pointer-events:none`：这一层铺满整屏，绝不能挡住点击穿透。
+ */
+#fxCanvas{position:absolute; inset:0; width:100%; height:100%; display:block; pointer-events:none}
 
 /* figure classes */
 .ink{stroke:var(--skin-ink)} .inkf{fill:var(--skin-ink)} .eye{stroke:var(--skin-eye)}
