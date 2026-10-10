@@ -333,7 +333,21 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
       const q = [];
       if (process.env.DSP_DIAG === '1') q.push('diag=1');
       if (process.env.DSP_DEBUG === '1') q.push('debug=1');
+      /**
+       * ★ **她站在哪条线上（窗口内坐标）**（2026-10-10 用户实测报"桌宠掉到屏幕最底下"）。
+       *
+       * 背景：窗口现在是**铺满整屏**（含任务栏那块，天气粒子要铺满，见 `cover()`），
+       * 但她的"地面"必须还是**工作区的底边** —— 否则她就站在任务栏后面/下面，
+       * 看着像"掉到屏幕最底下"。所以这里把地面单独量出来给页面：
+       * 用**主显示器工作区的下沿**减掉窗口自己的 y。
+       *
+       * 只在它落在窗口内时才报；报不了页面就退化成"用窗口高度"（老行为）。
+       */
+      const wb = win.getBounds(), wa = screen.getPrimaryDisplay().workArea;
+      const floorY = Math.round(wa.y + wa.height - wb.y);
+      if (floorY > 0 && floorY <= wb.height) q.push(`floorY=${floorY}`);
       win.loadURL(q.length ? `${url}${url.includes('?') ? '&' : '?'}${q.join('&')}` : url);
+      diag(`地面(y)=${floorY}（窗口高 ${wb.height}、工作区下沿 ${wa.y + wa.height}）`);
     }
     win.webContents.on('did-finish-load', () => diag('页面加载完成(did-finish-load)'));
     win.webContents.on('render-process-gone', (_e, d2) => diag(`渲染进程没了：${JSON.stringify(d2)}`));

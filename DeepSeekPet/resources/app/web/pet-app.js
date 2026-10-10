@@ -162,7 +162,20 @@ function sayAudioReset() {
 /** When the last "round" of chatter was reported to the World (see `roundOver`). */
 const said = { round: 0 };
 
-const floorGap = () => (host ? 2 : 48);
+/**
+ * 她的"地面"离窗口底边留多少（浏览器里给 48px 当模拟的任务栏）。
+ *
+ * ★ **桌宠窗口里的地面是主进程量出来的**（`?floorY=`，见 pet-host.cjs）：
+ * 窗口铺满**整屏**（天气粒子要铺满、含任务栏那块），但她的地面是**工作区的底边** ——
+ * 两者不是一回事。不分开的话，她就会站在任务栏后面（用户实测："位置掉到了屏幕最底下，
+ * 之前是在任务栏上面"）。
+ */
+const FLOOR_Y = (() => {
+  const v = Number(new URLSearchParams(location.search).get('floorY'));
+  return Number.isFinite(v) && v > 0 ? v : 0;
+})();
+/** 这一帧她的地面在哪（y）：主进程给了就按它，没给（浏览器标签页）就退回"窗口高度 − 间隙"。 */
+const floorAt = () => (FLOOR_Y ? FLOOR_Y : innerHeight - (host ? 2 : 48));
 const ctl = createPet(
   { petG: $('#pet'), shadowEl: $('#shadow'), fxG: $('#fx') },
   {
@@ -174,7 +187,7 @@ const ctl = createPet(
      */
     renderFx: () => fx.draw(),
     roam: prefs.roam,
-    bounds: () => ({ W: innerWidth, H: innerHeight, floorY: innerHeight - floorGap(), S: .42 * prefs.scale }),
+    bounds: () => ({ W: innerWidth, H: innerHeight, floorY: floorAt(), S: .42 * prefs.scale }),
     onEvent: (kind, d) => onBody(kind, d),
     dialogOpen: () => !!item || !!listen.phase,
     enter: 'drop',
