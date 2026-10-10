@@ -52,6 +52,11 @@ const prefs = {
   ttsOn: false, sayVoice: false,
   /** 玩具球/游戏模式的三态：`off` 关 · `ball` 出球自由玩 · `game` 弹弹乐。 */
   ballMode: 'off', ballModeKnown: false,
+  /**
+   * ★ **天气粒子**（2026-10-10）：`off` / `snow` / `blossom` / `leaf` / `rain`。
+   * 悬停按钮循环切换（挂在足球按钮下面），World 只负责把它记进 `settings.json`。
+   */
+  weather: 'off', weatherKnown: false,
 };
 const sfx = createSfx();
 /**
@@ -444,6 +449,11 @@ function applyPrefs(p) {
     prefs.ballModeKnown = true;
     setBallMode(p.ballMode, { fromServer: true });
   }
+  // ★ 天气（World 记着；第一次 init / 重连 / 它在菜单里改过时都会同步过来）
+  if (typeof p.weather === 'string' && WEATHER[p.weather] && (p.weather !== prefs.weather || !prefs.weatherKnown)) {
+    prefs.weatherKnown = true;
+    setWeather(p.weather, { fromServer: true });
+  }
   /**
    * 心情（World 每换一档才发一次）：只影响"黏着你"的远近和走路的快慢，不影响任何判定。
    *
@@ -465,7 +475,11 @@ function onOrder(m) {
     case 'init': restorePosition(m.startX); applyPrefs(m); break;
     case 'prefs': applyPrefs(m); break;
     case 'watching': watching = true; stopMic(); break;
-    case 'say': dropAsks(); pushSay(m); ctl.holdRoam(20); break;
+    /**
+     * ★ 天气话是**页面自己的气泡**（`item.kind === 'weather'`），所以 World 一说正经话就把它让开 ——
+     * 这就是"天气话不进主台词链"的代价：主动让位，而不是排队（用户要的就是别改主链）。
+     */
+    case 'say': if (item && item.kind === 'weather') closeBubble(); dropAsks(); pushSay(m); ctl.holdRoam(20); break;
     case 'voice': void onVoice(m); break;
     case 'ask': dropAsks(); queue.push({ kind: 'ask', id: m.id, question: m.question, options: m.options || [], own: m.own !== false }); ctl.holdRoam(20); break;
     case 'confirm': dropAsks(); queue.push({ kind: 'ask', confirm: true, id: m.id, question: m.question, options: m.options, own: false }); ctl.holdRoam(20); break;
@@ -1008,7 +1022,11 @@ function typeText(it, text, dt, anchors) {
   while (it.acc >= 1 && it.shown < text.length) {
     const ch = text[it.shown++];
     it.acc -= PAUSE.test(ch) ? 5 : 1;
-    if (!SILENT.test(ch)) { sfx.babble(ch); ctl.talk(); }
+    if (!SILENT.test(ch)) {
+      sfx.babble(ch); ctl.talk();
+      // ★ 说话时从嘴边冒音符（每 5 个字一颗；见 `noteAt`）。只在她真出声的那种气泡里冒。
+      if (it.kind === 'say') { const m = ctl.mouth(6); noteAt(m.x, m.y); }
+    }
     while (it.fired < anchors.length && anchors[it.fired].at <= it.shown) acts.push(...anchors[it.fired++].actions);
   }
   if (it.marks?.length) p.innerHTML = marked(text, it.shown, it.marks);
@@ -1430,6 +1448,27 @@ const ACTIONS = {
       const next = prefs.ballMode === 'off' ? 'ball' : prefs.ballMode === 'ball' ? 'game' : 'off';
       setBallMode(next, { fromUser: true });
     },
+  },
+  /**
+   * ★ **天气**（2026-10-10，用户点名："做成一个悬浮开关就放在足球按钮的下面，鼠标放上去就可以按"）。
+   *
+   * 五态循环：关 → 雪 → 樱花 → 落叶 → 雨天，**共用这一个按钮**（跟球那个一样 `keep`：
+   * 点一下变一次、图标和徽章跟着变）。悬停那一列最多三格 —— 球、天气、对话。
+   *
+   * 收鼠标的判定不用额外加：`overTools()` 量的是 `#tools` 整块，按钮都在里面。
+   * 但 `prefs.hoverButtons` 必须由 World 下发 `['chat', 'game', 'weather']`（见 `pet.cjs` 的
+   * `INIT.hoverButtons`），否则按钮根本不会生成。
+   */
+  weather: {
+    keep: true,
+    icon: () => ICONS[`weather_${weather.mode}`] ?? ICONS.weather_off,
+    badge: () => (weather.mode === 'off' ? '' : WEATHER[weather.mode].label),
+    on: () => weather.mode !== 'off',
+    state: () => {
+      const next = WEATHER_ORDER[(WEATHER_ORDER.indexOf(weather.mode) + 1) % WEATHER_ORDER.length];
+      return `天气:${WEATHER[weather.mode].label} · 点一下换成「${WEATHER[next].label}」（粒子飘满窗口;影响电脑就关掉）`;
+    },
+    run: () => setWeather(WEATHER_ORDER[(WEATHER_ORDER.indexOf(weather.mode) + 1) % WEATHER_ORDER.length], { fromUser: true }),
   },
   voice: {
     keep: true,
@@ -2205,7 +2244,168 @@ function layout() {
   }
 }
 
-/* ---------- backdrop: a light gray halo when the body melts into what is behind it ---------- */
+/* ---------- 天气与音符粒子（2026-10-10，用户拍板） ---------- */
+/**
+ * ★ **天气粒子 + 音符**：全在她那一层（`#fxCore`）里画，**不碰 `#pet`**（身体层，栽过两次）。
+ *
+ * 设计上的四条约定（都是用户定的，别自己改）：
+ *  ① **不按月份自动切** —— 靠悬停按钮手动循环：关 → 雪 → 樱 → 落叶 → 雨（用户："桌宠互动要紧"）；
+ *  ② **她得感觉到**：切完 **0.7~2.4 秒内**会有一个表情/动作反应，之后**时不时冒一句天气的话**；
+ *  ③ 天气话**走页面自己那条气泡**（`item.kind = 'weather'`），**完全不经过主台词链**
+ *     （用户："触发这个不要和主台词关联，否则要改的太多"）—— 而 World 那边只说一句
+ *     就把它收掉，见 `case 'say'` 里那两行；
+ *  ④ **怕影响用电脑**：粒子总量由 pet-core 的 `MAX_PARTICLES` 封顶，这里另外看**帧时间**——
+ *     连续 3 秒平均帧超过 `SLOW_MS` 就把发射量砍到 35%（记一行日志，见 `stepWeather`）。
+ */
+const WEATHER_ORDER = ['off', 'snow', 'blossom', 'leaf', 'rain'];
+/** 每个天气：粒子类型 / 每秒发射几个 / 窗口内圈染色 / 按钮说明。 */
+const WEATHER = {
+  off: { label: '关' },
+  snow: { label: '雪', kind: 'snow', perS: 11, tint: 'rgba(200,225,255,.10)' },
+  blossom: { label: '樱花', kind: 'blossom', perS: 7, tint: 'rgba(255,190,215,.10)' },
+  leaf: { label: '落叶', kind: 'leaf', perS: 6, tint: 'rgba(230,180,120,.10)' },
+  rain: { label: '雨天', kind: 'rain', perS: 26, tint: 'rgba(140,180,230,.12)' },
+};
+/**
+ * **切完天气她怎么反应**（用户："特别是在切换后的 5 秒内出现个反应"）。
+ * `expr` 走 `ctl.setExpr`（10 种表情之一），`act` 走 `ctl.act`（跟悬停按钮同一套动作系统），
+ * `sfx` 是音效。每个天气一套，不重复。
+ */
+const WEATHER_REACT = {
+  snow: { expr: 'surprised', act: 'shake', sfx: 'surprised', line: '下、下雪了?好冷……' },
+  blossom: { expr: 'shy', act: 'spin', sfx: 'pop', line: '（打了个喷嚏）樱花……' },
+  leaf: { expr: 'happy', act: 'jump', sfx: 'whoosh', line: '叶子掉了!接住——' },
+  rain: { expr: 'love', act: 'nod', sfx: 'listenStart', line: '下雨了……你听。' },
+  off: { expr: 'happy', act: 'shake', sfx: 'tick', line: '唔,天晴了。' },
+};
+/** **她平时自己嘀咕的天气话**（随机冒，跟主台词链无关，都是"只在这种天气下才说得出来"的）。 */
+const WEATHER_LINES = {
+  snow: ['雪掉在鳍上,凉凉的。', '（呼出一口白气）', '这种天适合缩成一团。', '雪人会比我高吗……', '睫毛上也是雪。'],
+  blossom: ['花瓣落在头发上了。', '（把花瓣吹走）噗。', '这味道……有点甜。', '樱花落得比我走得快。'],
+  leaf: ['踩叶子会响的,你信不信。', '（踩着叶子走来走去）', '秋天了啊。', '这片是红的,那片是黄的。'],
+  rain: ['雨声有点像白噪音。', '（伸出手去接雨）', '湿了湿了,退回屋檐下。', '你那儿下雨了吗?', '（甩了甩鳍上的水）'],
+};
+const weather = {
+  mode: 'off',
+  /** 下一次"切完之后的反应"（`ctl.time`；0 = 不欠着）。 */
+  reactAt: 0,
+  /** 下一次自己嘀咕天气话的时刻。 */
+  chatAt: 0,
+  /** 粒子欠着的累计量（每秒几个 → 每帧一个余数）。 */
+  acc: 0,
+  /** 帧时间监控：这一段的帧数与累计毫秒 · 砍发射量的截止时刻 · 上次留痕的时刻。 */
+  n: 0, ms: 0, slowUntil: 0, warnedAt: -1e9,
+};
+const weatherEl = $('#weatherTint');
+const SLOW_MS = 26;
+/** 现在这条天气的配置（`off` 时 `kind` 是 undefined）。 */
+const weatherNow = () => WEATHER[weather.mode] || WEATHER.off;
+/** 生成一颗天气粒子的参数：**形状数字全在这一层**，pet-core 只管物理与画。 */
+function weatherSpawn(type, W, H) {
+  const r = (a, b) => a + Math.random() * (b - a);
+  if (type === 'snow') {
+    return { x: r(-20, W + 20), y: -10, vy: r(16, 34), sway: r(6, 20), swayHz: r(.25, .6),
+      spin: r(-1, 1), rot: r(0, 360), sz: Math.random(), life: 26 };
+  }
+  if (type === 'blossom') {
+    return { x: r(-20, W + 20), y: -10, vy: r(20, 38), sway: r(16, 38), swayHz: r(.3, .7),
+      spin: r(-2.5, 2.5), rot: r(0, 360), gust: r(-6, 6), sz: Math.random(), life: 26 };
+  }
+  if (type === 'leaf') {
+    return { x: r(-20, W + 20), y: -14, vy: r(24, 46), sway: r(20, 46), swayHz: r(.25, .55),
+      spin: r(-3, 3), rot: r(0, 360), gust: r(-14, -4), sz: Math.random(), life: 26 };
+  }
+  // 雨：**横向风用固定值**（每颗粒子随机 vx 的话整片雨会抖成一团噪点）
+  return { x: r(-20, W + 20), y: -12, vy: r(620, 900), gust: 22, sz: Math.random(), life: 8 };
+}
+/** 她说话时从嘴边冒音符（页面在打字循环里调，见 `typeText`；每 5 个字一颗）。 */
+let noteTick = 0;
+function noteAt(x, y) {
+  if (++noteTick % 5) return;
+  ctl.emitFx('note', { spawn: () => ({
+    x: x + (Math.random() * 22 - 11), y,
+    vx: Math.random() * 20 - 10, vy: -30 - Math.random() * 18,
+    rot: Math.random() * 24 - 12, spin: Math.random() * 20 - 10,
+    glyph: Math.random() < .5 ? '♪' : '♫',
+    sz: Math.random(), life: 1.4 + Math.random() * .5,
+  }) });
+}
+/**
+ * 切天气。**页面自己先切**（不等 World 一个来回），再报给 World 记住（`settings.json` 的 `weather`）。
+ * `fromServer` = 这是 World 同步过来的（重连 / 第一次 `init`），那就不要再报回去。
+ */
+function setWeather(mode, { fromServer = false } = {}) {
+  if (!WEATHER[mode] || mode === weather.mode) return;
+  weather.mode = mode;
+  prefs.weather = mode;
+  prefs.weatherKnown = true;
+  weather.acc = 0;
+  /**
+   * 切完 **0.7~2.4 秒**给她一个反应（用户要"5 秒内"）。**不立刻做**：
+   * 立刻做会跟"点按钮"这一下撞在一起，看着像按钮动画而不是她的反应。
+   */
+  weather.reactAt = ctl.time + .7 + Math.random() * 1.7;
+  weather.chatAt = ctl.time + 18 + Math.random() * 40;
+  if (weatherEl) weatherEl.style.setProperty('--weather-tint', weatherNow().tint || 'transparent');
+  if (!fromServer) {
+    send({ t: 'prefs', weather: mode });
+    try { report(`[天气] 切成「${weatherNow().label}」`); } catch { /* 报告失败就算了 */ }
+  }
+  refreshButtons();
+}
+/** 一句话的天气气泡：走页面自己的 `item`，**不排进主台词链**。 */
+function weatherBubble(text) {
+  if (!text || item) return false;
+  startItem({ kind: 'weather', text, shown: 0, acc: 0, until: ctl.time + 1.6 + text.length / 20 });
+  openBubble('say', '<p class="b-text"></p>');
+  return true;
+}
+/** 每帧：监控帧时间 · 发射粒子 · 到点的反应 · 偶尔嘀咕一句。 */
+function stepWeather(dt) {
+  // ① 帧时间监控（用户最担心的就是"影响用电脑"）
+  weather.n += 1; weather.ms += dt * 1000;
+  if (weather.n >= 90) {
+    const avg = weather.ms / weather.n;
+    if (avg > SLOW_MS && ctl.time >= weather.slowUntil) {
+      weather.slowUntil = ctl.time + 20;
+      if (ctl.time - weather.warnedAt > 60) {
+        weather.warnedAt = ctl.time;
+        try { report(`[天气] 帧时间偏慢（${avg.toFixed(1)}ms/帧，${ctl.particleCount} 颗粒子）→ 这 20 秒把发射量降到 35%`); } catch { /* ignore */ }
+      }
+    }
+    weather.n = 0; weather.ms = 0;
+  }
+  const cfg = weatherNow();
+  // ② 发射
+  if (cfg.kind) {
+    weather.acc += cfg.perS * (ctl.time < weather.slowUntil ? .35 : 1) * dt;
+    let guard = 0;
+    while (weather.acc >= 1 && guard++ < 8) { weather.acc -= 1; ctl.emitFx(cfg.kind, { spawn: weatherSpawn }); }
+    if (weather.acc > 4) weather.acc = 4;          // 卡了一下之后不要一次补一堆
+    if (!weather.chatAt) weather.chatAt = ctl.time + 20;
+  } else weather.acc = 0;
+  // ③ 切完之后的反应（只在"没在说话、也没举卡"时做，免得撞台词）
+  if (weather.reactAt && ctl.time >= weather.reactAt) {
+    const r = WEATHER_REACT[weather.mode];
+    weather.reactAt = 0;
+    if (r && !item) {
+      try {
+        ctl.setExpr(r.expr);
+        if (r.act) ctl.act([r.act]);
+        sfx[r.sfx]?.();
+        weatherBubble(r.line);
+      } catch (err) { try { report(`[天气] 反应抛错：${err && err.message}`); } catch { /* ignore */ } }
+      weather.chatAt = ctl.time + 18 + Math.random() * 45;
+    }
+  }
+  // ④ 平时自己嘀咕（跟主台词无关；同一时刻只说一样东西）
+  if (cfg.kind && weather.chatAt && ctl.time >= weather.chatAt) {
+    weather.chatAt = ctl.time + 30 + Math.random() * 70;
+    const lines = WEATHER_LINES[weather.mode] || [];
+    if (lines.length) weatherBubble(lines[Math.floor(Math.random() * lines.length)]);
+  }
+}
+
 /** Seconds between looks at the screen around the body. */
 const BACKDROP_EVERY = .8;
 /** ★ 只有"她身后的颜色和她的身体很像"时才需要每 0.8 秒看一眼；平时 2.5 秒一次就够（省 CPU）。 */
@@ -2426,6 +2626,8 @@ function frame(now) {
     mark('画门');
     stepBackdrop(dt);
     mark('背景');
+    stepWeather(dt);      // 天气粒子 + 她的反应 + 帧时间监控（见 stepWeather）
+    mark('天气');
     stepTools();
     layout();
     mark('布局');
@@ -2434,7 +2636,9 @@ function frame(now) {
      * 为什么要加最后那条：比赛里"她站着不动 + 球静止"（开球那几秒）原来会掉到 `RESTING_FPS`（30），
      * 于是球拍光环、扫掠判定、球的物理都跟着半速跑，她一跑起来又跳回 60 —— 手感忽快忽慢。
      */
-    full = prefs.lockFrameRate || ctl.moving || ball.busy || game.mode === 'game';
+    full = prefs.lockFrameRate || ctl.moving || ball.busy || game.mode === 'game'
+      // ★ 天气粒子在飘的时候也跑 60fps：30fps 下雪/雨会一顿一顿的（用户要"先看看效果"）
+      || ctl.particleCount > 0;
     if (FRAME_DIAG) {
       marks.push(['总', performance.now()]);
       frameCost.push(t0, marks);

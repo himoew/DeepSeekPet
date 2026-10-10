@@ -267,14 +267,24 @@ const INIT = {
   // 玩具球 / 弹弹乐的三态（悬停那个球按钮循环切换；存在 config\settings.json 的 `ballMode`）
   ballMode: ['off', 'ball', 'game'].includes(llm.load().ballMode) ? llm.load().ballMode : 'off',
   /**
-   * 悬停时它旁边出现的按钮。**只留「对话」一个**——其余动作右键菜单里全有，
-   * 两处都摆一遍既重复又挡在它旁边（用户的要求：悬停只保留左上角那个「对话」）。
-   *
-   * id 必须是 pet-app.js 里 ACTIONS 的键 (chat, voice, roam, theme, sound, auto, dress, hide)；
-   * voice 和 dress 依赖这一版没带的模块，写了也不会显示。
-   * 想加回来就照 ACTIONS 的顺序往里填，最多 MAX_HOVER（pet-app.js，6）个。
+   * ★ **天气**（2026-10-10）：`off` / `snow` / `blossom` / `leaf` / `rain`。
+   * **页面自己切、自己判**（粒子、她的反应、天气话全在 pet-app.js 里，见那段注释）——
+   * World 这边只做两件事：把它记进 `config\settings.json`、重连时同步回去。
+   * 所以天气**不进台词链、不进 LLM 上下文**，改这里也不会牵连主逻辑。
    */
-  hoverButtons: ['chat', 'game'],
+  weather: ['off', 'snow', 'blossom', 'leaf', 'rain'].includes(llm.load().weather) ? llm.load().weather : 'off',
+  /**
+   * 悬停时它旁边出现的按钮。**只留「对话」和「球」两个**——其余动作右键菜单里全有，
+   * 两处都摆一遍既重复又挡在它旁边（用户的要求：悬停只保留少数几个）。
+   *
+   * ★ 2026-10-10 用户点名加了**天气**："做成一个悬浮开关就放在足球按钮的下面，
+   * 鼠标放上去就可以按的"——所以顺序是 `['chat', 'game', 'weather']`（球下面就是天气）。
+   *
+   * id 必须是 pet-app.js 里 ACTIONS 的键 (chat, game, weather, voice, roam, theme, sound, auto, dress, hide)；
+   * voice 和 dress 依赖这一版没带的模块，写了也不会显示。
+   * 最多 MAX_HOVER（pet-app.js，6）个。
+   */
+  hoverButtons: ['chat', 'game', 'weather'],
   /**
    * 右键它时弹出的那个菜单头。`controls: true` 是必须的，不给页面直接不画菜单。
    * 点哪一项会回一条 {t:'control', action}，在下面 attach 的 switch 里处理。
@@ -968,6 +978,8 @@ function attach(ws) {
     tone: '', toneHint: '',
     // 玩具球 / 弹弹乐：三态开关 + 球最近一次被踢到时的横向位置（0..1）
     ballMode: 'off', ballX: -1,
+    // ★ 天气（页面自己切自己判，这里只记着它，见 `INIT.weather` 的注释）
+    weather: 'off',
   };
   let idle = null, auto = null, moodTimer = null, micro = null;
 
@@ -994,6 +1006,7 @@ function attach(ws) {
   // 换身体。只发这一条，大肥鱼就会出现在桌面上。
   send(ws, INIT);
   state.ballMode = INIT.ballMode;
+  state.weather = INIT.weather;
 
   /**
    * ★ **换装窗口里点一下，立刻换她身上的衣服**（2026-10-10 用户实测："切换后模型服装没有跟着切换"）。
@@ -1628,6 +1641,17 @@ function attach(ws) {
             } catch (err) {
               log.warn(`语音开关没能存进配置（重启后会恢复原样）：${err.message}`);
             }
+          }
+        }
+        // ★ 天气（页面自己切自己判，这里只把它记下来：重启后还在、重连时同步回页面）
+        if (typeof m.weather === 'string' && ['off', 'snow', 'blossom', 'leaf', 'rain'].includes(m.weather)
+          && m.weather !== state.weather) {
+          state.weather = m.weather;
+          log.info(`天气：${({ off: '关', snow: '雪', blossom: '樱花', leaf: '落叶', rain: '雨天' })[m.weather]}`);
+          try {
+            llm.save({ weather: state.weather });
+          } catch (err) {
+            log.warn(`天气没能存进配置（重启后会恢复原样）：${err.message}`);
           }
         }
         // 一轮对话结束 → 清掉"哪句念过了"的记录，下次同一个回答还会念

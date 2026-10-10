@@ -1634,12 +1634,15 @@ function stubModel() {
 
     const init = await waitFor('init', () => fromPet.find((m) => m.t === 'init'));
     ok('init 带的是大肥鱼', init.skin.figure === 'whale' && init.skin.scheme === 'deepseek');
-    ok('init 只给这一版能兑现的悬停按钮', init.hoverButtons.every((b) => ['chat', 'game', 'auto', 'roam', 'theme', 'sound', 'hide'].includes(b)));
+    ok('init 只给这一版能兑现的悬停按钮', init.hoverButtons.every((b) => ['chat', 'game', 'weather', 'auto', 'roam', 'theme', 'sound', 'hide'].includes(b)));
     // 悬停和右键菜单原来摆的是同一批动作，重复；现在悬停只留要紧的几个。
-    // 「对话」+「球」（用户要的：球的开关放在对话图标旁边）——其余全在右键菜单里。
-    ok('悬停只有「对话」和「球」两个按钮',
-      init.hoverButtons.length === 2 && init.hoverButtons[0] === 'chat' && init.hoverButtons[1] === 'game');
+    // ★ 2026-10-10 用户点名加了天气："做成一个悬浮开关就放在足球按钮的下面" ——
+    //   所以顺序是 对话 / 球 / 天气（球的下面就是天气）。
+    ok('悬停是「对话」+「球」+「天气」三个按钮，天气排在球的下面',
+      init.hoverButtons.length === 3 && init.hoverButtons[0] === 'chat'
+      && init.hoverButtons[1] === 'game' && init.hoverButtons[2] === 'weather');
     ok('球/游戏模式默认是关的（要你自己点开）', init.ballMode === 'off');
+    ok('天气默认是关的（不点就什么粒子都不飘）', init.weather === 'off');
     ok('init 带上了右键菜单（controls + 设置按钮）', init.bot?.controls === true && init.bot.buttons.settings === true);
     // 「换装…」现在是**真的有窗口**的（第 2f 节那一套：接口先占住，贴图以后再加），
     // 所以这里从"去掉了装扮"改成"装扮按钮在、而且服务里真的有 /dress 那一页"。

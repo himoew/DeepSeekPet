@@ -4,6 +4,8 @@
   --skin-ink:#1B1626; --skin-eye:#00A870;
   --wall:#E8E6EE; --dot:#CFCBD9; --shadow:rgba(27,22,38,.12);
   --blush:#FF8FA8; --tear:#5AAEF0; --anger:#E5484D; --heart:#F0567A; --dust:#A39DB0;
+  /* 天气粒子（2026-10-10 加）：樱花 / 落叶 / 雨 / 音符 */
+  --blossom:#FFB6CE; --leaf:#E08A3C; --leaf-ink:#B4661F; --rain:#9FC4E8; --note:var(--skin-eye);
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
@@ -13,6 +15,7 @@
     --skin-ink:#FFFFFF; --skin-eye:#2FD59B;
     --wall:#10151C; --dot:#232B37; --shadow:rgba(0,0,0,.32);
     --blush:#FF7F9E; --tear:#6BBDF7; --anger:#FF6369; --heart:#FF6F93; --dust:#5B6472;
+    --blossom:#FF9EC4; --leaf:#C97A32; --leaf-ink:#8E501A; --rain:#7FA8CF;
   }
 }
 :root[data-theme="dark"]{
@@ -22,6 +25,7 @@
   --skin-ink:#FFFFFF; --skin-eye:#2FD59B;
   --wall:#10151C; --dot:#232B37; --shadow:rgba(0,0,0,.32);
   --blush:#FF7F9E; --tear:#6BBDF7; --anger:#FF6369; --heart:#FF6F93; --dust:#5B6472;
+  --blossom:#FF9EC4; --leaf:#C97A32; --leaf-ink:#8E501A; --rain:#7FA8CF;
 }
 *{box-sizing:border-box}
 html,body{margin:0; height:100%; overflow:hidden}
@@ -46,6 +50,8 @@ body.desk .floor{display:none}
 .ink{stroke:var(--skin-ink)} .inkf{fill:var(--skin-ink)} .eye{stroke:var(--skin-eye)}
 .blush{fill:var(--blush)} .tearf{fill:var(--tear)} .angry{stroke:var(--anger)}
 .p-heart{stroke:var(--heart)} .p-dust{stroke:var(--dust)} .shadow{fill:var(--shadow)}
+/* 天气/音符粒子（2026-10-10）：音符用 SVG 文字，颜色跟着她的配色；樱花/落叶/雨的填色见上面的变量 */
+.p-note{fill:var(--note); font-family:"Segoe UI Symbol","Noto Sans SC",system-ui,sans-serif; pointer-events:none}
 .c-head-main{stroke:var(--c-head-main, var(--skin-ink))} .c-head-acc{stroke:var(--c-head-acc, var(--skin-eye))}
 .c-glasses-main{stroke:var(--c-glasses-main, var(--skin-ink))} .c-glasses-acc{stroke:var(--c-glasses-acc, var(--skin-eye))}
 .c-side-main{stroke:var(--c-side-main, var(--skin-eye))} .c-side-acc{stroke:var(--c-side-acc, var(--skin-eye))}
@@ -247,6 +253,17 @@ body.desk .floor{display:none}
 }
 #goalGlow.on{opacity:1}
 #goalGlow.hers{box-shadow:inset 0 0 90px 12px rgba(255,200,120,.50)}
+/**
+ * ★ **天气的窗口内圈染色**（`pet-app.js` 的 `stepWeather` 每切一次天气就写 `--weather-tint`）。
+ * 也是 `pointer-events:none` —— 这一层压在整张桌面上，绝不能挡住点击穿透。
+ * **只在天气开着时才有颜色**（默认 transparent = 完全看不见、也不算一层视觉效果）。
+ */
+#weatherTint{
+  --weather-tint:transparent;
+  position:fixed; inset:0; pointer-events:none;
+  transition:box-shadow .5s ease-out;
+  box-shadow:inset 0 0 130px 26px var(--weather-tint);
+}
 /**
  * 她守的那一侧门顶上的小圆点。
  * ⚠️ **必须给 fill**：不给的话 SVG 默认填黑，看上去就是"网上多了个黑点"（用户实测报过）。
