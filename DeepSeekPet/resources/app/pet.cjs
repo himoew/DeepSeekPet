@@ -274,6 +274,12 @@ const INIT = {
    */
   weather: ['off', 'snow', 'blossom', 'leaf', 'rain'].includes(llm.load().weather) ? llm.load().weather : 'off',
   /**
+   * ★ **天气的环境音**（2026-10-11 用户："给天气音效一个单独开关，加在右键小肥鱼后的栏位里，
+   * 不显示在浮窗"）。默认开；`false` 只关环境音（她的音效/语音照旧）。
+   * 跟 `weather` 一样：页面自己判自己响，World 只负责记进 `config\settings.json` 并在重连时同步。
+   */
+  weatherSound: llm.load().weatherSound !== false,
+  /**
    * 悬停时它旁边出现的按钮。**只留「对话」和「球」两个**——其余动作右键菜单里全有，
    * 两处都摆一遍既重复又挡在它旁边（用户的要求：悬停只保留少数几个）。
    *
@@ -980,6 +986,8 @@ function attach(ws) {
     ballMode: 'off', ballX: -1,
     // ★ 天气（页面自己切自己判，这里只记着它，见 `INIT.weather` 的注释）
     weather: 'off',
+    // ★ 天气环境音的开关（页面自己判自己响，这里只记着它，见 `INIT.weatherSound`）
+    weatherSound: true,
   };
   let idle = null, auto = null, moodTimer = null, micro = null;
 
@@ -1007,6 +1015,7 @@ function attach(ws) {
   send(ws, INIT);
   state.ballMode = INIT.ballMode;
   state.weather = INIT.weather;
+  state.weatherSound = INIT.weatherSound;
 
   /**
    * ★ **换装窗口里点一下，立刻换她身上的衣服**（2026-10-10 用户实测："切换后模型服装没有跟着切换"）。
@@ -1654,6 +1663,16 @@ function attach(ws) {
             log.warn(`天气没能存进配置（重启后会恢复原样）：${err.message}`);
           }
         }
+        // ★ 天气的环境音开关（页面自己判自己响，这里只把它记下来：重启后还在、重连时同步回页面）
+        if (typeof m.weatherSound === 'boolean' && m.weatherSound !== state.weatherSound) {
+          state.weatherSound = m.weatherSound;
+          log.info(`天气音效：${state.weatherSound ? '开' : '关'}`);
+          try {
+            llm.save({ weatherSound: state.weatherSound });
+          } catch (err) {
+            log.warn(`天气音效开关没能存进配置（重启后会恢复原样）：${err.message}`);
+          }
+        }
         // 一轮对话结束 → 清掉"哪句念过了"的记录，下次同一个回答还会念
         if (m.round) speaker.flush();
         // 只在**真的有设置变了**的时候写日志。`{t:'prefs',round:true}` 是页面每 1.5 秒
@@ -1664,7 +1683,7 @@ function attach(ws) {
         if (typeof m.autoChat === 'boolean') changed.push(`autoChat=${m.autoChat}`);
         if (typeof m.voice === 'string') changed.push(`voice=${m.voice}`);
         for (const k of Object.keys(m)) {
-          if (k !== 't' && k !== 'round' && k !== 'autoChat' && k !== 'voice') changed.push(`${k}=${JSON.stringify(m[k])}`);
+          if (k !== 't' && k !== 'round' && k !== 'autoChat' && k !== 'voice' && k !== 'weatherSound') changed.push(`${k}=${JSON.stringify(m[k])}`);
         }
         if (changed.length) log.info(`页面改了设置:${changed.join(' ')}`);
         break;

@@ -3,7 +3,7 @@
 > **接手前请读完，尤其第 1 节（两个副本）和第 8 节（踩过的坑）** —— 那两节每条都花过真实时间。
 > **★ 三步不能省**：改工作区那份 → `tools\deploy.ps1 -To D:\pet\DeepSeekPet` → WMI 重启
 > （**deploy 与重启都要一次性提权到 `danger-full-access`**，见第 7 节第 15 条）；
-> 改完跑 `node test\smoke.cjs`（**369 项**，纯 Node，不需要 Electron）。
+> 改完跑 `node test\smoke.cjs`（**372 项**，纯 Node，不需要 Electron）。
 
 ## ★ 决定（2026-10-10，用户拍板）：美术类「服装 / 换装」**暂时不动**
 
@@ -40,7 +40,7 @@
 |---|---|
 | 一句话 | 桌宠完整可用，正跑在 `D:\pet\DeepSeekPet\`（exe 已改名 `BlueFishDeskpet.exe`），接本机 Ollama 的 `qwen2.5:3b-instruct-q4_K_M`；**"弹弹乐"头球能顶到、计分对、复位不再死循环** |
 | 软件 / 她本人 | 软件叫 **Blue Fish Deskpet**；她本人还叫**「大肥鱼」** |
-| 规模 | 台词 **328 条 / 35 个桶**（`lines.cjs`）· 自检 **369 项** · 新模块 `web/ball.js`、`web/game.js`、`mood.cjs`、`dress.cjs` |
+| 规模 | 台词 **328 条 / 35 个桶**（`lines.cjs`）· 自检 **372 项** · 新模块 `web/ball.js`、`web/game.js`、`mood.cjs`、`dress.cjs` |
 | 用户的规矩 | 「跑通一次给我测试，不需要自己重复自检」「很复杂、很花时间的先停下来问我」「碰到严重问题直接回退上一个更新好的节点，或者先让我实测」「**别自己抓取**（截图）」 |
 
 **这一轮分两批，先看第 1.29 节（最新）和第 1.28 节**：
@@ -167,7 +167,7 @@
 | 源代码在哪 | `D:\Blue fish's work\DeepSeekPet\`（**只有源码，跑不起来**，见第 1 节） |
 | 跑的那份在哪 | `D:\pet\DeepSeekPet\`（**必须放 AI 工作区之外**，见第 1 节） |
 | 怎么改 | 在工作区改源码 → `tools\deploy.ps1` 同步过去 → 重启桌宠 |
-| 怎么验证 | `node test\smoke.cjs`（**369 项**，不需要 Electron）· 语音另需 `tools\check-voice-electron.cjs` |
+| 怎么验证 | `node test\smoke.cjs`（**372 项**，不需要 Electron）· 语音另需 `tools\check-voice-electron.cjs` |
 | 已知待办 | 没有硬待办。**已经有 git 了**（工作区根，见第 1.16 节）；可以想的还有：让它大一点（`INIT.scale`）、把 `pet-app.js`/`pet-core.js` 的改动搬进 `patch-assets.mjs` |
 
 ---
@@ -320,7 +320,10 @@
 | 雨 | 7000/1000Hz 密雨 + 150Hz 轰 | 雨滴打在玻璃上（0.07~0.22 秒一次）+ 远雷（14~40 秒） |
 
 * **静音**走**增益斜坡**（`setTargetAtTime`）而不是硬切 0，斜坡之后才 `suspend()` 省电；
-* 跟她的音效**共用一个开关**（`prefs.sound`）：关掉 → 斜坡归零 + 挂起，打开 → 恢复；
+* **两层开关**（用户点名要的）：总闸是右键菜单里的「声音」，环境音自己还有一格**「天气声」** ——
+  **只在右键菜单里，不上浮窗**（`hoverButtons` 里不写它就自然不会出现）；
+  真正出声 = `总闸 && weatherSound`（`ambienceOn()`），所以"单独开关"不会绕过总闸、
+  也不会变成"关不掉的声音"；开关状态报给 World 存进 `config\settings.json` 的 `weatherSound`，重启后还在；
 * `unlock()` 跟着 `sfx.unlock()` 一起调（同一个用户手势），没手势时**只创建、不出声**。
 
 ### ④ 密度与验证
@@ -329,18 +332,19 @@
 外加"花瓣在近层要 22px 的贴图、贴图按目标尺寸烘"这条画质优化（第一版把 7px 的花瓣缩到
 **8px 的贴图**上再放大回去，一路双线性插值 → 糊成一条毛边）。
 
-自检 **350 → 364 项**，新增 14 条：
-* 结构 4 条：`#fxCanvas` 在 `html` 里 + CSS `pointer-events:none`；粒子不再走 `innerHTML`；
+自检 **350 → 372 项**，新增 22 条：
+* 结构 7 条：`#fxCanvas` 在 `html` 里 + CSS `pointer-events:none`；粒子不再走 `innerHTML`；
   环境音被创建/解锁/跟开关联动；切天气时 `ambience.switchTo` 真的被调；
+  「天气声」是**独立开关**且只在右键菜单（`hoverButtons` 不含它）；**总闸 × 它自己**两层；
+  开关会报给 World 并落进 `settings.json`；
 * 形状 7 条：花瓣几何量（细根/浅凹口/宽长比/在单位方框内）、叶子几何量（宽叶身/窄叶柄/在方框内）、
   叶脉 ≥8 笔、花瓣贴图有脉、**形状参数不许出 NaN**、**贴图实心像素 ≥15%**、贴图分辨率随尺寸；
-* 音效 3 条（用**记账用的假 AudioContext**）：切"雨"会建连续底噪并排点缀、光切天气不建点缀、
-  樱花天的点缀是鸟叫（滑音振荡器）、关开关会挂起。
+* 音效 4 条（用**记账用的假 AudioContext**）：切"雨"会建连续底噪并在 10 秒里排出雨滴、
+  光切天气不建点缀、樱花天推 50 秒必出鸟叫（滑音振荡器）、关开关会挂起。
 > 自检的假 canvas 也升级了：它现在**会把调用真的画进像素缓冲**（不然"贴图有没有肉"这条
 > 又会变成"绿着但什么都没测"）。
-> 资料（[W3C: Canvas and SVG](https://www.w3.org/wiki/Html/Canvas_and_SVG)）建议 **≥40 颗就换 Canvas**。
-> 如果用户实测觉得卡，下一步就是把粒子层换成**一张绝对定位的 canvas 叠层**
-> （物理不用重写，只换 `draw()`），并保留 `pointer-events:none`。
+> 资料（[W3C: Canvas and SVG](https://www.w3.org/wiki/Html/Canvas_and_SVG)）建议 **≥40 颗就换 Canvas**
+> —— 这一轮就是按它换的（40 颗早就超了）。
 
 **调研出处（均为公开资料，落地时按工程默认值折算过）**：
 [ACP 2025 雪片沉降速度](https://acp.copernicus.org/articles/25/16729/2025/)（终端速度 0.4–1.2 m/s、湍流效应）、
@@ -2841,7 +2845,7 @@ DeepSeekPet/
 │     ├─ avatar.png                       右键菜单人像 128（**我们自己的**，不是上游缩略图）
 │     ├─ rig/rig.js                        类 Live2D 渲染器（WebGL2）
 │     └─ whale/  figure.js model.json tex/(25) feat/(25)   大肥鱼模型
-├─ test/smoke.cjs            ★ 369 项自检（连点合并/过期、自动说话、语音、部位、选择卡、抚摸、拖拽、"懂你"那批、记忆、图标、配置损坏留档是后加的）
+├─ test/smoke.cjs            ★ 372 项自检（连点合并/过期、自动说话、语音、部位、选择卡、抚摸、拖拽、"懂你"那批、记忆、图标、配置损坏留档是后加的）
 └─ tools/
    ├─ setup-runtime.ps1      装配 Electron 运行时（从 ..\Coopanion 取），并检测权限告警
    ├─ extract-pet.ps1        从 Coopanion 抽桌宠页面与鲸鱼模型，并重新套用**5 处**补丁
@@ -2926,7 +2930,7 @@ DeepSeekPet/
 | `tools\check-voice-electron.cjs` | ★ **在 Electron 的真 V8 下**走 `tts.cjs` 真路合成一句并校验（WAV/采样率/不是静音） | 改过 `tts*.cjs`、`voice.json`、换音色或升级 Electron 之后**必须跑**。见第 1.8 节 |
 | `tools\live-voice-check.cjs` | 连上**正在跑的桌宠**发一句话，验"先语音、后气泡"（要给它端口号） | 想知道"真桌宠到底出不出声" |
 | `tools\tone.cjs` | 用当前配置问几句，打印原文和耗时 | 换模型 / 改人设之后 |
-| `test\smoke.cjs` | **369 项**自检：文件、328 条台词合法性、抽签不重复、设置读写、**配置损坏先留档**、**原子写不留 .tmp**、模型链路（用假端点）、**连点合并与过期**、**自动说话（开关/静默期/防重复/防念提示词）**、**语音（开关/顺序/WAV/缓存/不加外部缓冲）**、连击升级、睡醒、暂停、目录穿越 | 每次改完代码。**注意它是纯 Node，验不到 Electron 的 V8**，所以语音还要跑上面那条 |
+| `test\smoke.cjs` | **372 项**自检：文件、328 条台词合法性、抽签不重复、设置读写、**配置损坏先留档**、**原子写不留 .tmp**、模型链路（用假端点）、**连点合并与过期**、**自动说话（开关/静默期/防重复/防念提示词）**、**语音（开关/顺序/WAV/缓存/不加外部缓冲）**、连击升级、睡醒、暂停、目录穿越 | 每次改完代码。**注意它是纯 Node，验不到 Electron 的 V8**，所以语音还要跑上面那条 |
 
 `extract-pet.ps1` 与 `setup-runtime.ps1` 都是**幂等**的，重跑安全（已实测两次）。
 两个 `.ps1` 里**只能写 ASCII**——见第 7 节第 5 条。
@@ -3055,7 +3059,7 @@ $ollama = "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe"
 # 改完源码 → 同步到能跑的那份
 powershell -ExecutionPolicy Bypass -File DeepSeekPet\tools\deploy.ps1 -To D:\pet\DeepSeekPet
 
-# 自检（369 项，不需要 Electron）
+# 自检（372 项，不需要 Electron）
 & $node DeepSeekPet\test\smoke.cjs
 
 # 语音的真验收（**必须在 Electron 的 V8 下跑**，纯 Node 验不到那条路）

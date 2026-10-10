@@ -481,9 +481,30 @@ function stubModel() {
      */
     ok('★天气音效（结构）：页面创建了环境音 + 跟着用户手势解锁 + 跟音效开关一起开关',
       /createAmbience\(/.test(appSrcFx) && /ambience\.unlock\(\)/.test(appSrcFx)
-      && /ambience\.setEnabled\(prefs\.sound\)/.test(appSrcFx));
+      && /ambience\.setEnabled\(ambienceOn\(\)\)/.test(appSrcFx));
     ok('★天气音效（结构）：切天气时把环境音一起切过去（`setWeather` 里调 `ambience.switchTo`）',
       /ambience\.switchTo\(/.test(appSrcFx));
+    /**
+     * ★ **天气音效的"单独开关"**（2026-10-11 用户："给天气音效一个单独开关，加在右键小肥鱼后的
+     * 栏位里，不显示在浮窗"）。四条：
+     *   ① 页面有 `weatherSound` 这个偏好，且**只出现在右键菜单**（`hoverButtons` 里不写它）；
+     *   ② 真正出声 = **总闸 `sound` × 它自己**（`ambienceOn()`）—— 单独开关不能绕过总闸；
+     *   ③ 切它要报给 World（`{t:'prefs', weatherSound}`），World 那边存进 settings.json；
+     *   ④ World 的 `INIT` 要把它读出来（不然重启后回到默认，用户会以为开关没记住）。
+     */
+    const petSrc = fs.readFileSync(path.join(app, 'pet.cjs'), 'utf8');
+    const llmSrc = fs.readFileSync(path.join(app, 'llm.cjs'), 'utf8');
+    ok('★天气音效（结构）：页面有独立的 `weatherSound` 开关，而且是「总闸 × 它自己」两层'
+      + '（单独开它不该绕过"声音：关"）',
+    /weatherSound: true/.test(appSrcFx) && /function ambienceOn\(\)\s*\{[^}]*prefs\.sound && prefs\.weatherSound/.test(appSrcFx)
+      && /ambience\.setEnabled\(ambienceOn\(\)\)/.test(appSrcFx));
+    ok('★天气音效（结构）：这个开关只在右键菜单里（`hoverButtons` 不含它、`ACTIONS` 里有它）',
+      !/hoverButtons:\s*\[[^\]]*weatherSound/.test(petSrc) && /^\s{2}weatherSound: \{/m.test(appSrcFx));
+    ok('★天气音效（结构）：切开关会报给 World，World 存进 settings.json（重启后还在）',
+      /send\(\{ t: 'prefs', weatherSound: prefs\.weatherSound \}\)/.test(appSrcFx)
+      && /llm\.save\(\{ weatherSound: state\.weatherSound \}\)/.test(petSrc)
+      && /weatherSound: llm\.load\(\)\.weatherSound !== false/.test(petSrc)
+      && /weatherSound: true,/.test(llmSrc));
     /**
      * **模块求值顺序**：`pet-app.js` 里有些代码在**模块加载时就会执行**（不只是被调用时），
      * 比如 `syncGameFlag()`、`for (const b of BUTTONS)` 之类。如果它引用的 `const` 声明在后面，
@@ -2582,7 +2603,9 @@ function stubModel() {
           + '底噪的 LFO 重建不算）',
         bot() === before);
         let birdSounds = 0;
-        for (let k = 0; k < 40; k += 1) birdSounds += amb.follow('blossom', .05, t0 + 400 + k * .25);
+        // ★ 樱花天的点缀间隔是 6~16 秒（随机），所以这里**推 50 秒**——不然"这 10 秒里正好没鸟"
+        //   会让自检偶发 FAIL（定时随机的断言必须给足时间，别让它变成掷骰子）
+        for (let k = 0; k < 200; k += 1) birdSounds += amb.follow('blossom', .05, t0 + 400 + k * .25);
         ok('★天气音效：樱花天的点缀是鸟叫（滑音振荡器），跟"雨的雨滴"不是一回事'
           + ' [点缀 ' + birdSounds + ' 个]',
         bot() > before && birdSounds >= 1 && rec.created.filter((o) => !o.__lfo).slice(before).some((o) => o.type === 'sine'));

@@ -47,6 +47,14 @@ const prefs = {
   /** The World lets the model speak on its own every minute (`auto`); this is the switch it reports. */
   autoChat: false,
   /**
+   * ★ **天气的环境音开关**（2026-10-11，用户点名："给天气音效一个单独开关，加在右键小肥鱼后的
+   * 栏位里，不显示在浮窗"）。它跟"声音"是**两层**：
+   *   · `sound` 是总闸（关掉 = 她的音效和环境音一起没声）；
+   *   · `weatherSound` 只管环境音（想让桌宠安静、但自己还想听雨声就留着它）。
+   * 真正出声的条件是**两个都开**（见 `ambienceOn()`）。存在 `config\settings.json` 的 `weatherSound`。
+   */
+  weatherSound: true,
+  /**
    * Whether the World reads the model's answers out loud. It knows if the speech files are installed,
    * so it reports both: `ttsOn` (possible) and `sayVoice` (wanted). The sound button is a three-way
    * switch built on the two — off / effects only / effects + speech. (The mic's own `voice` pref is
@@ -154,9 +162,28 @@ function applySoundMode(mode) {
   prefs.sound = mode !== 'off';
   prefs.sayVoice = mode === 'voice';
   sfx.set(prefs.sound);
-  // ★ 环境音跟她的音效共用这一个开关（`web\ambience.js`）：关掉时它会 suspend 掉自己的 AudioContext
-  ambience.setEnabled(prefs.sound);
+  // ★ 环境音跟她的音效共用一个**总闸**，但它自己还有一个开关（`weatherSound`）—— 见 `ambienceOn()`
+  ambience.setEnabled(ambienceOn());
   if (!prefs.sayVoice) sayAudio.next = null;    // 关掉就把还没放的丢掉
+}
+
+/**
+ * 环境音现在该不该响：**总闸（`prefs.sound`）× 它自己的开关（`prefs.weatherSound`）**。
+ * 用户要的是"单独一个开关，加在右键菜单里"——单独开关不等于绕过总闸，
+ * 总闸关掉时环境音也必须静（那才是"声音：关"的意思）。
+ */
+function ambienceOn() { return prefs.sound && prefs.weatherSound; }
+
+/** 天气环境音的开关（右键菜单里的「天气声」格子）：立刻生效、报给 World 记住。 */
+function toggleWeatherSound() {
+  prefs.weatherSound = !prefs.weatherSound;
+  ambience.setEnabled(ambienceOn());
+  // 开回来的时候，如果现在正下着天气，把环境音切回去（关着的时候 `switchTo` 已经把它拆掉了）
+  if (prefs.weatherSound) {
+    try { ambience.switchTo(weatherNow().kind || 'off'); } catch (err) { /* 没声音也不影响画面 */ }
+  }
+  send({ t: 'prefs', weatherSound: prefs.weatherSound });
+  refreshButtons();
 }
 
 /** 这条气泡的语音已经播过了吗（同一条气泡只播一次）。 */
@@ -454,7 +481,13 @@ function reportPosition() {
 function applyPrefs(p) {
   if (p.skin) { const s = normalizeSkin(p.skin); ctl.setSkin(s); skinStyle.textContent = skinCss(s); applyFigure(s).catch((err) => console.error(err)); }
   if (p.roam) { prefs.roam = p.roam; ctl.setRoam(p.roam); }
-  if (typeof p.sound === 'boolean') { prefs.sound = p.sound; sfx.set(p.sound); }
+  if (typeof p.sound === 'boolean') { prefs.sound = p.sound; sfx.set(p.sound); ambience.setEnabled(ambienceOn()); }
+  // ★ 天气环境音的开关（World 记着；第一次 init / 重连 / 它在菜单里改过时都会同步过来）
+  if (typeof p.weatherSound === 'boolean' && p.weatherSound !== prefs.weatherSound) {
+    prefs.weatherSound = p.weatherSound;
+    ambience.setEnabled(ambienceOn());
+    if (prefs.weatherSound) { try { ambience.switchTo(weatherNow().kind || 'off'); } catch (err) { /* ignore */ } }
+  }
   if (p.sounds && typeof p.sounds === 'object') sfx.configure({ kinds: p.sounds, snoreSeconds: p.sounds.snoreSeconds });
   if (p.theme === 'dark' || p.theme === 'light') { prefs.theme = p.theme; applyTheme(p.theme); }
   if (typeof p.scale === 'number') { prefs.scale = p.scale; ctl.resize(); }
@@ -1569,6 +1602,21 @@ const ACTIONS = {
    * alone. It only works with a model connected, and the World stores the switch in config\settings.json.
    * The switch shows at once and the World's next `prefs` confirms it (same as the voice button).
    */
+  /**
+   * ★ **天气的环境音**（2026-10-11，用户："给天气音效一个单独开关，加在右键小肥鱼后的栏位里，
+   * **不显示在浮窗**"）。所以它只出现在右键菜单这一格（`hoverButtons` 里不写它就不会上浮窗）。
+   * 它是**第二层开关**：总闸「声音」关掉时它开着也不响（见 `ambienceOn()`）。
+   */
+  weatherSound: {
+    keep: true,
+    icon: () => ICONS.weather_rain,
+    badge: () => (ambienceOn() ? '' : 'off'),
+    on: () => prefs.weatherSound,
+    state: () => (prefs.weatherSound
+      ? `天气音效:开（雨声/风声/鸟叫，只在开着天气时响）· 点一下关掉它（总闸「声音」不受影响）`
+      : `天气音效:关 · 点一下打开${prefs.sound ? '' : '（注意「声音」总闸现在是关的，两个都开才听得到）'}`),
+    run: () => toggleWeatherSound(),
+  },
   auto: {
     keep: true,
     icon: () => ICONS.chat,

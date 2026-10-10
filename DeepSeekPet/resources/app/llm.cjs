@@ -63,6 +63,8 @@ function defaults() {
     keepAlive: '8h',         // 只在本地端点发送；空字符串 = 不发送（Ollama 默认 5 分钟）
     prewarm: true,           // 启动时先问一句，把本地模型加载好
     autoChat: false,         // 接了模型之后每隔一分钟自己说一句（桌宠右键菜单里的「自动」）
+    weather: 'off',          // 天气粒子：off / snow / blossom / leaf / rain（右键菜单那格循环切）
+    weatherSound: true,      // ★ 天气的环境音（2026-10-11 用户要的**单独开关**，在右键菜单里，不上浮窗）
     voice: true,             // 把大模型的回答念出来（菜单「声音」的三档里最高那档）；没有语音文件时自动哑
     autoChatMs: 0,           // 自动说话的间隔，0 = 用默认的一分钟。只给调试用（WMI 起的进程读不到环境变量）
     autoChatQuietMs: 0,      // 你刚说完话后的静默期，0 = 默认一分钟

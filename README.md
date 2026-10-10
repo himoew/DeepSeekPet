@@ -7,7 +7,7 @@
 
 ![大肥鱼](DeepSeekPet/preview.png)
 
-> 界面、台词、文档都是中文。台词语料 328 条、自检 369 项，**离线可用**。
+> 界面、台词、文档都是中文。台词语料 328 条、自检 372 项，**离线可用**。
 
 ## 它有什么
 
@@ -68,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File tools\setup-tts.ps1       # 本地语�
    ├─ resources/app/                     代码与美术：pet.cjs 行为 · lines.cjs 328 条台词 · memory.cjs 记忆
    │                                     · mood.cjs 心情 · dress.cjs 服装 · llm.cjs 模型 · tts*.cjs 语音
    │                                     · web/ 页面与鲸鱼模型（ball.js 玩具球 · game.js 弹弹乐）
-   ├─ test/smoke.cjs                     自检 369 项（纯 Node，不需要 Electron）
+   ├─ test/smoke.cjs                     自检 372 项（纯 Node，不需要 Electron）
    └─ tools/                             装配与重建脚本（纯 ASCII 的 PowerShell）
       ├─ setup-runtime.ps1               下官方 Electron → 改名 → 自动调 patch-exe
       ├─ patch-exe.ps1                   把名字与图标盖到 exe 上（rcedit）
@@ -83,7 +83,7 @@ powershell -ExecutionPolicy Bypass -File tools\setup-tts.ps1       # 本地语�
 自检随时可跑（不需要装运行时）：
 
 ```powershell
-node DeepSeekPet\test\smoke.cjs      # 369 项：台词库、设置、模型链路（假端点）、记忆、心情、玩具球与弹弹乐、图标…
+node DeepSeekPet\test\smoke.cjs      # 372 项：台词库、设置、模型链路（假端点）、记忆、心情、玩具球与弹弹乐、图标…
 ```
 
 ## 许可与出处
