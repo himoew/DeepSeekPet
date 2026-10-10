@@ -177,51 +177,53 @@ module.exports = {
    * 没写的部位会自动退回上面的通用 `poke`，删掉某一项也不会哑。
    */
   pokeArea: {
+
     ahoge: [
-      { text: '呆毛!那根不能戳!', actions: ['surprised'] },
-      { text: '（呆毛弹了一下）', actions: ['shake'] },
+      { text: '呆毛是天线,戳了会收到奇怪频道。', actions: ['surprised'] },
+      { text: '呜!那根会弹回来的。', actions: ['shake'] },
+      { text: '轻一点……它今天很没精神。', actions: ['sad'] },
     ],
     hair: [
-      { text: '唔,别敲我脑袋。', actions: ['surprised'] },
-      { text: '头发会乱的啦。', actions: ['shy'] },
-      { text: '再敲就要变笨了。', actions: ['angry'] },
+      { text: '别揉我头发——刚梳好的!', actions: ['angry'] },
+      { text: '唔,发型要塌了。', actions: ['shy'] },
+      { text: '敲脑袋会变笨的,我认真的。', actions: ['surprised'] },
     ],
     eyes: [
-      { text: '别、别戳眼睛!', actions: ['surprised'] },
-      { text: '（眨了眨眼）痒。', actions: ['shy'] },
+      { text: '喂!眼睛不能按的!', actions: ['surprised'] },
+      { text: '眨、眨个不停了……', actions: ['shy'] },
     ],
     cheek: [
-      { text: '脸蛋不可以捏。', actions: ['angry'] },
-      { text: '（鼓起了腮帮子）', actions: ['angry'] },
+      { text: '脸要变形了啦!', actions: ['angry'] },
+      { text: '唔……软的也不是给你捏的。', actions: ['shy'] },
     ],
     chin: [
-      { text: '下巴也不行啦。', actions: ['shy'] },
-      { text: '唔,差一点戳到嘴。', actions: ['surprised'] },
+      { text: '差一点就戳到嘴了。', actions: ['surprised'] },
+      { text: '下巴很敏感的,笨蛋。', actions: ['angry'] },
     ],
     neck: [
-      { text: '脖子很痒的!', actions: ['shy'] },
-      { text: '（缩了缩脖子）', actions: ['surprised'] },
+      { text: '那里……痒!', actions: ['shy'] },
+      { text: '（脖子一缩）别闹。', actions: ['surprised'] },
     ],
     chest: [
-      { text: '胸口不可以戳!', actions: ['angry'] },
-      { text: '（抱住了自己）', actions: ['shy'] },
+      { text: '不许戳那里!', actions: ['angry'] },
+      { text: '（赶紧用鳍挡住）', actions: ['shy'] },
     ],
     belly: [
-      { text: '哈哈,肚子痒!', actions: ['happy'] },
-      { text: '那里是软软的。', actions: ['surprised'] },
-      { text: '唔……你干嘛。', actions: ['angry'] },
+      { text: '哈——痒痒痒!', actions: ['happy'] },
+      { text: '肚子是软肋,你找到弱点了。', actions: ['surprised'] },
+      { text: '噗,不许戳。', actions: ['angry'] },
     ],
     waist: [
-      { text: '别戳腰,我怕痒。', actions: ['shy'] },
-      { text: '（扭了一下腰）', actions: ['shake'] },
+      { text: '腰、腰不行!我在撑着!', actions: ['shy'] },
+      { text: '（扭了一下）手拿开啦。', actions: ['shake'] },
     ],
     skirt: [
-      { text: '裙子会乱的。', actions: ['shy'] },
-      { text: '下面不许戳。', actions: ['angry'] },
+      { text: '裙子压着呢,不许动。', actions: ['shy'] },
+      { text: '再戳我就坐下不起来了。', actions: ['angry'] },
     ],
     hand: [
       { text: '手也不许戳!', actions: ['angry'] },
-      { text: '手指会麻的。', actions: ['surprised'] },
+      { text: '指头会麻的……', actions: ['surprised'] },
     ],
     fin: [
       { text: '鳍!那是鳍!', actions: ['shake'] },
@@ -229,16 +231,16 @@ module.exports = {
       { text: '（鳍抖了一下）', actions: ['surprised'] },
     ],
     tail: [
-      { text: '尾巴不可以拽!', actions: ['angry'] },
+      { text: '尾巴不能拽!', actions: ['angry'] },
       { text: '呀——甩你一身水。', actions: ['shake'] },
-      { text: '尾巴很敏感的。', actions: ['surprised'] },
+      { text: '那是我自己玩的。', actions: ['shy'] },
     ],
     thigh: [
-      { text: '大腿别戳!', actions: ['shy'] },
-      { text: '唔,腿会软的。', actions: ['surprised'] },
+      { text: '大腿也要戳?过分。', actions: ['angry'] },
+      { text: '唔,痒……', actions: ['shy'] },
     ],
     foot: [
-      { text: '脚底怕痒啦。', actions: ['shy'] },
+      { text: '脚底最怕痒了!', actions: ['shy'] },
       { text: '唔,别戳我脚。', actions: ['surprised'] },
     ],
   },
@@ -249,9 +251,10 @@ module.exports = {
    * **没写的部位会自动落到同族的**（`petAreaFallback`，见下面），所以加部位不会哑。
    */
   petArea: {
+
     ahoge: [
-      { text: '呆毛、呆毛不能摸……', actions: ['shy'] },
-      { text: '（呆毛软下去了）', actions: ['love'] },
+      { text: '呆毛被摸得服服帖帖……', actions: ['love'] },
+      { text: '唔,天线要收起来了。', actions: ['sleepy'] },
     ],
     hair: [
       { text: '唔……头好舒服。', actions: ['love'] },
@@ -260,24 +263,24 @@ module.exports = {
       { text: '头发乱了也不要紧。', actions: ['love'] },
     ],
     eyes: [
-      { text: '眼睛、眼睛要闭上了……', actions: ['sleepy'] },
-      { text: '（睫毛在手心下抖了一下）', actions: ['shy'] },
+      { text: '唔……眼睛要闭上了。', actions: ['sleepy'] },
+      { text: '（睫毛在手心下动了动）', actions: ['shy'] },
     ],
     cheek: [
-      { text: '脸、脸被捏了……', actions: ['shy'] },
-      { text: '唔……软软的。', actions: ['love'] },
+      { text: '脸、脸被你捂住了……', actions: ['shy'] },
+      { text: '（蹭了蹭你的手）', actions: ['love'] },
     ],
     chin: [
-      { text: '下巴好痒。', actions: ['happy'] },
-      { text: '（抬起了头让你摸）', actions: ['love'] },
+      { text: '（下巴抬起来让你摸）', actions: ['love'] },
+      { text: '唔,那里好痒。', actions: ['happy'] },
     ],
     neck: [
-      { text: '脖子……痒痒的。', actions: ['shy'] },
+      { text: '唔……脖子痒痒的。', actions: ['shy'] },
       { text: '（缩了缩脖子）', actions: ['surprised'] },
     ],
     chest: [
-      { text: '胸口……别、别摸。', actions: ['shy'] },
-      { text: '（把鳍抱在身前）', actions: ['surprised'] },
+      { text: '胸口……不、不许摸。', actions: ['shy'] },
+      { text: '（把鳍抱得更紧了）', actions: ['surprised'] },
     ],
     belly: [
       { text: '啊哈,好痒。', actions: ['happy'] },
@@ -285,12 +288,12 @@ module.exports = {
       { text: '呼噜呼噜……', actions: ['love'] },
     ],
     waist: [
-      { text: '腰、腰不行!', actions: ['shy'] },
-      { text: '（扭来扭去）', actions: ['shake'] },
+      { text: '腰、腰好麻……', actions: ['sleepy'] },
+      { text: '（扭来扭去）别摸了啦。', actions: ['shake'] },
     ],
     skirt: [
       { text: '裙子下面是秘密。', actions: ['shy'] },
-      { text: '（把裙摆压住了）', actions: ['sit'] },
+      { text: '（把裙摆压住）', actions: ['sit'] },
     ],
     hand: [
       { text: '手、手给你牵。', actions: ['shy'] },
@@ -307,7 +310,7 @@ module.exports = {
       { text: '唔,有点喜欢。', actions: ['love'] },
     ],
     thigh: [
-      { text: '腿、腿坐麻了……', actions: ['sleepy'] },
+      { text: '腿坐麻了……', actions: ['sleepy'] },
       { text: '唔,别摸腿啦。', actions: ['surprised'] },
     ],
     foot: [
@@ -352,6 +355,34 @@ module.exports = {
       tail: [
         { text: '尾巴!别摸那里……', actions: ['surprised'] },
       ],
+      all: [
+        { text: '唔……?', actions: ['surprised'] },
+        { text: '嗯?怎么了。', actions: ['surprised'] },
+        { text: '（转过头来）', actions: ['look'] },
+      ],
+      hair: [
+        { text: '唔,摸头呀。', actions: ['shy'] },
+      ],
+      cheek: [
+        { text: '脸、脸不可以捏。', actions: ['shy'] },
+      ],
+      tail: [
+        { text: '尾巴!别摸那里……', actions: ['surprised'] },
+      ],
+      all: [
+        { text: '唔……?', actions: ['surprised'] },
+        { text: '嗯?怎么了。', actions: ['surprised'] },
+        { text: '（转过头来）', actions: ['look'] },
+      ],
+      hair: [
+        { text: '唔,摸头呀。', actions: ['shy'] },
+      ],
+      cheek: [
+        { text: '脸、脸不可以捏。', actions: ['shy'] },
+      ],
+      tail: [
+        { text: '尾巴!别摸那里……', actions: ['surprised'] },
+      ],
     },
     good: {
       all: [
@@ -366,8 +397,82 @@ module.exports = {
       belly: [
         { text: '哈哈,好痒……', actions: ['happy'] },
       ],
+      all: [
+        { text: '呼噜呼噜……', actions: ['love'] },
+        { text: '唔……舒服。', actions: ['love'] },
+        { text: '（眯起眼睛）', actions: ['sleepy'] },
+      ],
+      hair: [
+        { text: '再摸一会儿……', actions: ['love'] },
+        { text: '就这里最好。', actions: ['happy'] },
+      ],
+      belly: [
+        { text: '哈哈,好痒……', actions: ['happy'] },
+      ],
+      all: [
+        { text: '呼噜呼噜……', actions: ['love'] },
+        { text: '唔……舒服。', actions: ['love'] },
+        { text: '（眯起眼睛）', actions: ['sleepy'] },
+      ],
+      hair: [
+        { text: '再摸一会儿……', actions: ['love'] },
+        { text: '就这里最好。', actions: ['happy'] },
+      ],
+      belly: [
+        { text: '哈哈,好痒……', actions: ['happy'] },
+      ],
     },
     over: {
+      all: [
+        { text: '够了啦,手拿开。', actions: ['angry'] },
+        { text: '（扭了一下）', actions: ['shake'] },
+      ],
+      ahoge: [
+        { text: '呆毛要被你摸秃了!', actions: ['angry'] },
+      ],
+      eyes: [
+        { text: '眼睛不能一直按啦。', actions: ['surprised'] },
+      ],
+      belly: [
+        { text: '别摸肚子啦!', actions: ['angry'] },
+        { text: '痒得受不了了。', actions: ['surprised'] },
+      ],
+      fin: [
+        { text: '鳍不能一直摸。', actions: ['shake'] },
+        { text: '（抖了抖鳍）', actions: ['shy'] },
+      ],
+      tail: [
+        { text: '尾巴要炸了!', actions: ['angry'] },
+        { text: '不、不许摸尾巴。', actions: ['surprised'] },
+      ],
+      skirt: [
+        { text: '那里不行。', actions: ['shy'] },
+      ],
+      all: [
+        { text: '够了啦,手拿开。', actions: ['angry'] },
+        { text: '（扭了一下）', actions: ['shake'] },
+      ],
+      ahoge: [
+        { text: '呆毛要被你摸秃了!', actions: ['angry'] },
+      ],
+      eyes: [
+        { text: '眼睛不能一直按啦。', actions: ['surprised'] },
+      ],
+      belly: [
+        { text: '别摸肚子啦!', actions: ['angry'] },
+        { text: '痒得受不了了。', actions: ['surprised'] },
+      ],
+      fin: [
+        { text: '鳍不能一直摸。', actions: ['shake'] },
+        { text: '（抖了抖鳍）', actions: ['shy'] },
+      ],
+      tail: [
+        { text: '尾巴要炸了!', actions: ['angry'] },
+        { text: '不、不许摸尾巴。', actions: ['surprised'] },
+      ],
+      skirt: [
+        { text: '那里不行。', actions: ['shy'] },
+      ],
       all: [
         { text: '够了啦,手拿开。', actions: ['angry'] },
         { text: '（扭了一下）', actions: ['shake'] },
@@ -418,35 +523,36 @@ module.exports = {
    * 没写的部位自动退回通用的 `grab`。
    */
   grabArea: {
+
     ahoge: [
       { text: '呆毛被拎起来了——!', actions: ['surprised'] },
-      { text: '别拎呆毛啦。', actions: ['angry'] },
+      { text: '呜,那是我唯一的天线。', actions: ['angry'] },
     ],
     hair: [
       { text: '唔!头、头发!', actions: ['surprised'] },
-      { text: '（整个人被提起来了）', actions: ['dizzy'] },
+      { text: '头发会掉的……轻点。', actions: ['sad'] },
     ],
     eyes: [
-      { text: '眼、眼睛不行!', actions: ['surprised'] },
+      { text: '眼、眼睛!看不见了啦!', actions: ['surprised'] },
     ],
     cheek: [
-      { text: '脸要变形了啦!', actions: ['surprised'] },
+      { text: '脸、脸要变形了!', actions: ['surprised'] },
     ],
     chin: [
-      { text: '下、下巴!', actions: ['surprised'] },
+      { text: '下巴!下巴要掉了!', actions: ['surprised'] },
     ],
     neck: [
       { text: '唔!后颈被捏住了。', actions: ['surprised'] },
     ],
     chest: [
-      { text: '别、别拎那里!', actions: ['shy'] },
+      { text: '别、别拎那里……', actions: ['shy'] },
     ],
     belly: [
       { text: '哇——腰要断了。', actions: ['surprised'] },
       { text: '轻点拎我。', actions: ['shy'] },
     ],
     waist: [
-      { text: '腰、腰要断了!', actions: ['surprised'] },
+      { text: '腰、腰真的会断!', actions: ['surprised'] },
     ],
     skirt: [
       { text: '裙、裙子要掉了!', actions: ['shy'] },
@@ -475,40 +581,102 @@ module.exports = {
 
   /** **拎了一会儿还没放下**（页面在拖拽 1.4 秒后报 `stage:'long'`）：按抓到的部位吭一声。 */
   holdArea: {
-    ahoge: [{ text: '呆毛真的要断了……', actions: ['sad'] }],
-    hair: [{ text: '放我下来啦……', actions: ['shy'] }],
-    eyes: [{ text: '眼睛……看不见了。', actions: ['dizzy'] }],
-    cheek: [{ text: '脸、脸好酸。', actions: ['sad'] }],
-    chin: [{ text: '下巴要掉了……', actions: ['sad'] }],
-    neck: [{ text: '后颈被你捏着呢。', actions: ['sad'] }],
-    chest: [{ text: '你还要拎多久呀。', actions: ['shy'] }],
-    belly: [{ text: '你还要拎多久呀。', actions: ['sad'] }],
-    waist: [{ text: '腰真的会断的。', actions: ['sad'] }],
-    skirt: [{ text: '我、我自己走。', actions: ['shy'] }],
-    hand: [{ text: '手真的会酸的。', actions: ['sad'] }],
-    fin: [{ text: '鳍要断了……', actions: ['sad'] }],
-    tail: [{ text: '我认输了,放我下来。', actions: ['shy'] }],
-    thigh: [{ text: '腿麻了……放我下来。', actions: ['sad'] }],
-    foot: [{ text: '晕……放我下来。', actions: ['dizzy'] }],
+
+    ahoge: [
+      { text: '呆毛真的要断了……', actions: ['sad'] },
+    ],
+    hair: [
+      { text: '放我下来啦……', actions: ['shy'] },
+    ],
+    eyes: [
+      { text: '眼睛……看不见了。', actions: ['dizzy'] },
+    ],
+    cheek: [
+      { text: '脸、脸好酸。', actions: ['sad'] },
+    ],
+    chin: [
+      { text: '下巴要掉了……', actions: ['sad'] },
+    ],
+    neck: [
+      { text: '后颈被你捏着呢。', actions: ['sad'] },
+    ],
+    chest: [
+      { text: '胸口被你拎着,好别扭。', actions: ['shy'] },
+    ],
+    belly: [
+      { text: '你还要拎多久呀。', actions: ['sad'] },
+    ],
+    waist: [
+      { text: '腰真的会断的。', actions: ['sad'] },
+    ],
+    skirt: [
+      { text: '我、我自己走。', actions: ['shy'] },
+    ],
+    hand: [
+      { text: '手真的会酸的。', actions: ['sad'] },
+    ],
+    fin: [
+      { text: '鳍要断了……', actions: ['sad'] },
+    ],
+    tail: [
+      { text: '我认输了,放我下来。', actions: ['shy'] },
+    ],
+    thigh: [
+      { text: '腿麻了……放我下来。', actions: ['sad'] },
+    ],
+    foot: [
+      { text: '晕……放我下来。', actions: ['dizzy'] },
+    ],
   },
 
   /** **放下 / 落地**时按"原来抓着哪儿"说。没写的部位按 `grabFallback` 落到同族、再退回通用的 `drop`。 */
   dropArea: {
-    ahoge: [{ text: '呆毛得救了……', actions: ['happy'] }],
-    hair: [{ text: '呼,脖子得救了。', actions: ['happy'] }],
-    eyes: [{ text: '终于能睁眼了……', actions: ['happy'] }],
-    cheek: [{ text: '脸回来了……', actions: ['nod'] }],
-    chin: [{ text: '下巴酸死了。', actions: ['sad'] }],
-    neck: [{ text: '脖子终于松了。', actions: ['happy'] }],
-    chest: [{ text: '落地了……', actions: ['nod'] }],
-    belly: [{ text: '落地了……', actions: ['nod'] }],
-    waist: [{ text: '腰回来了……', actions: ['nod'] }],
-    skirt: [{ text: '裙子皱掉了啦。', actions: ['shy'] }],
-    hand: [{ text: '手终于自由了。', actions: ['happy'] }],
-    fin: [{ text: '鳍都麻了。', actions: ['sleepy'] }],
-    tail: [{ text: '尾巴回来了。', actions: ['happy'] }],
-    thigh: [{ text: '腿站直了……', actions: ['nod'] }],
-    foot: [{ text: '站、站不稳……', actions: ['dizzy'] }],
+
+    ahoge: [
+      { text: '呆毛得救了……', actions: ['happy'] },
+    ],
+    hair: [
+      { text: '呼,脖子得救了。', actions: ['happy'] },
+    ],
+    eyes: [
+      { text: '终于能睁眼了……', actions: ['happy'] },
+    ],
+    cheek: [
+      { text: '脸回来了……', actions: ['nod'] },
+    ],
+    chin: [
+      { text: '下巴酸死了。', actions: ['sad'] },
+    ],
+    neck: [
+      { text: '脖子终于松了。', actions: ['happy'] },
+    ],
+    chest: [
+      { text: '胸口松开了……', actions: ['nod'] },
+    ],
+    belly: [
+      { text: '落地了……', actions: ['nod'] },
+    ],
+    waist: [
+      { text: '腰回来了……', actions: ['nod'] },
+    ],
+    skirt: [
+      { text: '裙子皱掉了啦。', actions: ['shy'] },
+    ],
+    hand: [
+      { text: '手终于自由了。', actions: ['happy'] },
+    ],
+    fin: [
+      { text: '鳍都麻了。', actions: ['sleepy'] },
+    ],
+    tail: [
+      { text: '尾巴回来了。', actions: ['happy'] },
+    ],
+    thigh: [
+      { text: '腿站直了……', actions: ['nod'] },
+    ],
+    foot: [
+      { text: '站、站不稳……', actions: ['dizzy'] },
+    ],
   },
 
   /** 拎起来。 */
