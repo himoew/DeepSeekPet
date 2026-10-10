@@ -4,8 +4,9 @@
   --skin-ink:#1B1626; --skin-eye:#00A870;
   --wall:#E8E6EE; --dot:#CFCBD9; --shadow:rgba(27,22,38,.12);
   --blush:#FF8FA8; --tear:#5AAEF0; --anger:#E5484D; --heart:#F0567A; --dust:#A39DB0;
-  /* 天气粒子（2026-10-10 加）：樱花 / 落叶 / 雨 / 音符 */
-  --blossom:#FFB6CE; --leaf:#E08A3C; --leaf-ink:#B4661F; --rain:#9FC4E8; --note:var(--skin-eye);
+  /* 天气粒子（2026-10-10）：雪 / 樱花 / 落叶（三种色，混着落才像秋天）/ 雨 / 音符 */
+  --snow:#FFFFFF; --blossom:#FFB6CE; --leaf-a:#E8A33C; --leaf-b:#D2652F; --leaf-c:#C9A227;
+  --leaf-ink:#8A4A12; --rain:#9FC4E8; --note:var(--skin-eye);
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
@@ -15,7 +16,7 @@
     --skin-ink:#FFFFFF; --skin-eye:#2FD59B;
     --wall:#10151C; --dot:#232B37; --shadow:rgba(0,0,0,.32);
     --blush:#FF7F9E; --tear:#6BBDF7; --anger:#FF6369; --heart:#FF6F93; --dust:#5B6472;
-    --blossom:#FF9EC4; --leaf:#C97A32; --leaf-ink:#8E501A; --rain:#7FA8CF;
+    --snow:#F2F7FF; --blossom:#FF9EC4; --leaf-a:#D9903A; --leaf-b:#B8572A; --leaf-c:#B09428; --leaf-ink:#7A3F0E; --rain:#7FA8CF;
   }
 }
 :root[data-theme="dark"]{
@@ -25,7 +26,7 @@
   --skin-ink:#FFFFFF; --skin-eye:#2FD59B;
   --wall:#10151C; --dot:#232B37; --shadow:rgba(0,0,0,.32);
   --blush:#FF7F9E; --tear:#6BBDF7; --anger:#FF6369; --heart:#FF6F93; --dust:#5B6472;
-  --blossom:#FF9EC4; --leaf:#C97A32; --leaf-ink:#8E501A; --rain:#7FA8CF;
+  --snow:#F2F7FF; --blossom:#FF9EC4; --leaf-a:#D9903A; --leaf-b:#B8572A; --leaf-c:#B09428; --leaf-ink:#7A3F0E; --rain:#7FA8CF;
 }
 *{box-sizing:border-box}
 html,body{margin:0; height:100%; overflow:hidden}

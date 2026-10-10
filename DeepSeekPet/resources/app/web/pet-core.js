@@ -617,6 +617,13 @@ export function createPet(els, opts) {
   let lastFx = '';
   let custom = opts.figure || null;
   const sfx = opts.sfx;
+  /**
+   * ★ **画外部粒子的钩子**（2026-10-10）：天气/音符那一套在 `web\fx.js`，
+   * 页面建 pet 时把"画一次"传进来（`opts.renderFx`）。**没有它 = 老行为**（什么都不做）。
+   */
+  const renderFx = typeof opts.renderFx === 'function' ? opts.renderFx : null;
+  /** 外部粒子画错只报一次（跟身体绘制那套一个套路，免得刷屏）。 */
+  let fxFailReported = false;
   const onEvent = opts.onEvent || (() => {});
   let W = 0, H = 0, floorY = 0, S = .42, T = 0;
   let roam = opts.roam ?? 'free';
@@ -821,44 +828,13 @@ export function createPet(els, opts) {
 
   /* particles */
   /**
-   * ★ **弹幕式粒子**（2026-10-10 加的：音符 / 雪 / 樱 / 落叶 / 雨）。
+   * 一次性的小特效（爱心 / 尘土 / 睡着的 z / 眼泪）—— **上游那套，没动**。
    *
-   * 原来这里只有 5 种一次性的粒子（爱心/尘土/z/眼泪/drop），位置靠外部传进来的 `vx/vy`。
-   * 天气和音符要的是**一直往下/往上飘、还会自己摆**的粒子，所以多加了两类参数：
-   *
-   *   · `sway`（左右摆的幅度，px）+ `swayHz`（摆的频率）：雪/樱花/落叶靠它"飘"起来；
-   *   · `rot` + `spin`（自转）：樱花和落叶不转就不像；
-   *   · `gust`（恒定横向风）：雨丝要斜着落，但**不能用每颗粒子随机的 vx**（那样整片雨会抖成一团噪点）。
-   *
-   * 上限 `MAX_PARTICLES`：天气粒子是**每帧重拼 SVG 字符串**，不封顶的话满屏粒子会把帧时间吃掉。
-   * 超了就**不再发射新的**（已经在飘的照旧飘完），所以不会出现"粒子突然整片消失"。
+   * ⚠️ 2026-10-10：**天气粒子和音符不在这里**。它们（风场、景深、六角雪花、落叶翻滚、雨丝与溅落）
+   * 在 `web\fx.js` 里，通过下面的 `renderFx` 钩子画进同一个 `#fxCore`：
+   * 那个文件是"一直飘、还会自己摆"的一整套物理，塞进这个上游文件太危险（第 1.23 节两次翻车）。
    */
-  const MAX_PARTICLES = 120;
-  /** 一直飘、不会因为贴地就没了的那几种（天气粒子）；其它都是一次性特技。 */
-  const AMBIENT = new Set(['note', 'snow', 'blossom', 'leaf', 'rain']);
-  const DRAG_LIKE = new Set(['dust', 'ash']);
-  function emit(type, p, o = {}) {
-    if (P.length >= MAX_PARTICLES) return;
-    const it = {
-      type, x: p.x, y: p.y, vx: 0, vy: 0, age: 0, life: 1,
-      sway: 0, swayHz: 0, rot: 0, spin: 0, gust: 0, ...o,
-    };
-    it.bx = it.x; it.by = it.y;   // 摆动要围绕**出生点**算，否则会越摆越远
-    P.push(it);
-  }
-  /**
-   * 给页面用的发射口（天气 / 音符）。
-   *
-   * **形状由页面传给 `opts.spawn`**（它是一个构造器：`spawn(w, h) → 粒子参数`），
-   * 这样"雪怎么飘、樱花多大"这类**手感数字全留在页面那一层**，
-   * `pet-core` 只管物理与渲染 —— 它是上游文件，改动越少越安全（见第 1.23 节两次翻车）。
-   */
-  function emitFx(type, opts = {}) {
-    const spawn = opts.spawn;
-    if (typeof spawn !== 'function') return;
-    const o = spawn(W, H) || {};
-    emit(type, { x: o.x ?? 0, y: o.y ?? 0 }, o);
-  }
+  function emit(type, p, o = {}) { P.push({ type, x: p.x, y: p.y, vx: 0, vy: 0, age: 0, life: 1, ...o }); }
   function emitHeart() {
     emit('heart', toStage(rnd(A.hearts[0], A.hearts[1]), A.hearts[2] + pet.low), { vx: rnd(-20, 20), vy: rnd(-70, -45), life: 1.6 });
   }
@@ -1181,22 +1157,9 @@ export function createPet(els, opts) {
 
     for (let i = P.length - 1; i >= 0; i--) {
       const p = P[i];
-      p.age += dt;
-      // 天气粒子：先加重力/风，再按"围绕出生点摆动"算出这一帧的位置
-      if (p.gust || p.sway || p.spin) {
-        p.vy += (p.grav || 0) * dt;
-        p.vx += p.gust * dt;
-        p.bx += p.vx * dt; p.by += p.vy * dt;
-        p.rot += p.spin * dt;
-        p.x = p.bx + (p.sway ? Math.sin(p.age * p.swayHz * 2 * Math.PI) * p.sway : 0);
-        p.y = p.by;
-      } else {
-        p.x += p.vx * dt; p.y += p.vy * dt;
-      }
+      p.age += dt; p.x += p.vx * dt; p.y += p.vy * dt;
       if (p.type === 'drop') { p.vy += 900 * dt; if (p.y > floorY) p.age = p.life; }
-      if (DRAG_LIKE.has(p.type)) p.vx *= Math.exp(-dt * 4);
-      // 天气粒子落到地面/飘出窗口就结束（**先到先算**：雨滴要落在窗口底边，不是舞台地面之外）
-      if (AMBIENT.has(p.type) && (p.by > H + 24 || p.x < -80 || p.x > W + 80)) p.age = p.life;
+      if (p.type === 'dust') p.vx *= Math.exp(-dt * 4);
       if (p.age >= p.life) P.splice(i, 1);
     }
     pet.talkK *= Math.exp(-dt * 12);
@@ -1298,27 +1261,6 @@ export function createPet(els, opts) {
         s += `<circle class="p-dust" fill="none" stroke-width="2" cx="${f(p.x)}" cy="${f(p.y)}" r="${f((3 + 8 * a) * sc)}" opacity="${f(.7 * (1 - a))}"/>`;
       } else if (p.type === 'drop') {
         s += `<path class="tearf" transform="translate(${f(p.x)} ${f(p.y)}) scale(${f(.9 * sc)})" d="${DROP}"/>`;
-      } else if (p.type === 'note') {
-        /**
-         * 音符：**用文字**而不是路径 —— 一个 `<text>♪</text>` 比手写符头+符干省得多，
-         * 而且字体里本来就有。颜色跟着她的配色走（`.p-note` 用 `--skin-eye`）。
-         */
-        const sz = (12 + 7 * p.sz) * sc, op = a < .12 ? a / .12 : 1 - (a - .12) / .88;
-        s += `<text class="p-note" text-anchor="middle" font-size="${f(sz)}" opacity="${f(op)}" transform="translate(${f(p.x)} ${f(p.y)}) rotate(${f(p.rot)})">${p.glyph || '♪'}</text>`;
-      } else if (p.type === 'snow') {
-        const r = 1.6 + 2.4 * p.sz, op = (a < .1 ? a / .1 : 1 - (a - .1) / .9) * .85;
-        s += `<circle fill="rgba(255,255,255,.92)" cx="${f(p.x)}" cy="${f(p.y)}" r="${f(r * sc)}" opacity="${f(op)}"/>`;
-      } else if (p.type === 'blossom') {
-        const r = (2.6 + 1.6 * p.sz) * sc, op = (a < .1 ? a / .1 : 1 - (a - .6) / .4) * .9;
-        s += `<path fill="var(--blossom)" opacity="${f(op)}" transform="translate(${f(p.x)} ${f(p.y)}) rotate(${f(p.rot)}) scale(${f(r / 5)})" d="M0-5C3-7 6-4 4 0 3 3 1 4 0 5-1 4-3 3-4 0-6-4-3-7 0-5Z"/>`;
-      } else if (p.type === 'leaf') {
-        const r = (3 + 2 * p.sz) * sc, op = (a < .1 ? a / .1 : 1 - (a - .6) / .4) * .92;
-        s += `<path fill="var(--leaf)" opacity="${f(op)}" stroke="var(--leaf-ink)" stroke-width="${f(r * .12)}" transform="translate(${f(p.x)} ${f(p.y)}) rotate(${f(p.rot)}) scale(${f(r / 6)})" d="M-4-1C-2-6 2-6 5-2 2 3-2 4-4-1Z"/>`;
-      } else if (p.type === 'rain') {
-        // 雨滴**拖一条短线**（斜着落 → 线要跟着风斜），落到底再淡出（`a` 越大越淡）
-        const h = 12 + 9 * p.sz, op = a < .08 ? a / .08 : 1 - (a - .7) / .3;
-        const dx = (p.gust / Math.max(60, -p.vy)) * h;
-        s += `<line stroke="var(--rain)" stroke-width="${f(1.1 * sc)}" stroke-linecap="round" opacity="${f(op * .55)}" x1="${f(p.x)}" y1="${f(p.y)}" x2="${f(p.x + dx)}" y2="${f(p.y + h * sc)}"/>`;
       }
     }
     // 没有粒子时 `s` 是空串：**别每帧都写一次 innerHTML**（那是每帧一次 DOM 解析 + 布局失效）。
@@ -1329,6 +1271,13 @@ export function createPet(els, opts) {
     // 实测症状就是"球开了但看不见"（球刚画上就被这一行抹掉；它是脏检查，所以偶尔才闪一下）。
     // 以后再有"画进 #fx 的新东西"，请同样放进自己的子节点，别让任何人重写 `#fx`。
     if (s !== lastFx) { fxCore.innerHTML = s; lastFx = s; }
+    /**
+     * ★ **外面那套粒子**（天气/音符，`web\fx.js`）画在同一层 `#fxCore` 里。
+     * 它自己带脏检查（内容没变就不写 DOM），所以这里只负责"叫它画一次"。
+     * 钩子由页面在建 pet 时给（`opts.renderFx`）：**没有钩子就什么都不做**——
+     * 老页面 / 上游那套调用方式照旧跑，行为一字不变。
+     */
+    if (renderFx) { try { renderFx(); } catch (err) { if (!fxFailReported) { fxFailReported = true; try { window.petHost?.report?.(`画天气粒子时出错：${err && (err.stack || err.message)}`); } catch { /* 报告失败就算了 */ } } } }
     return fname;
   }
 
@@ -1529,12 +1478,10 @@ export function createPet(els, opts) {
     anchor() { return toStage(A.bubble[0], (custom ? A.bubble[1] : (HEAD_TOP[skin.head] ?? 12) - 8) + pet.low); },
     emitHeart,
     /**
-     * 页面往粒子层里塞一颗（天气 / 音符）。`opts.spawn(w, h)` 返回这颗粒子的参数，
-     * 形状数字（多大、飘多快、摆多少）**全在页面那一层**，见 `emitFx` 的注释。
+     * **嘴里**（说话时音符从这儿冒）：跟着她的朝向与身体上下动。
+     * 2026-10-10：天气/音符那一套搬去 `web\fx.js` 之后，这里只留这一个只读坐标给页面用
+     * （`web/fx.js` 的 `note()` 就是拿它当发射点）。
      */
-    emitFx,
-    /** 嘴里（说话时音符从这儿冒）：跟着她的朝向与身体上下动。 */
     mouth(off = 0) { return toStage(A.gaze[0] + 6, A.gaze[1] + 30 + off + pet.low); },
-    get particleCount() { return P.length; },
   };
 }

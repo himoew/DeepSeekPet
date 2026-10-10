@@ -12,6 +12,8 @@ import { boot, report } from './diag.js';
 import { createBall } from './ball.js';
 import { createGame } from './game.js';
 import { applyTheme, createPet, createSfx, clamp, f, mini, normalizeSkin, skinCss, EXPRESSIONS, HEAD_TOP, ICONS } from './pet-core.js';
+// 天气粒子/音符的物理与外观（2026-10-10 新增，见那个文件开头的说明）
+import { createFx } from './fx.js';
 
 const $ = (s) => document.querySelector(s);
 const host = window.petHost || null;
@@ -165,6 +167,12 @@ const ctl = createPet(
   { petG: $('#pet'), shadowEl: $('#shadow'), fxG: $('#fx') },
   {
     sfx,
+    /**
+     * ★ **把"画粒子"这一步交给外面**（2026-10-10）：粒子物理与外观搬去了 `web\fx.js`，
+     * pet-core 那套老粒子（爱心/尘土/z/眼泪）**原样保留** —— 这里只在它自己那层画完之后，
+     * 再把外面那套画进同一个 `#fxCore`。见 `pet-core.js` 里 `renderFx` 的注释。
+     */
+    renderFx: () => fx.draw(),
     roam: prefs.roam,
     bounds: () => ({ W: innerWidth, H: innerHeight, floorY: innerHeight - floorGap(), S: .42 * prefs.scale }),
     onEvent: (kind, d) => onBody(kind, d),
@@ -2254,17 +2262,21 @@ function layout() {
  *  ③ 天气话**走页面自己那条气泡**（`item.kind = 'weather'`），**完全不经过主台词链**
  *     （用户："触发这个不要和主台词关联，否则要改的太多"）—— 而 World 那边只说一句
  *     就把它收掉，见 `case 'say'` 里那两行；
- *  ④ **怕影响用电脑**：粒子总量由 pet-core 的 `MAX_PARTICLES` 封顶，这里另外看**帧时间**——
+ *  ④ **怕影响用电脑**：粒子总数封顶在 `web\fx.js` 的 `HARD_CAP`，这里另外看**帧时间**——
  *     连续 3 秒平均帧超过 `SLOW_MS` 就把发射量砍到 35%（记一行日志，见 `stepWeather`）。
  */
 const WEATHER_ORDER = ['off', 'snow', 'blossom', 'leaf', 'rain'];
-/** 每个天气：粒子类型 / 每秒发射几个 / 窗口内圈染色 / 按钮说明。 */
+/**
+ * 每个天气：粒子类型 / 窗口内圈染色 / 按钮说明。
+ * ★ **每秒发射多少、粒子多大、怎么飘 —— 全在 `web\fx.js` 的 `PROFILE` 表里**，这里不再管数量
+ * （第一版把数量写在两边，改一处忘一处）。这里只管"她怎么反应、说什么话"。
+ */
 const WEATHER = {
   off: { label: '关' },
-  snow: { label: '雪', kind: 'snow', perS: 11, tint: 'rgba(200,225,255,.10)' },
-  blossom: { label: '樱花', kind: 'blossom', perS: 7, tint: 'rgba(255,190,215,.10)' },
-  leaf: { label: '落叶', kind: 'leaf', perS: 6, tint: 'rgba(230,180,120,.10)' },
-  rain: { label: '雨天', kind: 'rain', perS: 26, tint: 'rgba(140,180,230,.12)' },
+  snow: { label: '雪', kind: 'snow', tint: 'rgba(200,225,255,.10)' },
+  blossom: { label: '樱花', kind: 'blossom', tint: 'rgba(255,190,215,.10)' },
+  leaf: { label: '落叶', kind: 'leaf', tint: 'rgba(230,180,120,.10)' },
+  rain: { label: '雨天', kind: 'rain', tint: 'rgba(140,180,230,.12)' },
 };
 /**
  * **切完天气她怎么反应**（用户："特别是在切换后的 5 秒内出现个反应"）。
@@ -2291,8 +2303,6 @@ const weather = {
   reactAt: 0,
   /** 下一次自己嘀咕天气话的时刻。 */
   chatAt: 0,
-  /** 粒子欠着的累计量（每秒几个 → 每帧一个余数）。 */
-  acc: 0,
   /** 帧时间监控：这一段的帧数与累计毫秒 · 砍发射量的截止时刻 · 上次留痕的时刻。 */
   n: 0, ms: 0, slowUntil: 0, warnedAt: -1e9,
 };
@@ -2300,36 +2310,14 @@ const weatherEl = $('#weatherTint');
 const SLOW_MS = 26;
 /** 现在这条天气的配置（`off` 时 `kind` 是 undefined）。 */
 const weatherNow = () => WEATHER[weather.mode] || WEATHER.off;
-/** 生成一颗天气粒子的参数：**形状数字全在这一层**，pet-core 只管物理与画。 */
-function weatherSpawn(type, W, H) {
-  const r = (a, b) => a + Math.random() * (b - a);
-  if (type === 'snow') {
-    return { x: r(-20, W + 20), y: -10, vy: r(16, 34), sway: r(6, 20), swayHz: r(.25, .6),
-      spin: r(-1, 1), rot: r(0, 360), sz: Math.random(), life: 26 };
-  }
-  if (type === 'blossom') {
-    return { x: r(-20, W + 20), y: -10, vy: r(20, 38), sway: r(16, 38), swayHz: r(.3, .7),
-      spin: r(-2.5, 2.5), rot: r(0, 360), gust: r(-6, 6), sz: Math.random(), life: 26 };
-  }
-  if (type === 'leaf') {
-    return { x: r(-20, W + 20), y: -14, vy: r(24, 46), sway: r(20, 46), swayHz: r(.25, .55),
-      spin: r(-3, 3), rot: r(0, 360), gust: r(-14, -4), sz: Math.random(), life: 26 };
-  }
-  // 雨：**横向风用固定值**（每颗粒子随机 vx 的话整片雨会抖成一团噪点）
-  return { x: r(-20, W + 20), y: -12, vy: r(620, 900), gust: 22, sz: Math.random(), life: 8 };
-}
-/** 她说话时从嘴边冒音符（页面在打字循环里调，见 `typeText`；每 5 个字一颗）。 */
-let noteTick = 0;
-function noteAt(x, y) {
-  if (++noteTick % 5) return;
-  ctl.emitFx('note', { spawn: () => ({
-    x: x + (Math.random() * 22 - 11), y,
-    vx: Math.random() * 20 - 10, vy: -30 - Math.random() * 18,
-    rot: Math.random() * 24 - 12, spin: Math.random() * 20 - 10,
-    glyph: Math.random() < .5 ? '♪' : '♫',
-    sz: Math.random(), life: 1.4 + Math.random() * .5,
-  }) });
-}
+/**
+ * ★ **粒子系统**（物理与外观都在 `web\fx.js`，2026-10-10 从 pet-core 里搬出来重写的）。
+ * 它自己管：风场、景深、六角雪花、落叶翻滚、雨丝与溅落、封顶数量。
+ * 这里只负责"什么时候发射"（当前天气）和"她怎么反应"。
+ */
+const fx = createFx({ ctl, fxCore: $('#fxCore'), report });
+/** 她说话时从嘴边冒音符（页面在打字循环里调，见 `typeText`）。 */
+function noteAt(x, y) { fx.note(x, y); }
 /**
  * 切天气。**页面自己先切**（不等 World 一个来回），再报给 World 记住（`settings.json` 的 `weather`）。
  * `fromServer` = 这是 World 同步过来的（重连 / 第一次 `init`），那就不要再报回去。
@@ -2339,7 +2327,7 @@ function setWeather(mode, { fromServer = false } = {}) {
   weather.mode = mode;
   prefs.weather = mode;
   prefs.weatherKnown = true;
-  weather.acc = 0;
+  if (mode === 'off') fx.clear();
   /**
    * 切完 **0.7~2.4 秒**给她一个反应（用户要"5 秒内"）。**不立刻做**：
    * 立刻做会跟"点按钮"这一下撞在一起，看着像按钮动画而不是她的反应。
@@ -2370,20 +2358,29 @@ function stepWeather(dt) {
       weather.slowUntil = ctl.time + 20;
       if (ctl.time - weather.warnedAt > 60) {
         weather.warnedAt = ctl.time;
-        try { report(`[天气] 帧时间偏慢（${avg.toFixed(1)}ms/帧，${ctl.particleCount} 颗粒子）→ 这 20 秒把发射量降到 35%`); } catch { /* ignore */ }
+        try { report(`[天气] 帧时间偏慢（${avg.toFixed(1)}ms/帧，${fx.count} 颗粒子）→ 这 20 秒把发射量降到 35%`); } catch { /* ignore */ }
       }
     }
     weather.n = 0; weather.ms = 0;
+    /**
+     * ★ **诊断：粒子到底铺到哪儿了**（用户实测报"只有桌面的左半边有粒子"）。
+     * 我这边离线量是左右各半，所以必须让它自己把**窗口尺寸**和**粒子实际的 x 范围**写进日志：
+     * 一行就能分清是"窗口没铺满整块桌面"（主进程 setBounds 的问题）
+     * 还是"粒子没飘到右半边"（我们自己的问题）。
+     * 只在 `?debug=1`（`DSP_DEBUG=1` 启动）时记，平时不打日志。
+     */
+    if (weatherNow().kind && FRAME_DIAG) {
+      const xs = fx.xs();
+      try {
+        report(`[天气] 窗口 ${innerWidth}x${innerHeight} · 屏 ${screen.width}x${screen.height} · dpr ${devicePixelRatio}`
+          + ` · 粒子 ${fx.count} 颗` + (xs ? ` · x 范围 ${xs[0]}~${xs[1]}（中位 ${xs[2]}）` : ''));
+      } catch { /* ignore */ }
+    }
   }
   const cfg = weatherNow();
-  // ② 发射
-  if (cfg.kind) {
-    weather.acc += cfg.perS * (ctl.time < weather.slowUntil ? .35 : 1) * dt;
-    let guard = 0;
-    while (weather.acc >= 1 && guard++ < 8) { weather.acc -= 1; ctl.emitFx(cfg.kind, { spawn: weatherSpawn }); }
-    if (weather.acc > 4) weather.acc = 4;          // 卡了一下之后不要一次补一堆
-    if (!weather.chatAt) weather.chatAt = ctl.time + 20;
-  } else weather.acc = 0;
+  // ② 粒子：物理与发射节奏都在 fx.js 里（这一行的 weather 决定发哪种）
+  fx.frame(dt, ctl.time, cfg.kind || 'off');
+  if (cfg.kind && !weather.chatAt) weather.chatAt = ctl.time + 20;
   // ③ 切完之后的反应（只在"没在说话、也没举卡"时做，免得撞台词）
   if (weather.reactAt && ctl.time >= weather.reactAt) {
     const r = WEATHER_REACT[weather.mode];
@@ -2637,8 +2634,8 @@ function frame(now) {
      * 于是球拍光环、扫掠判定、球的物理都跟着半速跑，她一跑起来又跳回 60 —— 手感忽快忽慢。
      */
     full = prefs.lockFrameRate || ctl.moving || ball.busy || game.mode === 'game'
-      // ★ 天气粒子在飘的时候也跑 60fps：30fps 下雪/雨会一顿一顿的（用户要"先看看效果"）
-      || ctl.particleCount > 0;
+      // ★ 有粒子在飘的时候也跑 60fps：30fps 下雪/雨会一顿一顿的（用户要"先看看效果"）
+      || fx.count > 0;
     if (FRAME_DIAG) {
       marks.push(['总', performance.now()]);
       frameCost.push(t0, marks);

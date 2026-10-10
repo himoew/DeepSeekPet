@@ -47,6 +47,7 @@ const FILES = [
   ['/web/pet.css', 'text/css'],
   ['/web/pet-app.js', 'text/javascript'],
   ['/web/pet-core.js', 'text/javascript'],
+  ['/web/fx.js', 'text/javascript'],
   ['/web/rig/rig.js', 'text/javascript'],
   ['/web/whale/figure.js', 'text/javascript'],
   ['/web/whale/model.json', 'application/json'],
@@ -2262,6 +2263,40 @@ function stubModel() {
         && hit(112, 250) === 'foot' && hit(65.8, 192.4) === 'tail');
       ok('★部位（行为）：旧 7 类里"手"的锚点（108,185）不再把裙子当手（那里是发梢，归头发）',
         hit(108, 185) === 'hair' && hit(108, 202) === 'hand');
+    }
+
+    /**
+     * ★ **天气粒子的轨迹与铺满**（2026-10-10 重写之后加的）。
+     *
+     * 为什么要它：用户实测报过两件事 —— ① "只有左半边有粒子"；② "像五毛特效，不模拟现实轨迹"。
+     * 这两条都**不会抛错**（粒子少、轨迹假，代码照样跑），所以在自检里量一下：
+     *   · **铺满**：雪在 1280 宽上要跨过大半个宽度（留 120px 余量，因为边缘允许出画）；
+     *   · **够密**：雨不能只有十几条（真实的雨是同屏两三百条的量级，我们按性能砍到一百多）。
+     * 这里直接 `import` 产品里的 `web/fx.js` 跑离线模拟（不碰 DOM，只要一个假的容器）。
+     */
+    {
+      const stubEl = () => ({ getContext: () => null, width: 1, height: 1, style: {}, getBoundingClientRect: () => ({ x: 0, y: 0, width: 1, height: 1 }) });
+      const savedWin = globalThis.window, savedDoc = globalThis.document;
+      globalThis.window = globalThis;
+      globalThis.document = { createElementNS: stubEl, createElement: stubEl, querySelector: () => null, addEventListener() {} };
+      let fxMod = null;
+      try { fxMod = await import(pathToFileURL(path.join(app, 'web', 'fx.js')).href); } catch (e) { fxMod = null; }
+      const core = { innerHTML: '' };
+      const fx = fxMod ? fxMod.createFx({ ctl: { bounds: { W: 1280, H: 760 } }, fxCore: core }) : null;
+      const run = (kind, secs) => {
+        for (let f = 1; f <= secs * 60; f += 1) fx.frame(1 / 60, f / 60, kind);
+        return { xs: fx.xs() || [], n: fx.count, svg: core.innerHTML };
+      };
+      const snow = fx ? run('snow', 40) : null;
+      ok('★天气粒子（行为）：雪要铺满整个窗口宽度（不是只落在左半边）',
+        !!snow && snow.xs[0] < 120 && snow.xs[1] > 1160 && snow.n > 40);
+      const rain = fx ? run('rain', 10) : null;
+      ok('★天气粒子（行为）：雨要够密（同屏一百条以上）而且落到底会溅落',
+        !!rain && rain.n > 90 && /ellipse/.test(rain.svg));
+      const leaf = fx ? run('leaf', 40) : null;
+      ok('★天气粒子（行为）：落叶/花瓣用 `scaleX = |cos|` 做翻滚（侧立时会变窄 = 不是纸屑）',
+        !!leaf && /scale\(/.test(leaf.svg) && /rotate\(/.test(leaf.svg) && leaf.n > 15);
+      globalThis.window = savedWin; globalThis.document = savedDoc;
     }
 
     ws.close();

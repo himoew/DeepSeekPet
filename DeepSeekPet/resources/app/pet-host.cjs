@@ -225,19 +225,38 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
 
   const cover = (d) => {
     displayId = d.id;
-    const { x, y, width, height } = d.workArea;
-    win.setBounds({ x, y, width, height });
+    /**
+     * ★ **铺满整块屏幕，而不是"工作区"**（2026-10-10 用户实测报"粒子只在桌面左半边"）。
+     *
+     * 原来用的是 `d.workArea`（**排除了任务栏**的那块），而且只在**主显示器**上算。
+     * 这个窗口不是普通应用窗口，它是**贴在桌面上的透明覆盖层**：天气粒子、悬停按钮、
+     * 点击穿透的判定都假设"窗口 = 整块桌面"。用工作区的话，右边那一溜（大约任务栏那条边）
+     * 上什么都没有；多显示器时更糟 —— 只有主屏有宠物。
+     *
+     * 现在用 `d.bounds`（含任务栏那块）+ 所有显示器并集，并且**把真实数字写进日志**：
+     * 一行就能看出"窗口到底铺到了哪儿"（`窗口 逻辑… 物理…`）。
+     */
+    const b = d.bounds || d.workArea;
+    const all = screen.getAllDisplays().map((x) => x.bounds || x.workArea);
+    const left = Math.min(...all.map((r) => r.x)), top = Math.min(...all.map((r) => r.y));
+    const right = Math.max(...all.map((r) => (r.x || 0) + r.width)), bottom = Math.max(...all.map((r) => (r.y || 0) + r.height));
+    const want = process.env.DSP_SINGLE_DISPLAY === '1' ? b : { x: left, y: top, width: right - left, height: bottom - top };
+    win.setBounds(want);
     // Windows: a window moved onto a display with another scale factor is resized by the DPI
     // change to its old size times the ratio of the two scales; once it is on the new display, the
     // same bounds set again hold.
-    win.setBounds({ x, y, width, height });
+    win.setBounds(want);
+    diag(`覆盖桌面 · display=${JSON.stringify(b)} scale=${d.scaleFactor} · 所有屏=${JSON.stringify(all)}`
+      + ` · 请求=${JSON.stringify(want)} · 实际=${JSON.stringify(win.getBounds())}`
+      + ` · 物理=${JSON.stringify(screen.dipToScreenRect(win, want))}`);
   };
 
   const place = () => { if (win) cover(display()); };
 
   const create = () => {
-    diag(`create() · displays=${JSON.stringify(screen.getAllDisplays().map((x) => ({ id: x.id, wa: x.workArea, scale: x.scaleFactor })))}`);
-    const d = display(), wa = d.workArea;
+    diag(`create() · displays=${JSON.stringify(screen.getAllDisplays().map((x) => ({ id: x.id, bounds: x.bounds, wa: x.workArea, scale: x.scaleFactor })))}`);
+    const d = display();
+    const wa = d.bounds || d.workArea;
     win = new BrowserWindow({
       x: wa.x, y: wa.y, width: wa.width, height: wa.height,
       transparent: true, frame: false, resizable: false, movable: false, minimizable: false, maximizable: false,
