@@ -1021,6 +1021,23 @@ function stepDialog(dt) {
     if (!it.optsShown) { it.optsShown = true; showOptions(it); }
   }
   if (it.kind === 'dialog') stepTalk(it, dt);
+  /**
+   * ★ **天气气泡**（`kind: 'weather'`，页面自己起的那条）。
+   *
+   * ⚠️ 这里是 2026-10-10 用户实测"气泡卡死了"的**真因**：上面三条分支只认
+   * `say` / `ask` / `dialog`，我新加的 `weather` **一条都不落** ——
+   * 于是 `stepDialog` 每帧走到这里什么都不做，**那条气泡永远不会被收掉**，
+   * `item` 一直占着（`closeBubble()` 才是把 `item` 清空的那个），
+   * 结果：说完整句天气话之后**所有气泡都出不来了**（`startItem` 进不去）。
+   *
+   * 现在它有自己的生命周期：打字打完之后 `until` 到点就收，跟 `say` 那套一样的写法。
+   * 另外**不管它有没有话**，天气气泡都不该拦住主台词 —— `case 'say'` 里那两行会先把它让开。
+   */
+  if (it.kind === 'weather') {
+    if (it.shown < it.text.length) typeText(it, it.text, dt, []);
+    else if (ctl.time >= it.until) closeBubble();
+    if (item === it && it.hardUntil && ctl.time >= it.hardUntil) closeBubble();   // 硬保险
+  }
 }
 
 function typeText(it, text, dt, anchors) {
@@ -2344,7 +2361,14 @@ function setWeather(mode, { fromServer = false } = {}) {
 /** 一句话的天气气泡：走页面自己的 `item`，**不排进主台词链**。 */
 function weatherBubble(text) {
   if (!text || item) return false;
-  startItem({ kind: 'weather', text, shown: 0, acc: 0, until: ctl.time + 1.6 + text.length / 20 });
+  startItem({
+    kind: 'weather', text, shown: 0, acc: 0,
+    // 打字打完之后再停留这么久（见 stepDialog 里 weather 那一段）
+    until: ctl.time + 1.6 + text.length / 20,
+    // ★ 硬保险：万一有人又把某个分支漏掉，**最多 12 秒也一定收掉** ——
+    // 天气话卡住气泡会让她"整个哑掉"（用户实测报过），不能再靠"分支写全"来保证。
+    hardUntil: ctl.time + 12,
+  });
   openBubble('say', '<p class="b-text"></p>');
   return true;
 }

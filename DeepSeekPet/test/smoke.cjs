@@ -2296,6 +2296,10 @@ function stubModel() {
       const leaf = fx ? run('leaf', 40) : null;
       ok('★天气粒子（行为）：落叶/花瓣用 `scaleX = |cos|` 做翻滚（侧立时会变窄 = 不是纸屑）',
         !!leaf && /scale\(/.test(leaf.svg) && /rotate\(/.test(leaf.svg) && leaf.n > 15);
+      const blos = fx ? run('blossom', 45) : null;
+      ok('★天气粒子（行为）：樱花瓣是**带缺口的花瓣**（不是椭圆拼的粉色圆点）+ 花脉 + 花蕊',
+        !!blos && blos.svg.includes('M0 0C0.42-0.22') && blos.svg.includes('M0 -0.12V-0.86')
+        && blos.svg.includes('blossom-core'));
       globalThis.window = savedWin; globalThis.document = savedDoc;
     }
 

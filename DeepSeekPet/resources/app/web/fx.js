@@ -98,6 +98,14 @@ const PROFILE = {
 };
 /** 所有粒子总数（含她身上的爱心/尘土那种一次性特技）的天花板。 */
 const HARD_CAP = 260;
+/**
+ * **花瓣的形状**（一个单位大小的路径，画的时候整体 `scale(r)` 缩放到粒子尺寸）。
+ *
+ * 为什么不用椭圆：樱花花瓣是"带缺口的水滴"—— 尖端那个小凹口是它的名片，
+ * 椭圆拼出来的五瓣远看就是一团粉色（用户实测："让它更像花一点"）。
+ * 坐标：`y = 0` 是花心，`y = -1` 是花瓣尖。
+ */
+const PETAL = 'M0 0C0.42-0.22 0.58-0.52 0.52-0.78 0.48-0.95 0.24-1.02 0.13-0.86L0-0.95-0.13-0.86C-0.24-1.02-0.48-0.95-0.52-0.78-0.58-0.52-0.42-0.22 0 0Z';
 const rnd = (a, b) => a + Math.random() * (b - a);
 const pick = (r) => r[0] + Math.random() * (r[1] - r[0]);
 
@@ -282,28 +290,48 @@ export function createFx({ ctl, fxCore, report } = {}) {
         out.push(`<path d="${d}" fill="none" stroke="var(--snow)" stroke-width="${(p.lw * (0.6 + .5 * (p.layer / Math.max(1, p.layerN - 1)))).toFixed(2)}" stroke-linecap="round" opacity="${op.toFixed(2)}" transform="translate(${X} ${Y})"/>`);
       } else if (p.kind === 'blossom') {
         /**
-         * 花瓣：**纸片式翻转** —— `scaleX = |cos θ|`（θ 由 `age × flip` 驱动），
-         * 侧立的那一瞬间在屏幕上"变窄"，这就是"花瓣"和"粉色圆点"的分界
-         * （研究里那条：绕斜轴翻转 ≈ 2D 里的 scaleX + 小幅面内旋转）。
-         * 留 6% 底宽，别真的归零闪一下。
+         * ★ **樱花瓣**（2026-10-10 用户："除了樱花需要增加些细节，让它更像花一点"）。
+         *
+         * 第一版是一堆椭圆拼的五瓣花，远看像粉色圆点。现在按真花的几个特征来做：
+         *  ① **花瓣是"带缺口的水滴"**（`PETAL` 路径），不是椭圆 —— 尖端那一个小凹口是樱花的名片；
+         *  ② **每瓣上有一条中脉**（细线，透明度压低）→ 小尺寸下也显出"有结构"；
+         *  ③ **每瓣自己的明暗**：花瓣朝向随整体翻转一直在变，所以各瓣亮度不同 → 立体；
+         *  ④ **花蕊**：花心一小团 + 3~5 个淡黄小点；
+         *  ⑤ **背面（翻转过去的那半圈）整体淡一档**（`c < 0`），这是最便宜的"翻过去了"的提示；
+         *  ⑥ **远层退化**成一个小椭圆（6~8px 时五瓣已经糊了，硬画反而脏）。
+         *
+         * `scaleX = |cos θ|` 那一层翻转照旧（`θ = age × flip`）—— 那是"花瓣"和"粉色点"的分界。
          */
         const th = p.age * p.flip * 2 * Math.PI;
         const c = Math.cos(th);
         const sx = Math.max(.06, Math.abs(c));
         const r = p.size;
-        // 远层不画五瓣（6~8px 时已经糊成一团），退化成一个小椭圆
-        const far = p.layer === 0;
-        let petals = '';
-        if (!far) {
+        const back = c < 0;
+        if (p.layer === 0) {
+          out.push(`<ellipse cx="${X}" cy="${Y}" fill="var(--blossom)" opacity="${(op * (back ? .7 : 1)).toFixed(2)}" rx="${r.toFixed(2)}" ry="${(r * .72).toFixed(2)}" transform="rotate(${(p.roll * 57.3).toFixed(1)} ${X} ${Y})"/>`);
+        } else {
+          const parts = [];
           for (let k = 0; k < 5; k += 1) {
-            const ang = k * (2 * Math.PI / 5);
-            petals += `<ellipse cx="0" cy="${(-r * .62).toFixed(2)}" rx="${(r * .42).toFixed(2)}" ry="${(r * .62).toFixed(2)}" transform="rotate(${(ang * 180 / Math.PI).toFixed(1)})"/>`;
+            const a = k * 72;
+            // 每瓣的明暗：`cos(a + θ)` —— 朝向光源的那几瓣亮一点
+            const lit = 0.72 + 0.28 * (0.5 + 0.5 * Math.cos((a * Math.PI / 180) + th));
+            const o = (op * (back ? .72 : 1) * lit).toFixed(2);
+            parts.push(`<g transform="rotate(${a})" opacity="${o}">`
+              + `<path d="${PETAL}" fill="var(--blossom)" transform="scale(${r.toFixed(2)})"/>`
+              + `<path d="M0 -0.12V-0.86" stroke="var(--blossom-ink)" stroke-width="0.055" opacity=".5"/>`
+              + `</g>`);
           }
+          // 花蕊：花心 + 几个小点（近层才画，远了看不清）
+          let core = '<circle r="0.10" fill="var(--blossom-core)"/>';
+          if (p.layer >= 2) {
+            for (let k = 0; k < 4; k += 1) {
+              const a2 = k * 1.6 + p.phase;
+              core += `<circle cx="${(Math.cos(a2) * .09).toFixed(3)}" cy="${(Math.sin(a2) * .09).toFixed(3)}" r="0.045" fill="var(--blossom-core)"/>`;
+            }
+          }
+          parts.push(`<g opacity="${(op * (back ? .6 : .95)).toFixed(2)}">${core}</g>`);
+          out.push(`<g transform="translate(${X} ${Y}) rotate(${(p.roll * 57.3).toFixed(1)}) scale(${sx.toFixed(2)} 1)"><g transform="scale(${r.toFixed(2)})">${parts.join('')}</g></g>`);
         }
-        const inner = far ? `<ellipse cx="0" cy="0" rx="${r.toFixed(2)}" ry="${(r * .7).toFixed(2)}"/>` : petals;
-        // 背面（c<0）暗一档：最便宜的立体感
-        const back = c < 0 ? .78 : 1;
-        out.push(`<g fill="var(--blossom)" opacity="${(op * back).toFixed(2)}" transform="translate(${X} ${Y}) rotate(${(p.roll * 57.3).toFixed(1)}) scale(${sx.toFixed(2)} 1)">${inner}</g>`);
       } else if (p.kind === 'leaf') {
         /**
          * 叶子：**翻滚 = 水平缩放**（`|cos(spin)|`），侧立时在屏幕上几乎看不见 ——
