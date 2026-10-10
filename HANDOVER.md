@@ -3,7 +3,7 @@
 > **接手前请读完，尤其第 1 节（两个副本）和第 8 节（踩过的坑）** —— 那两节每条都花过真实时间。
 > **★ 三步不能省**：改工作区那份 → `tools\deploy.ps1 -To D:\pet\DeepSeekPet` → WMI 重启
 > （**deploy 与重启都要一次性提权到 `danger-full-access`**，见第 7 节第 15 条）；
-> 改完跑 `node test\smoke.cjs`（**313 项**，纯 Node，不需要 Electron）。
+> 改完跑 `node test\smoke.cjs`（**316 项**，纯 Node，不需要 Electron）。
 
 ## ★ 当前状态（2026-10-09 深夜 · 弹弹乐：三个真 bug 修完 + 复位/头球难度按用户拍板重做）
 
@@ -11,7 +11,7 @@
 |---|---|
 | 一句话 | 桌宠完整可用，正跑在 `D:\pet\DeepSeekPet\`（exe 已改名 `BlueFishDeskpet.exe`），接本机 Ollama 的 `qwen2.5:3b-instruct-q4_K_M`；**"弹弹乐"头球能顶到、计分对、复位不再死循环** |
 | 软件 / 她本人 | 软件叫 **Blue Fish Deskpet**；她本人还叫**「大肥鱼」** |
-| 规模 | 台词 **328 条 / 35 个桶**（`lines.cjs`）· 自检 **313 项** · 新模块 `web/ball.js`、`web/game.js`、`mood.cjs`、`dress.cjs` |
+| 规模 | 台词 **328 条 / 35 个桶**（`lines.cjs`）· 自检 **316 项** · 新模块 `web/ball.js`、`web/game.js`、`mood.cjs`、`dress.cjs` |
 | 用户的规矩 | 「跑通一次给我测试，不需要自己重复自检」「很复杂、很花时间的先停下来问我」「碰到严重问题直接回退上一个更新好的节点，或者先让我实测」「**别自己抓取**（截图）」 |
 
 **这一轮分两批，先看第 1.29 节（最新）和第 1.28 节**：
@@ -137,8 +137,54 @@
 | 源代码在哪 | `D:\Blue fish's work\DeepSeekPet\`（**只有源码，跑不起来**，见第 1 节） |
 | 跑的那份在哪 | `D:\pet\DeepSeekPet\`（**必须放 AI 工作区之外**，见第 1 节） |
 | 怎么改 | 在工作区改源码 → `tools\deploy.ps1` 同步过去 → 重启桌宠 |
-| 怎么验证 | `node test\smoke.cjs`（**313 项**，不需要 Electron）· 语音另需 `tools\check-voice-electron.cjs` |
+| 怎么验证 | `node test\smoke.cjs`（**316 项**，不需要 Electron）· 语音另需 `tools\check-voice-electron.cjs` |
 | 已知待办 | 没有硬待办。**已经有 git 了**（工作区根，见第 1.16 节）；可以想的还有：让它大一点（`INIT.scale`）、把 `pet-app.js`/`pet-core.js` 的改动搬进 `patch-assets.mjs` |
+
+---
+
+## 1.32 ★ 右键菜单按钮全失效 + 菜单头是上游图标（2026-10-09 深夜，用户实测报的）
+
+### 1.32.1 "菜单里所有按钮都点不动"
+
+**症状**：右键她 → 菜单出来了 → 里面每一项（以及头上的暂停/设置/退出）都没反应。
+
+**真因**（日志里一句话就定性了：`[输入] 窗口收回鼠标（by=poll）· 在按钮上=false`）：
+
+窗口"要不要拿鼠标"只由页面里的 `wantsMouse()` 决定，而它判断"光标压着界面"用的是
+`overTools()` —— **只量 `#tools`（悬停按钮）那一个矩形**。可是：
+
+- 菜单一打开，帧循环就把 `tools` 隐藏了（`tools.hidden = !(… && menu.hidden …)`）；
+- 菜单又是开在**光标上方**的（`menu.style.top = clamp(y - h, …)`）。
+
+于是"右键 → 把鼠标往上移进菜单"这条路**必然**经过"既不在她身上、也不在 #tools 里"的一刻
+→ `wantsMouse()` 判 false → 页面把鼠标还给桌面（`setIgnoreMouseEvents(true)`）→
+**点击穿透到桌面，菜单一个都点不动**。不是偶发，是必踩。
+
+**修法**：新增 `overUI(p)` —— **菜单和悬停按钮都按矩形算**（带 6px 余量，按钮之间的缝也算），
+其余能点的东西（气泡里的按钮/输入框）直接 `document.elementFromPoint()` 问 DOM；
+`wantsMouse()` 与那条诊断日志都改用它（日志里 `在按钮上=` 以后就是这里）。
+
+> **给以后的自己**：页面里"窗口拿不拿鼠标"**只有 `wantsMouse()` 一处**，所以**任何新面板**
+> 要么是 `<button>/<input>/<a>`（`elementFromPoint` 自动认），要么就得加进 `overUI` 的矩形列表。
+> 忘了加 → 面板长得出来、点不动，日志只会说"在按钮上=false"。
+
+### 1.32.2 菜单左上角那个"上游图标"
+
+**真因**：`pet.cjs` 的 `INIT.bot` 里**根本没有 `avatar` 这个字段**（只有
+`controls / name / paused / quitLabel / quitPrompt / buttons`），而菜单头写的是
+
+```js
+bot.avatar ? `<img src="/api/avatar?v=…">` : `<svg>${mini('neutral', ctl.skin)}</svg>`
+```
+
+→ 条件**永远为假** → 永远画 `mini()`：那是 `pet-core` 的**内置形象（上游那只 Coo）**。
+
+**修法**：默认就是**我们的小肥鱼**（`/api/avatar`，即 `web\avatar.png`）；
+只有图片真的加载失败（本地服务没起来）才 `onerror` 退回 SVG；
+名字的兜底也从上游的 `'Coo'` 改成 `'小肥鱼'`。
+
+自检 +3 条（两条静态 + 一条**行为验证**：把 `overUI` 抠出来喂假矩形，量
+"菜单开着时光标在菜单里 → 收鼠标 / 在空地上 → 放过去"）→ **316 项**。
 
 ---
 
@@ -2444,7 +2490,7 @@ DeepSeekPet/
 │     ├─ avatar.png                       右键菜单人像 128（**我们自己的**，不是上游缩略图）
 │     ├─ rig/rig.js                        类 Live2D 渲染器（WebGL2）
 │     └─ whale/  figure.js model.json tex/(25) feat/(25)   大肥鱼模型
-├─ test/smoke.cjs            ★ 313 项自检（连点合并/过期、自动说话、语音、部位、选择卡、抚摸、拖拽、"懂你"那批、记忆、图标、配置损坏留档是后加的）
+├─ test/smoke.cjs            ★ 316 项自检（连点合并/过期、自动说话、语音、部位、选择卡、抚摸、拖拽、"懂你"那批、记忆、图标、配置损坏留档是后加的）
 └─ tools/
    ├─ setup-runtime.ps1      装配 Electron 运行时（从 ..\Coopanion 取），并检测权限告警
    ├─ extract-pet.ps1        从 Coopanion 抽桌宠页面与鲸鱼模型，并重新套用**5 处**补丁
@@ -2529,7 +2575,7 @@ DeepSeekPet/
 | `tools\check-voice-electron.cjs` | ★ **在 Electron 的真 V8 下**走 `tts.cjs` 真路合成一句并校验（WAV/采样率/不是静音） | 改过 `tts*.cjs`、`voice.json`、换音色或升级 Electron 之后**必须跑**。见第 1.8 节 |
 | `tools\live-voice-check.cjs` | 连上**正在跑的桌宠**发一句话，验"先语音、后气泡"（要给它端口号） | 想知道"真桌宠到底出不出声" |
 | `tools\tone.cjs` | 用当前配置问几句，打印原文和耗时 | 换模型 / 改人设之后 |
-| `test\smoke.cjs` | **313 项**自检：文件、328 条台词合法性、抽签不重复、设置读写、**配置损坏先留档**、**原子写不留 .tmp**、模型链路（用假端点）、**连点合并与过期**、**自动说话（开关/静默期/防重复/防念提示词）**、**语音（开关/顺序/WAV/缓存/不加外部缓冲）**、连击升级、睡醒、暂停、目录穿越 | 每次改完代码。**注意它是纯 Node，验不到 Electron 的 V8**，所以语音还要跑上面那条 |
+| `test\smoke.cjs` | **316 项**自检：文件、328 条台词合法性、抽签不重复、设置读写、**配置损坏先留档**、**原子写不留 .tmp**、模型链路（用假端点）、**连点合并与过期**、**自动说话（开关/静默期/防重复/防念提示词）**、**语音（开关/顺序/WAV/缓存/不加外部缓冲）**、连击升级、睡醒、暂停、目录穿越 | 每次改完代码。**注意它是纯 Node，验不到 Electron 的 V8**，所以语音还要跑上面那条 |
 
 `extract-pet.ps1` 与 `setup-runtime.ps1` 都是**幂等**的，重跑安全（已实测两次）。
 两个 `.ps1` 里**只能写 ASCII**——见第 7 节第 5 条。
@@ -2658,7 +2704,7 @@ $ollama = "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe"
 # 改完源码 → 同步到能跑的那份
 powershell -ExecutionPolicy Bypass -File DeepSeekPet\tools\deploy.ps1 -To D:\pet\DeepSeekPet
 
-# 自检（313 项，不需要 Electron）
+# 自检（316 项，不需要 Electron）
 & $node DeepSeekPet\test\smoke.cjs
 
 # 语音的真验收（**必须在 Electron 的 V8 下跑**，纯 Node 验不到那条路）

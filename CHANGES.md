@@ -55,6 +55,16 @@
 - 页面：`web/settings.html` · `web/voice.html` · **`web/diag.js`**（页面全局错误捕获）· 图标（`web/app-icon.png` 等，见 `tools/make-icons.py`）
 - 工程：`test/smoke.cjs`（自检）· `tools/*`（抽取、部署、装配、图标、试音、抠球贴图）
 
+## 2026-10-10 凌晨 修：右键菜单按钮全失效 + 菜单头换成小肥鱼
+
+用户实测："右键小肥鱼时出现的菜单按钮全部失效"+"左上角大肥鱼旁边的上游图标换成我们的小肥鱼"。
+详见 HANDOVER.md 第 1.32 节。
+
+| 改了什么 | 落在哪 |
+|---|---|
+| ★ **菜单按钮点不动的根因**：窗口拿鼠标的判定（wantsMouse）原来只量 #tools，而**菜单一开 #tools 就被隐藏**，菜单又开在光标**上方** → 往菜单上移的那一下必然判成"不在按钮上" → 页面把鼠标还给桌面 → **点击穿透**。新增 overUI(p)：菜单+悬停按钮都按矩形算，其余能点的东西问 document.elementFromPoint() | web/pet-app.js（overUI / wantsMouse / 诊断日志） |
+| ★ **菜单头像是上游 Coo**：pet.cjs 的 INIT.bot **没有 vatar 字段** → ot.avatar ? <img> : mini() 永远走 else（mini 画的是内置上游形象）。现在默认用小肥鱼（/api/avatar = web\avatar.png），加载失败才退回 SVG；名字兜底也改成「小肥鱼」 | web/pet-app.js（enderMenuHead） |
+| 自检 **+3 条**（其中一条是**行为验证**：把 overUI 抠出来喂假矩形量） | 	est/smoke.cjs（313 → **316**） |
 ## 2026-10-10 凌晨 提升小肥鱼胜率（她追球带提前量 + 头球率 65%）
 
 用户："比分差距还是有点大……现在是 50 多的头球率吗，改成 65 左右吧，或者你看下如何修改能稍微提升小肥鱼的胜率"。

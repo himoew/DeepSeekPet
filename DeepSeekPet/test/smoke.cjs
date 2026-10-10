@@ -1124,6 +1124,43 @@ function stubModel() {
           && /setRaceBoost\(mode === 'game' \? RACE_BOOST : 1\)/.test(appSrc));
       }
 
+      /* --- ⑩ 右键菜单：按钮点不动 + 菜单头是上游形象（用户实测报的） --- */
+      {
+        const appSrc2 = fs.readFileSync(path.join(app, 'web', 'pet-app.js'), 'utf8');
+        /**
+         * ★ **"菜单里的按钮全部失效"的根因**：窗口拿鼠标的判定原来只量 `#tools`，
+         * 而菜单一开 `#tools` 就被隐藏（`tools.hidden = !(… && menu.hidden …)`）；
+         * 菜单又开在光标**上方**，所以往上移进菜单时必然判成"不在按钮上"
+         * → 页面把鼠标还给桌面 → 点击穿透，一个都点不动。
+         */
+        ok('★右键菜单：拿鼠标的判定必须把**菜单**也算进去（原来只量 #tools，而菜单一开 tools 就隐藏）',
+          /function overUI\(p\)/.test(appSrc2) && /\[tools, menu\]/.test(appSrc2)
+          && /if \(overUI\(p\)\) return true;/.test(appSrc2) && !/if \(overTools\(p\)\) return true;/.test(appSrc2));
+        /**
+         * ★ **菜单头的头像**：`pet.cjs` 的 `INIT.bot` 里**没有 `avatar` 字段**，
+         * 所以旧代码 `bot.avatar ? <img …> : mini(…)` 永远走 else —— 画的是内置的**上游 Coo**。
+         * 现在默认就是小肥鱼（`/api/avatar` = `web\avatar.png`），只有图加载失败才退回 SVG。
+         */
+        ok('★菜单头像是我们的小肥鱼（`/api/avatar`），不再取决于有没有 `bot.avatar`',
+          /const av = head\.querySelector\('\.m-avatar'\)/.test(appSrc2)
+          && /av\.innerHTML = `<img alt="" src="\/api\/avatar/.test(appSrc2)
+          && /avImg\.addEventListener\('error'/.test(appSrc2));
+        /**
+         * **行为验证**（不只查字符串）：把 `overUI` 抠出来，喂给它假的 `tools` / `menu` 量一下 ——
+         * 菜单打开时，光标落在菜单矩形里必须为 true（= 窗口会拿鼠标，按钮才点得动），
+         * 落在外面的空地上必须为 false（不然整个桌面都被窗口挡住、点不了别的）。
+         */
+        const overSrc = appSrc2.match(/function overUI\(p\) \{[\s\S]*?\n\}/);
+        const elAt = (rect, hidden) => ({ hidden, getBoundingClientRect: () => rect });
+        const over = (menuOpen, x, y) => new Function('tools', 'menu', 'document',
+          `${overSrc[0]}; return overUI({ x: ${x}, y: ${y} });`)(
+          elAt({ left: 0, top: 0, right: 60, bottom: 40, width: 60 }, true),
+          elAt({ left: 100, top: 100, right: 260, bottom: 300, width: 160 }, !menuOpen),
+          { elementFromPoint: () => null });
+        ok('★右键菜单（行为）：光标在菜单矩形里 → 收鼠标；在空地上 → 放过去（菜单开着也成立）',
+          !!overSrc && over(true, 180, 200) === true && over(true, 20, 300) === false && over(false, 180, 200) === false);
+      }
+
       /* --- ⑤ 球在地上要能滚（不是一沾地就停死） --- */
       {
         const bl = createBall({

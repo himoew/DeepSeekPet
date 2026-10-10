@@ -1533,11 +1533,26 @@ function renderMenuHead(confirmQuit = false) {
   if (!head) return;
   head.classList.toggle('confirm', confirmQuit);
   head.innerHTML = '<span class="m-avatar"></span><span class="m-name"></span><span class="m-acts"></span>';
-  head.querySelector('.m-avatar').innerHTML = bot.avatar
-    ? `<img alt="" src="/api/avatar?v=${encodeURIComponent(bot.avatar)}">`
-    : `<svg viewBox="18 18 220 220" aria-hidden="true">${mini('neutral', ctl.skin)}</svg>`;
+  /**
+   * ★ **头像必须是我们的小肥鱼**（`/api/avatar` → `web\avatar.png`），不是上游那只 Coo。
+   *
+   * 原来写的是 `bot.avatar ? '/api/avatar?v=…' : mini('neutral', ctl.skin)`，
+   * 而 `pet.cjs` 的 `INIT.bot` 里**根本没有 `avatar` 这个字段**（只有 name/paused/quitLabel/buttons）
+   * → 条件永远为假 → 永远走 else：画的是 `pet-core` 的**内置形象**，
+   * 也就是用户看到的"菜单左上角大肥鱼旁边那个上游图标"。
+   * 现在默认就是小肥鱼的头像；只有图片真的加载失败（本地服务没起来）才退回 SVG。
+   */
+  const av = head.querySelector('.m-avatar');
+  av.innerHTML = `<img alt="" src="/api/avatar${bot.avatar ? `?v=${encodeURIComponent(bot.avatar)}` : ''}">`;
+  const avImg = av.querySelector('img');
+  if (avImg) {
+    avImg.addEventListener('error', () => {
+      av.innerHTML = `<svg viewBox="18 18 220 220" aria-hidden="true">${mini('neutral', ctl.skin)}</svg>`;
+    });
+  }
   const name = head.querySelector('.m-name');
-  name.textContent = name.title = confirmQuit ? bot.quitPrompt : (bot.name || 'Coo');
+  // 没有名字时也**不要用上游的 "Coo"**：这是我们自己的桌宠（世界那边正常会给 `大肥鱼`）
+  name.textContent = name.title = confirmQuit ? bot.quitPrompt : (bot.name || '小肥鱼');
   const acts = head.querySelector('.m-acts');
   const act = (iconHtml, label, fn, cls = 'm-act') => {
     const b = document.createElement('button');
@@ -1657,6 +1672,32 @@ function overTools(p) {
   return p.x >= r.left - 6 && p.x <= r.right + 6 && p.y >= r.top - 6 && p.y <= r.bottom + 6;
 }
 /**
+ * ★★ **光标是不是压在"能点的界面"上** —— 窗口要不要拿鼠标的关键之一（`wantsMouse`）。
+ *
+ * ⚠️ **用户实测的 bug（右键菜单里所有按钮全部失效）就出在这里**：
+ * 原来只量 `#tools`（悬停按钮），而**菜单一打开 `#tools` 就被隐藏**
+ * （帧循环里那条 `tools.hidden = !(… && menu.hidden …)`）→ 光标只要从她身上往菜单上移，
+ * 就判成"不在按钮上" → 页面立刻把鼠标还给桌面 → **点击穿透到桌面，菜单一个都点不动**。
+ * 菜单又是开在光标**上方**的（`menu.style.top = clamp(y - h, …)`），所以你必然要往上移进菜单 ——
+ * 也就是说这条路以前**一定**会踩到，不是偶发。
+ *
+ * 现在：**菜单和悬停按钮都按矩形算**（带 6px 余量，按钮之间的缝也算），
+ * 其余能点的东西（气泡里的按钮/输入框）直接问 DOM —— 以后再加新面板也不用改这里。
+ */
+function overUI(p) {
+  if (!p) return false;
+  try {
+    for (const el of [tools, menu]) {
+      if (!el || el.hidden) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && p.x >= r.left - 6 && p.x <= r.right + 6 && p.y >= r.top - 6 && p.y <= r.bottom + 6) return true;
+    }
+    const hit = document.elementFromPoint(p.x, p.y);
+    if (hit && hit.closest && hit.closest('button, input, textarea, select, a, .bubble')) return true;
+  } catch { /* 布局还没算好之类：当"没压着" */ }
+  return false;
+}
+/**
  * ★ **"窗口要不要拿鼠标"的唯一定义**（用户实测：光标在箭头/手指之间闪、按钮点不开）。
  *
  * 为什么必须只有一处：这个状态原来有**三个地方**在写，判断还各不相同 ——
@@ -1675,7 +1716,7 @@ function wantsMouse(p) {
     if (ctl.hitPet(p)) return true;
     if (ball.near(p.x, p.y)) return true;          // 球拍模式要"近球就收鼠标"
     if (performance.now() < paddleKeep.until) return true;
-    if (overTools(p)) return true;                 // ← 悬停按钮：少了这条，按钮就永远点不动
+    if (overUI(p)) return true;                    // ← 悬停按钮 / **右键菜单** / 气泡按钮
   } catch { /* 极早期（球/她还没建好）当 false */ }
   return false;
 }
@@ -1709,7 +1750,7 @@ function setInteractive(on, by) {
   if (on && performance.now() - (lastInteractiveLog || 0) > 1200) {
     lastInteractiveLog = performance.now();
     const p = cursor.at;
-    const over = p ? (() => { try { return overTools(p); } catch { return '?'; } })() : '?';
+    const over = p ? (() => { try { return overUI(p); } catch { return '?'; } })() : '?';
     report(`[输入] 窗口收回鼠标（by=${by}）· 光标 ${p ? Math.round(p.x) + ',' + Math.round(p.y) : '?'} · 在按钮上=${over}`);
   }
   logPointer('flip', by);
