@@ -1,0 +1,208 @@
+<!doctype html>
+<!--
+  ============================================================================
+  桌宠页面 · 双层画布验收（临时工具，不进桌宠安装包）
+  ============================================================================
+
+  用途：**在桌宠真正的 `pet.html` 里**验这一轮的画布改动。为什么非用它不可：
+  `index.html`（我那个验收页）里的 canvas 是手写的 —— 它证明不了**产品页**里的
+  DOM 顺序、CSS 层级、尺寸链也对。这一页把 `/pet?diag=1` 装进 iframe，逐条量：
+
+    ① DOM 顺序必须是 `fxCanvas`(远) → `stageSvg`(她) → `fxCanvasNear`(近)；
+    ② 两块画布都在 `.stage` 里、`pointer-events:none`、CSS 尺寸 = 视口；
+    ③ 像素尺寸 = 视口 × dpr（不是 1×1 —— 这条老坑会让"粒子在算但一个看不见"）；
+    ④ `#weatherTint` 的 `z-index` 要**夹在两层之间**（不然它给近层粒子罩色）；
+    ⑤ 驱动真实天气（`petFx().step()`）后，**两层各自都画了像素**，而且分流数字对得上
+       （最近一层去近层）；
+    ⑥ ★ **两张画布各清各的**：往两块各画一个记号，推一帧，看记号是否只在自己那块被清掉
+       —— 这是"只清远层会让近层停着上一秒的花瓣"那条坑的回归测试。
+
+  ★ 打开：`node dev-weather\serve.cjs` → http://127.0.0.1:8899/v-pet.html
+  ⚠️ 只读页面 + 驱动它自己的帧循环；不改产品代码、不写文件。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>桌宠页面 · 双层画布验收</title>
+<style>
+  body{margin:0;padding:14px 16px;background:#12181f;color:#dfe8f2;
+    font:13px/1.7 "Microsoft YaHei","Noto Sans SC",system-ui,sans-serif}
+  h1{font-size:16px;margin:0 0 6px}
+  h1 small{color:#7f8ea3;font-weight:400;font-size:12px;margin-left:8px}
+  p.note{color:#7f8ea3;margin:4px 0 10px}
+  table{border-collapse:collapse;margin:8px 0;font-variant-numeric:tabular-nums}
+  th,td{border:1px solid #2b3947;padding:4px 9px;text-align:left}
+  th{background:#151d26;color:#9fb4cc}
+  td.ok{color:#7ee0a8;font-weight:600}
+  td.bad{color:#ff8a8a;font-weight:700}
+  #stageBox{position:relative;width:min(900px,96vw);height:400px;overflow:hidden;
+    border:1px solid #2b3947;border-radius:10px;background:#20303c;margin-top:6px}
+  #frame{width:100%;height:100%;border:0;display:block;background:#20303c}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+  button{font:inherit;padding:5px 11px;border-radius:8px;cursor:pointer;
+    border:1px solid #2b3947;background:#1b242e;color:#dfe8f2}
+  button:hover{border-color:#3f6a8c}
+  button.on{background:#1f6feb;border-color:#4a8ff7;color:#fff;font-weight:600}
+  code{background:#1b242e;border:1px solid #2b3947;border-radius:4px;padding:0 4px}
+  #log{white-space:pre-wrap;color:#9fb4cc;font-size:12px;margin-top:6px}
+</style>
+</head>
+<body>
+<h1>桌宠页面 · 双层画布验收 <small>iframe 里是真正的 <code>/pet</code></small></h1>
+<p class="note">
+  下面那个框就是桌宠页面的真实结构（远层画布 → 她的 svg → 近层画布）。
+  自检会自动驱动真实的天气（雨/雪/樱花/落叶），量两层各自画了多少、以及**两张画布有没有各清各的**。
+</p>
+<div class="row">
+  <button id="rerun">重新自检</button>
+  <span id="prog" style="color:#7f8ea3"></span>
+</div>
+<div id="out"></div>
+<div id="log"></div>
+<div id="stageBox"><iframe id="frame" src="/pet?diag=1"></iframe></div>
+
+<script>
+/**
+ * ⚠️ **错误处理装在最前面**：之前有两个验收页各被一个反引号写死过，页面上却"什么都不说"。
+ */
+const $ = (id) => document.getElementById(id);
+window.addEventListener('error', (e) => { $('log').textContent += `\n脚本错误：${e.message} @${e.lineno}`; });
+window.addEventListener('unhandledrejection', (e) => { $('log').textContent += `\n未捕获：${(e.reason && e.reason.message) || e.reason}`; });
+
+const frame = $('frame');
+let doc = null, win = null, far = null, near = null, svg = null, tint = null;
+const results = [];
+const ok = (name, pass, detail) => results.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+
+/** 读一个像素（CSS 坐标）的 [r,g,b,a]。 */
+function px(canvas, x, y) {
+  const d = win.devicePixelRatio || 1;
+  const g = canvas.getContext('2d');
+  const v = g.getImageData(Math.round(x * d), Math.round(y * d), 1, 1).data;
+  return [v[0], v[1], v[2], v[3]];
+}
+/** 数整块画布上的不透明像素。 */
+function ink(canvas) {
+  const g = canvas.getContext('2d');
+  const data = g.getImageData(0, 0, canvas.width, canvas.height).data;
+  let n = 0;
+  for (let i = 3; i < data.length; i += 4) if (data[i] > 10) n += 1;
+  return n;
+}
+
+function collect() {
+  doc = frame.contentDocument; win = frame.contentWindow;
+  if (!doc || !win) return false;
+  far = doc.getElementById('fxCanvas');
+  near = doc.getElementById('fxCanvasNear');
+  svg = doc.getElementById('stageSvg');
+  tint = doc.getElementById('weatherTint');
+  return !!(far && near && svg) && typeof win.petFx === 'function';
+}
+
+/** 驱动一次真实天气（走产品自己的 `fx.frame()`，见 pet-app.js 里的 `petFx`）。 */
+function drive(kind, secs) {
+  const api = win.petFx();
+  api.clear();
+  return { n: api.step(kind, secs), counts: api.counts(), stats: api.stats(), size: api.size() };
+}
+
+function run() {
+  results.length = 0;
+  const cs = win.getComputedStyle;
+  const boxOf = (el) => { const r = el.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; };
+
+  /* ① 结构 */
+  const stage = doc.querySelector('.stage');
+  const kids = [...stage.children].map((e) => e.id || e.tagName.toLowerCase());
+  ok('① DOM 顺序 = 远层 → 她的 svg → 近层（层级唯一来源）',
+    JSON.stringify(kids) === JSON.stringify(['fxCanvas', 'stageSvg', 'fxCanvasNear']), kids.join(' → '));
+  ok('① 两块画布都在 .stage 里、display:block 且铺满视口',
+    boxOf(far)[0] > 100 && boxOf(near)[0] === boxOf(far)[0] && cs(far).display === 'block' && cs(near).display === 'block',
+    `far ${boxOf(far).join('×')} / near ${boxOf(near).join('×')} / 视口 ${win.innerWidth}×${win.innerHeight}`);
+  ok('① 两块都是 pointer-events:none（不能挡住点击穿透）',
+    cs(far).pointerEvents === 'none' && cs(near).pointerEvents === 'none',
+    `${cs(far).pointerEvents} / ${cs(near).pointerEvents}`);
+
+  /* ② 染色层的层级 */
+  const zt = tint ? cs(tint).zIndex : 'n/a';
+  ok('② #weatherTint 夹在两层之间（z-index 正数）', zt !== 'auto' && Number(zt) >= 1, `z-index=${zt}`);
+
+  /* ③ 尺寸链 */
+  const d = win.devicePixelRatio || 1, dc = Math.min(d, 2);
+  ok('③ 像素尺寸 = 视口 × dpr（不是 1×1）',
+    Math.abs(far.width - Math.round(win.innerWidth * dc)) <= 1 && near.width === far.width,
+    `far ${far.width}×${far.height} · near ${near.width}×${near.height} · 视口 ${win.innerWidth}×${win.innerHeight} dpr=${d}`);
+  const sz = drive('rain', 1).size;
+  ok('③ fx 自己报的尺寸与画布一致（size() 链没断）',
+    sz.W === win.innerWidth && sz.hasNear === true, `fx ${sz.W}×${sz.H} · hasNear=${sz.hasNear}`);
+
+  /* ④ 真实天气：两层都画 + 分流数字 */
+  const per = {};
+  for (const k of ['rain', 'snow', 'blossom', 'leaf']) {
+    const r = drive(k, k === 'rain' ? 6 : 12);
+    per[k] = { n: r.n, far: r.counts.far, near: r.counts.near, nearCanvasInk: ink(near), farCanvasInk: ink(far) };
+  }
+  const anyNear = Object.values(per).some((v) => v.nearCanvasInk > 30);
+  const anyFar = Object.values(per).some((v) => v.farCanvasInk > 200);
+  ok('④ 远层画布真的有粒子像素', anyFar, Object.entries(per).map(([k, v]) => `${k}:${v.farCanvasInk}`).join(' '));
+  ok('④ 近层画布真的有粒子像素（最近一层 + 音符去近层）', anyNear,
+    Object.entries(per).map(([k, v]) => `${k}:${v.nearCanvasInk}`).join(' '));
+  ok('④ 分流数字自洽（身前后台数 = 总数，且近层不是 0）',
+    Object.values(per).every((v) => v.far + v.near === v.n && v.near > 0),
+    Object.entries(per).map(([k, v]) => `${k} 远${v.far}/近${v.near}=${v.n}`).join(' '));
+
+  /* ⑤ ★ 两张画布各清各的（回归测试） */
+  const mid = { x: Math.round(win.innerWidth * .5), y: Math.round(win.innerHeight * .5) };
+  const g1 = far.getContext('2d'), g2 = near.getContext('2d');
+  g1.setTransform(1, 0, 0, 1, 0, 0); g1.globalAlpha = 1; g1.fillStyle = '#ff00ff';
+  g1.fillRect(0, 0, far.width, far.height);
+  g2.setTransform(1, 0, 0, 1, 0, 0); g2.globalAlpha = 1; g2.fillStyle = '#00ff00';
+  g2.fillRect(0, 0, near.width, near.height);
+  const farMarked = px(far, mid.x, mid.y)[0] > 200, nearMarked = px(near, mid.x, mid.y)[1] > 200;
+  drive('rain', 1 / 30);                                  // 只推一帧
+  const farCleared = px(far, mid.x, mid.y)[3] < 250 || px(far, mid.x, mid.y)[0] < 200;
+  const nearCleared = px(near, mid.x, mid.y)[3] < 250 || px(near, mid.x, mid.y)[1] < 200;
+  ok('⑤ 记号确实画上了（前置条件）', farMarked && nearMarked, `far紫=${farMarked} near绿=${nearMarked}`);
+  ok('⑤ 推一帧后**两张**都被清掉（含"只清远层"那条回归）', farCleared && nearCleared,
+    `far清=${farCleared} near清=${nearCleared}`);
+
+  /* ⑥ 清空：两张都干净 */
+  win.petFx().clear();
+  ok('⑥ clear() 之后两张画布都是空的', ink(far) === 0 && ink(near) === 0, `far=${ink(far)} near=${ink(near)}`);
+
+  globalThis.__vpet = { results, bad: results.filter((r) => !r.pass).length, per };
+  paint();
+}
+function paint() {
+  let html = '<table><tr><th>检查项</th><th>结论</th><th>实测</th></tr>';
+  for (const r of results) {
+    html += `<tr><td>${r.name}</td><td class="${r.pass ? 'ok' : 'bad'}">${r.pass ? 'PASS' : 'FAIL'}</td><td>${r.detail}</td></tr>`;
+  }
+  html += '</table>';
+  const bad = results.filter((r) => !r.pass).length;
+  html += bad === 0
+    ? '<p class="note" style="color:#7ee0a8"><b>全部通过</b> —— 桌宠页面的双层画布、层级、尺寸、分流都对。</p>'
+    : `<p class="note" style="color:#ff8a8a"><b>${bad} 项 FAIL</b> —— 看「实测」那一列。</p>`;
+  $('out').innerHTML = html;
+}
+
+$('rerun').addEventListener('click', () => { results.length = 0; try { run(); } catch (e) { $('log').textContent += `\n自检抛错：${e && e.stack}`; } });
+frame.addEventListener('load', () => {
+  $('log').textContent = 'iframe 已加载，等 2 秒让她的帧循环和形象就绪…';
+  $('prog').textContent = '等一下…';
+  setTimeout(() => {
+    try {
+      if (!collect()) { $('out').innerHTML = '<p style="color:#ff8a8a">拿不到 iframe 里的画布（或 petFx 没暴露 —— 检查 iframe 的 URL 有没有 <code>?diag=1</code>）</p>'; return; }
+      run();
+      $('prog').textContent = `自检完成 · ${new Date().toLocaleTimeString()}`;
+      $('log').textContent += '\n数据取自真实 /pet 页面；驱动天气走的是产品自己的 fx.frame()。';
+    } catch (e) {
+      $('log').textContent += `\n自检抛错：${e && e.stack}`;
+      $('prog').textContent = '自检抛错（见下面日志）';
+    }
+  }, 2000);
+});
+</script>
+</body>
+</html>

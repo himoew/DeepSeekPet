@@ -90,6 +90,16 @@
 
   <h2>试听</h2>
   <div id="cards"></div>
+
+  <h2>对照：上一棒 vs 这一版（都抬到同一电平）</h2>
+  <p class="note">
+    你反馈"这一版比之前更糊"，所以这里放 5 个版本让你**同一电平下**比 —— 不然"小声的旧版"
+    和"大声的新版"比，听出来的差异里一半是响度。<b>🅰 是上一棒的原样（故意小声）</b>，
+    其余都抬到 ≈-24dBFS RMS。<b>请重点比 🅾（旧参数+抬响）和 🅱（这一版）</b>：
+    这两个只差下面这几处参数改动，响度已经拉平。
+  </p>
+  <div id="bar2"><button id="go2">渲染对照版本</button> <span id="prog2"></span></div>
+  <div id="cards2"></div>
   <div id="err"></div>
 </div>
 
@@ -177,8 +187,17 @@ function layer(c, buf, lo, dest, baseT) {
         const dlp = c.createBiquadFilter();
         dlp.type = 'lowpass'; dlp.frequency.value = lpHz; dlp.Q.value = .7;
         const dg = c.createGain();
-        const sw = (lo.swing == null ? 12 : lo.swing) / 100;
-        dg.gain.value = ((f.f || 1000) * sw) / Math.max(1e-6, buf.driftRms);
+        if (lo.legacyDrift) {
+          /**
+           * ★ **上一棒的旧算法**（`depth × 3.2`）—— 只为对照页复现，**产品路径不走这里**。
+           * `depth` 在旧表里是几百 Hz 的数（雨 1200），实测推出来只有 ±54Hz（1%）。
+           */
+          const depth = Array.isArray(lo.drift) ? lo.drift[0] : 100;
+          dg.gain.value = depth * 3.2;
+        } else {
+          const sw = (lo.swing == null ? 12 : lo.swing) / 100;
+          dg.gain.value = ((f.f || 1000) * sw) / Math.max(1e-6, buf.driftRms);
+        }
         ds.connect(dlp); dlp.connect(dg); dg.connect(bq.frequency);
         ds.start(baseT + Math.random() * 20);
       }
@@ -266,8 +285,8 @@ function spark(cfg, c, buf, dest, baseT) {
  * 档位自己的 `out` 用 **1.2 秒**爬到 `cfg.vol` —— 所以开头那 1~2 秒本来就是淡入的，
  * 量 RMS 的时候**必须掐掉开头**（不然会低估）。这里把前 2.5 秒留给淡入，测量从 2.5s 起。
  */
-async function renderTrack(name, secs) {
-  const cfg = TRACKS[name];
+async function renderTrack(name, secs, table) {
+  const cfg = (table || TRACKS)[name];
   const c = new OfflineAudioContext(2, Math.round(SR * secs), SR);
   const buf = makeBuffers(c);
   const master = c.createGain();
@@ -283,7 +302,8 @@ async function renderTrack(name, secs) {
    * ⚠️ 这里**读的是 `ambience.js` 导出的同一个公式**（`EU` / `TARGET_RMS_DB`），不是另抄一份数字 ——
    * 两边一旦不同步，"离线听"和"桌宠里听"就不是同一版了。
    */
-  const norm = (cfg.vol == null ? 1 : cfg.vol) * EU(cfg.bedRmsDb);
+  const vn = variantNorm(name);
+  const norm = (vn != null ? vn : (cfg.vol == null ? 1 : cfg.vol) * EU(cfg.bedRmsDb));
   out.gain.linearRampToValueAtTime(norm, 1.2);
   out.connect(master);
 
@@ -391,6 +411,70 @@ function wavBlob(L, R) {
   return new Blob([ab], { type: 'audio/wav' });
 }
 const LABELS = { snow: '雪（风 + 气息）', blossom: '樱花（轻风 + 鸟叫）', leaf: '落叶（沙沙）', rain: '雨（粉噪 + 雨滴 + 远雷）' };
+
+/* =====================================================================================
+ * ★ **对照版本：上一棒（d6a9173）的参数 + 这一版的变体** —— 只为"同一电平下比着听"
+ * =====================================================================================
+ * 用户实测："这一版比之前那版还糊/杂"。要回答"是不是我这版改坏了"，唯一的办法是
+ * **把旧参数照原样渲出来，两组抬到同一个电平**再比 —— 不然旧版小声、新版大声，
+ * 听感差异里混着"响度"和"音色"两件事，分不清。
+ *
+ * 这里**只加不改**：`TRACKS`（产品用的那张表）一个字都没动，这几个是页面自己的对照项。
+ * 每一档都注明了"跟产品版差在哪"。
+ */
+const VARIANT_TITLES = {
+  rain: '🅱 这一版（当前产品参数）',
+  rain_old: '🅰 上一棒原版（小声，未对齐电平）',
+  rain_flat: '🆑 这一版 + 摆动关掉（验证"糊"是不是摆动造成的）',
+  rain_tame: '🆖 这一版 + 摆动减半 + 轰鸣更低 + 雨滴更稀',
+  rain_wetold: '🅾 上一棒参数 + 抬到同一电平（关键对照：同样响时旧版糊不糊）',
+};
+const VARIANTS = {
+  /** 🅰 上一棒原样：`norm` 不存在（=1），而且 `legacyDrift` 打开 → 用旧的 `depth × 3.2` 摆动算法。 */
+  rain_old: {
+    vol: 1, bedRmsDb: -42.4, legacyDrift: 1,
+    bed: [
+      { n: 'pink', t: 'lowpass', f: 8000, q: .7, g: .26, drift: [1200, 7], lfo: [[.043, 90], [.071, 40]] },
+      { n: 'white', t: 'bandpass', f: 3000, q: 1, g: .018, drift: [700, 9] },
+    ],
+    rumble: { n: 'brown', t: 'lowpass', f: 150, q: .7, g: .016 },
+    every: [.10, .26], spark: 'drop', thunder: [26, 70],
+  },
+  /** 🅱 **产品版原样**（直接引用产品表 `TRACKS.rain` —— 保证你听的就是桌宠里那一版）。 */
+  rain: TRACKS.rain,
+  /** 🅾 上一棒参数 + 抬到 -24dBFS：跟 🅱 只差"参数改了什么"，响度被拉平。 */
+  rain_wetold: {
+    vol: 1, bedRmsDb: -42.4,
+    bed: [
+      { n: 'pink', t: 'lowpass', f: 8000, q: .7, g: .26, swing: 0, drift: [7], lfo: [[.043, 90], [.071, 40]] },
+      { n: 'white', t: 'bandpass', f: 3000, q: 1, g: .018, swing: 0, drift: [9] },
+    ],
+    rumble: { n: 'brown', t: 'lowpass', f: 150, q: .7, g: .016 },
+    every: [.10, .26], spark: 'drop', thunder: [26, 70],
+  },
+  /** 🆑 产品参数 + 不要摆动：如果这版明显干净，那"杂"就是摆动深度太大造成的。 */
+  rain_flat: {
+    vol: 1, bedRmsDb: -42.4,
+    bed: [
+      { n: 'pink', t: 'lowpass', f: 8000, q: .7, g: .30, swing: 0, drift: [7], lfo: [[.043, 60], [.071, 30]] },
+      { n: 'white', t: 'bandpass', f: 3000, q: 1, g: .018, swing: 0, drift: [9] },
+    ],
+    rumble: { n: 'brown', t: 'lowpass', f: 150, q: .7, g: .007 },
+    every: [.10, .26], spark: 'drop', thunder: [26, 70],
+  },
+  /** 🆖 收敛版：摆动减半、轰鸣再低一档、雨滴稀一半（"糊"的三个可疑来源一起往下压）。 */
+  rain_tame: {
+    vol: 1, bedRmsDb: -42.4,
+    bed: [
+      { n: 'pink', t: 'lowpass', f: 8000, q: .7, g: .30, swing: 7, drift: [7], lfo: [[.043, 30], [.071, 15]] },
+      { n: 'white', t: 'bandpass', f: 3000, q: 1, g: .018, swing: 6, drift: [9] },
+    ],
+    rumble: { n: 'brown', t: 'lowpass', f: 150, q: .7, g: .003 },
+    every: [.20, .40], spark: 'drop', thunder: [26, 70],
+  },
+};
+/** 对照项要不要按"对齐到同一 RMS"来定增益：只有 🅰 故意保留原样的小声。 */
+function variantNorm(name) { return name === 'rain_old' ? 1 : null; }
 let rendered = null;
 
 /** 一个频段占比的小横条（0~100%）。 */
@@ -475,6 +559,37 @@ $('go').addEventListener('click', async () => {
   }
 });
 say('就绪 · 点「开始渲染」');
+
+/* =====================================================================================
+ * ★ 对照版本的渲染（5 个雨声变体，同一电平）
+ * ===================================================================================== */
+$('go2').addEventListener('click', async () => {
+  $('go2').disabled = true;
+  const secs = 20;
+  const prog2 = $('prog2');
+  let html = '';
+  try {
+    for (const key of Object.keys(VARIANTS)) {
+      prog2.textContent = `正在渲染「${key}」…`;
+      await new Promise((r) => setTimeout(r, 30));
+      const r = await renderTrack(key, secs, VARIANTS);
+      const m = measure(r.L, r.R, 2.5);
+      const blob = wavBlob(r.L, r.R);
+      const url = URL.createObjectURL(blob);
+      html += `<div class="card"><h3>${VARIANT_TITLES[key] || key}</h3>
+        <div class="row"><audio controls src="${url}"></audio>
+        <a href="${url}" download="ab-${key}.wav">下载 wav</a>
+        <span style="color:#7f8ea3">RMS ${m.rmsDb.toFixed(1)}dBFS · 峰值 ${m.peakDb.toFixed(1)}dB · 事件 ${r.events}</span></div></div>`;
+      $('cards2').innerHTML = html;
+      prog2.textContent = `已完成 ${key}`;
+    }
+    prog2.textContent = '5 个对照版本都好了 · 请同一电平下比着听';
+  } catch (e) {
+    err('对照渲染失败：' + ((e && e.stack) || e));
+  } finally {
+    $('go2').disabled = false;
+  }
+});
 
 /**
  * ★ **给自动化验收留的入口**（2026-10-11）：`await __renderAll()` 直接渲染 + 测量并返回一份

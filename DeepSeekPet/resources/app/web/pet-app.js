@@ -78,6 +78,20 @@ const sfx = createSfx();
  */
 const ambience = createAmbience({ report: (m) => report(m) });
 /**
+ * ★★ **天气音效总开关（代码里的，不是给用户的）** —— 2026-10-11 晚上临时关掉。
+ *
+ * 用户实测："两种版本的音效都糊成一团，主次不分"（雨声应该最突出、其他是次要的环境声）。
+ * 这一版**不接线**：不建 AudioContext、不排雨滴/鸟叫/远雷，桌宠里**天气只有画面、完全没声**。
+ *
+ * ⚠️ **这是临时状态，不是设计**。保留的东西：
+ *   · `web\ambience.js` 整个文件原样保留（下一轮改它就行）；
+ *   · 右键菜单那格「天气声」（`ACTIONS.weatherSound`）和 `settings.json` 的 `weatherSound` 开关
+ *     **照旧存在、照旧能存**，只是这轮它开不开都不会响。
+ * 等"一个天气一个主角音"的方案定下来，把 `false` 改回 `true` 就接上了 ——
+ * 下面三处（`unlock()` / `setEnabled()` / `follow()`）都已经按这个开关守好了。
+ */
+const WEATHER_AUDIO_ON = false;
+/**
  * 球拍模式（见下面 `stage` 的 pointerdown）：`flags.gameMode` 由 `syncGameFlag()` 回填，
  * `swat` 是鼠标最近一次的位置与时间（用来算"甩动速度"）。
  * **必须声明在模块顶部**：指针监听和 `syncGameFlag()` 都在模块求值时就会碰到它们。
@@ -94,7 +108,12 @@ const PADDLE_WAKE = 110;
 /** 离开多久之后才把鼠标放过去（防抖动；进来要快、出去要慢）。 */
 const PADDLE_KEEP_MS = 220;
 const paddleKeep = { until: 0 };
-if (host) { sfx.unlock(); ambience.unlock(); } else ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, () => { sfx.unlock(); ambience.unlock(); }, { capture: true }));
+/**
+ * ★ 手势解锁：`sfx.unlock()` 照旧；**环境音只在 `WEATHER_AUDIO_ON` 时才解锁**
+ * （关掉时不建 AudioContext —— 免得页面上挂一个空转的音频上下文）。
+ */
+const unlockAmbience = () => { if (WEATHER_AUDIO_ON) ambience.unlock(); };
+if (host) { sfx.unlock(); unlockAmbience(); } else ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, () => { sfx.unlock(); unlockAmbience(); }, { capture: true }));
 
 /* ---------- the pet's own voice: speech the World synthesized on this machine ---------- */
 /**
@@ -171,6 +190,7 @@ function applySoundMode(mode) {
    */
   if (mode === 'off') prefs.weatherSound = false;
   else prefs.weatherSound = true;
+  /** ★ `WEATHER_AUDIO_ON` 关着时 `ambienceOn()` 恒 false（见它的定义），这里就不用再判一次。 */
   ambience.setEnabled(ambienceOn());
   if (!prefs.sayVoice) sayAudio.next = null;    // 关掉就把还没放的丢掉
 }
@@ -179,8 +199,13 @@ function applySoundMode(mode) {
  * 环境音现在该不该响：**总闸（`prefs.sound`）× 它自己的开关（`prefs.weatherSound`）**。
  * 用户要的是"单独一个开关，加在右键菜单里"——单独开关不等于绕过总闸，
  * 总闸关掉时环境音也必须静（那才是"声音：关"的意思）。
+ *
+ * ★★ 2026-10-11 晚：外面再乘一个**代码里的总开关** `WEATHER_AUDIO_ON`。
+ * 它关着时这一条恒为 `false` —— `setEnabled(false)` 会让 `ambience` 立刻把输出增益归零
+ * 并 suspend 掉 AudioContext，`follow()` 也在开头就被 `enabled()` 挡掉。
+ * 所以**菜单那格开关照样显示、照样存盘，只是不响**；等音效方案定下来把上面那个常量改回 `true`。
  */
-function ambienceOn() { return prefs.sound && prefs.weatherSound; }
+function ambienceOn() { return WEATHER_AUDIO_ON && prefs.sound && prefs.weatherSound; }
 
 /** 天气环境音的开关（右键菜单里的「天气声」格子）：立刻生效、报给 World 记住。 */
 function toggleWeatherSound() {
@@ -2448,6 +2473,30 @@ function fxDiagLine() {
 }
 /** `?diag=1` 的探针（`pet.html` 里那段）每秒取一次这一行。见 `fxDiagLine` 的注释。 */
 globalThis.petFxDiag = fxDiagLine;
+/**
+ * ★★ **`?diag=1` 时把粒子系统只读地交出去**（2026-10-11 晚加），给 `dev-weather\v-pet.html` 用。
+ *
+ * 为什么值得：粒子搬进 canvas 之后**页面上没有 DOM 可数**，而"双层画布分对了没有""两张画布
+ * 各清各的没有"这两件事，只有在**真实的 pet.html**（真的 `svg` 在中间、真的 CSS 层级）里才验得准。
+ * 这一条让验收页能：`petFx().step(kind, 秒数)` 驱动天气、`petFx().layerCounts()` 看分流，
+ * 而且**不暴露也不修改任何写入口**（`step` 走的还是 `fx.frame`）。
+ *
+ * ⚠️ 默认完全不跑（`POINTER_DIAG` 就是 `?diag=1`），所以正式运行**没有这个全局**、也没有开销。
+ */
+if (POINTER_DIAG) {
+  globalThis.petFx = () => ({
+    step(kind, secs = 3) {
+      const dt = 1 / 30;
+      let t = ctl.time;
+      for (let i = 0; i < Math.round(secs * 30); i += 1) { t += dt; fx.frame(dt, t, kind, 1); }
+      return fx.count;
+    },
+    clear: () => fx.clear(),
+    counts: () => fx.layerCounts(),
+    stats: () => { const s = fx.stats(); return { n: s.n, meta: { strokes: s.meta.callStroke, images: s.meta.callImage } }; },
+    size: () => fx.size(),
+  });
+}
 /** 她说话时从嘴边冒音符（页面在打字循环里调，见 `typeText`）。 */
 function noteAt(x, y) { fx.note(x, y); }
 /**
@@ -2470,8 +2519,9 @@ function setWeather(mode, { fromServer = false } = {}) {
   /**
    * ★ **环境音跟着切**（`web\ambience.js`）：`off` = 静下来，其他四种各有一套底噪。
    * 它是"按钮按下去就该有的反馈"，所以立刻切，不等那 0.7~2.4 秒的反应。
+   * ⚠️ `WEATHER_AUDIO_ON` 关着时整段跳过（这一轮天气只有画面，没声）。
    */
-  try { ambience.switchTo(WEATHER[mode].kind || 'off'); } catch (err) { /* 没声音也不影响画面 */ }
+  if (WEATHER_AUDIO_ON) { try { ambience.switchTo(WEATHER[mode].kind || 'off'); } catch (err) { /* 没声音也不影响画面 */ } }
   if (weatherEl) weatherEl.style.setProperty('--weather-tint', weatherNow().tint || 'transparent');
   if (!fromServer) {
     send({ t: 'prefs', weather: mode });
@@ -2537,7 +2587,7 @@ function stepWeather(dt) {
    * ⚠️ 传的是 `performance.now()` 的**真实秒数**（`ctl.time` 是页面自己的时间轴，
    * 重连/进比赛时会跳），音频的排期必须跟墙上的钟走。
    */
-  if (cfg.kind) ambience.follow(cfg.kind, dt, performance.now() / 1000);
+  if (cfg.kind && WEATHER_AUDIO_ON) ambience.follow(cfg.kind, dt, performance.now() / 1000);
   if (cfg.kind && !weather.chatAt) weather.chatAt = ctl.time + 20;
   // ③ 切完之后的反应（只在"没在说话、也没举卡"时做，免得撞台词）
   if (weather.reactAt && ctl.time >= weather.reactAt) {
