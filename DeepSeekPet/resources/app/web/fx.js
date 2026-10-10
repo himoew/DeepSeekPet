@@ -73,11 +73,23 @@ const PROFILE = {
     life: 40,
   },
   blossom: {
-    perS: 2.2, cap: 45, stall: .18, slip: 30, flip: [.6, 1.6], spin: 0, wind: 1.5,
+    /**
+     * ★ **樱花：飘的是一片片"单花瓣"，不是整朵花**（2026-10-10 用户实测："樱花还是太丑了，怎么这么大"）。
+     *
+     * 我第一版画的是**五瓣整花**，量出来直径 **8.7~18.9px** —— 在桌面上比她的手指还大，
+     * 而且真实的樱花雨里落的本来就**绝大多数是单花瓣**（整朵花是很少见的）。
+     * 参考：[leoska/sakura](https://github.com/leoska/sakura)、[minz71/sakura-rain](https://github.com/minz71/sakura-rain)
+     * 那类"樱花雨"实现，以及调研给的尺寸表（花瓣 6~14px、整花是稀有物）。
+     *
+     * 现在：**单花瓣**，6~12px 长；`flower`（整朵小花）**只有 8% 的概率**，只在中/近层出现 ——
+     * 偶尔飘过一朵才显得"有花"，满屏都是花就假了。
+     */
+    perS: 3.4, cap: 70, stall: .22, slip: 34, flip: [.45, 1.1], spin: 0, wind: 1.5,
+    flowerChance: .08,
     layers: [
-      { w: .40, vT: [18, 30], size: [3.0, 4.2], alpha: [.45, .62], sway: [14, 24], hz: [.07, .16] },
-      { w: .40, vT: [30, 42], size: [4.2, 6.4], alpha: [.55, .75], sway: [12, 20], hz: [.06, .14] },
-      { w: .20, vT: [42, 58], size: [6.4, 9.5], alpha: [.62, .85], sway: [10, 18], hz: [.05, .12] },
+      { w: .40, vT: [20, 32], size: [3.2, 4.2], alpha: [.50, .68], sway: [14, 24], hz: [.07, .16] },
+      { w: .40, vT: [32, 44], size: [4.0, 5.2], alpha: [.60, .80], sway: [12, 20], hz: [.06, .14] },
+      { w: .20, vT: [44, 60], size: [5.2, 7.0], alpha: [.68, .90], sway: [10, 18], hz: [.05, .12] },
     ],
     life: 45,
   },
@@ -172,6 +184,8 @@ export function createFx({ ctl, fxCore, report } = {}) {
       it.lw = rnd(0.75, 1.35);
     }
     if (kind === 'leaf') { it.leafHue = Math.random(); it.leafLen = rnd(0.85, 1.25); }
+    // 樱花：绝大多数是**单花瓣**，只有 8% 是整朵小花（而且只在中/近层）
+    if (kind === 'blossom') it.flower = li >= 1 && Math.random() < (p.flowerChance || 0);
     if (kind === 'note') { it.glyph = Math.random() < .5 ? '♪' : '♫'; it.spin = rnd(-16, 16); }
     return it;
   }
@@ -290,47 +304,42 @@ export function createFx({ ctl, fxCore, report } = {}) {
         out.push(`<path d="${d}" fill="none" stroke="var(--snow)" stroke-width="${(p.lw * (0.6 + .5 * (p.layer / Math.max(1, p.layerN - 1)))).toFixed(2)}" stroke-linecap="round" opacity="${op.toFixed(2)}" transform="translate(${X} ${Y})"/>`);
       } else if (p.kind === 'blossom') {
         /**
-         * ★ **樱花瓣**（2026-10-10 用户："除了樱花需要增加些细节，让它更像花一点"）。
+         * ★ **樱花花瓣**（2026-10-10 第二次改：用户"还是太丑了，怎么这么大"）。
          *
-         * 第一版是一堆椭圆拼的五瓣花，远看像粉色圆点。现在按真花的几个特征来做：
-         *  ① **花瓣是"带缺口的水滴"**（`PETAL` 路径），不是椭圆 —— 尖端那一个小凹口是樱花的名片；
-         *  ② **每瓣上有一条中脉**（细线，透明度压低）→ 小尺寸下也显出"有结构"；
-         *  ③ **每瓣自己的明暗**：花瓣朝向随整体翻转一直在变，所以各瓣亮度不同 → 立体；
-         *  ④ **花蕊**：花心一小团 + 3~5 个淡黄小点；
-         *  ⑤ **背面（翻转过去的那半圈）整体淡一档**（`c < 0`），这是最便宜的"翻过去了"的提示；
-         *  ⑥ **远层退化**成一个小椭圆（6~8px 时五瓣已经糊了，硬画反而脏）。
+         * 上一版画的是**五瓣整花**（实测直径 8.7~18.9px）——太大、而且真实樱花雨里落的
+         * 绝大多数是**单花瓣**。现在：
+         *   · 默认画**一片花瓣**：`PETAL` 路径（带缺口的水滴）+ 一条中脉 + 一条高光；
+         *     `scaleX = |cos θ|` 让它在翻转时变窄（纸片感，这一条留着）；
+         *   · **8% 的概率**才是整朵五瓣小花（只在中/近层）—— 偶尔飘过一朵才有"有花"的感觉。
          *
-         * `scaleX = |cos θ|` 那一层翻转照旧（`θ = age × flip`）—— 那是"花瓣"和"粉色点"的分界。
+         * 尺寸：单花瓣 **6~12px 长**（≈ 屏幕上一个花瓣的真实观感），整花直径 10~15px。
          */
         const th = p.age * p.flip * 2 * Math.PI;
         const c = Math.cos(th);
-        const sx = Math.max(.06, Math.abs(c));
+        const sx = Math.max(.10, Math.abs(c));      // 侧立时不归零（归零会闪）
         const r = p.size;
-        const back = c < 0;
-        if (p.layer === 0) {
-          out.push(`<ellipse cx="${X}" cy="${Y}" fill="var(--blossom)" opacity="${(op * (back ? .7 : 1)).toFixed(2)}" rx="${r.toFixed(2)}" ry="${(r * .72).toFixed(2)}" transform="rotate(${(p.roll * 57.3).toFixed(1)} ${X} ${Y})"/>`);
-        } else {
+        const back = c < 0;                          // 翻过去的那半圈淡一档
+        const dim = back ? .8 : 1;
+        if (p.flower) {
           const parts = [];
           for (let k = 0; k < 5; k += 1) {
             const a = k * 72;
-            // 每瓣的明暗：`cos(a + θ)` —— 朝向光源的那几瓣亮一点
-            const lit = 0.72 + 0.28 * (0.5 + 0.5 * Math.cos((a * Math.PI / 180) + th));
-            const o = (op * (back ? .72 : 1) * lit).toFixed(2);
-            parts.push(`<g transform="rotate(${a})" opacity="${o}">`
-              + `<path d="${PETAL}" fill="var(--blossom)" transform="scale(${r.toFixed(2)})"/>`
-              + `<path d="M0 -0.12V-0.86" stroke="var(--blossom-ink)" stroke-width="0.055" opacity=".5"/>`
+            const lit = 0.74 + 0.26 * (0.5 + 0.5 * Math.cos((a * Math.PI / 180) + th));
+            parts.push(`<g transform="rotate(${a})" opacity="${(op * dim * lit).toFixed(2)}">`
+              + `<path d="${PETAL}" fill="var(--blossom)"/>`
+              + `<path d="M0 -0.1V-0.84" stroke="var(--blossom-ink)" stroke-width=".05" opacity=".45"/>`
               + `</g>`);
           }
-          // 花蕊：花心 + 几个小点（近层才画，远了看不清）
-          let core = '<circle r="0.10" fill="var(--blossom-core)"/>';
-          if (p.layer >= 2) {
-            for (let k = 0; k < 4; k += 1) {
-              const a2 = k * 1.6 + p.phase;
-              core += `<circle cx="${(Math.cos(a2) * .09).toFixed(3)}" cy="${(Math.sin(a2) * .09).toFixed(3)}" r="0.045" fill="var(--blossom-core)"/>`;
-            }
-          }
-          parts.push(`<g opacity="${(op * (back ? .6 : .95)).toFixed(2)}">${core}</g>`);
-          out.push(`<g transform="translate(${X} ${Y}) rotate(${(p.roll * 57.3).toFixed(1)}) scale(${sx.toFixed(2)} 1)"><g transform="scale(${r.toFixed(2)})">${parts.join('')}</g></g>`);
+          parts.push(`<circle r=".10" fill="var(--blossom-core)" opacity="${(op * dim).toFixed(2)}"/>`);
+          out.push(`<g transform="translate(${X} ${Y}) rotate(${(p.roll * 57.3).toFixed(1)}) scale(${sx.toFixed(2)} 1)"><g transform="scale(${(r * 1.35).toFixed(2)})">${parts.join('')}</g></g>`);
+        } else {
+          // 一片花瓣：整体 `scale(r)`，路径的 y=0 是根部、y=-1 是尖
+          out.push(`<g transform="translate(${X} ${Y}) rotate(${(p.rot).toFixed(1)}) scale(${sx.toFixed(2)} 1)">`
+            + `<g transform="scale(${r.toFixed(2)})">`
+            + `<path d="${PETAL}" fill="var(--blossom)" opacity="${(op * dim).toFixed(2)}"/>`
+            + `<path d="M0 0V-0.82" stroke="var(--blossom-ink)" stroke-width=".055" opacity="${(op * dim * .5).toFixed(2)}"/>`
+            + `<path d="M-0.2-0.34C-0.26-0.55-0.18-0.72-0.06-0.8" stroke="var(--blossom-hi)" stroke-width=".07" fill="none" opacity="${(op * dim * .6).toFixed(2)}"/>`
+            + `</g></g>`);
         }
       } else if (p.kind === 'leaf') {
         /**
