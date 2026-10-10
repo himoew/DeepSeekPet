@@ -178,6 +178,28 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     fg.drawImage(eyeCv, bx0 - 20 - FACE.x, by0 - 20 - FACE.y);
     // the lashes ride down with the lid and flatten as they close
     const L = e.lash, sy = .55 + .45 * clamp(open, 0, 1);
+    /**
+     * ★ **眨眼时的睫毛阴影**（用户点名的第二条，**0 新贴图**）。
+     *
+     * 画在**脸那块画布**上、用 `source-atop` 把矩形裁在"脸上已经画到的像素"里，
+     * 所以它**只会在脸内部生效**（不会溢出到窗口或头发上），而且正好落在睫毛这一条上：
+     * 闭眼的过程中睫毛下面逐渐变暗、松开又淡回去。
+     *
+     * `shut` 是这一帧的闭眼量（0 睁、1 全闭）、`d` 是眼睑比静止位置低了多少，阴影跟着 `d` 走。
+     * 这一笔必须在 `paintFaceBody` 收尾时还原成 `source-over`，否则**后面所有脸部的绘制都会被改掉**。
+     */
+    if (shut > .06) {
+      const band = e.cy + d, bh = 13;
+      const grad = fg.createLinearGradient(0, band - bh * .7, 0, band + bh);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(.5, `rgba(58,26,40,${(0.34 * shut).toFixed(3)})`);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      fg.save();
+      fg.globalCompositeOperation = 'source-atop';
+      fg.fillStyle = grad;
+      fg.fillRect(e.cx - 34, band - bh, 68, bh * 2);
+      fg.restore();
+    }
     fg.save();
     fg.translate(e.cx - FACE.x, e.cy + d - FACE.y);
     fg.rotate(tilt);
@@ -185,6 +207,9 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     fg.drawImage(img[`${k}_lash`], L[0] - e.cx, L[1] - e.cy);
     fg.restore();
   }
+
+  /** 睫毛阴影用：这一帧的闭眼量（`paintFaceBody` 里算好，`paintOpenEye` 用）。 */
+  let shut = 0;
 
   // Each mouth sprite sits where its expression edit drew it, and three of those edits drew the mouth
   // higher than the master's: these move them down (master pixels) so the middle of each visible mouth
@@ -264,7 +289,7 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     fg.setTransform(1, 0, 0, 1, 0, 0);
     fg.clearRect(0, 0, FACE.w, FACE.h);
     paintBlush(fc.blush || 0);
-    const shut = Math.max(o.blink || 0, o.eyeClose || 0);
+    shut = Math.max(o.blink || 0, o.eyeClose || 0);
     const lx = clamp(o.look[0], -6, 6), ly = clamp(o.look[1], -5, 5);
     const tilt = fc.brows === 'angry' ? .2 : fc.brows === 'sad' ? -.16 : 0;
     fc.eyes.forEach((e, i) => {
@@ -384,8 +409,44 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     hair: spring(55, 7, 1.8), hairY: spring(50, 8, 1.2), bangs: spring(110, 10, 1.6),
     skirt: spring(100, 9, 1.6), skirtY: spring(90, 10, 1.1), tail: spring(40, 5, 32), fins: spring(90, 9, 30),
     ahoge: spring(140, 6, 38), head: spring(70, 10, 16), armN: spring(60, 9, 95), armF: spring(60, 9, 95),
+    // 呼吸时头/发梢**慢一拍**跟上去（它只在呼吸的竖直分量上动，见下面的 `neckL`）
+    neckY: spring(26, 8, 3.4),
   };
   let lastT = null, prevTilt = 0, prevLow = 0, headTilt = 0, fx = '';
+  /**
+   * ★ **次级动画：0.1 秒前的身体速度**（用户点名的那条"你甩鼠标，发梢晚 0.1 秒跟上"）。
+   *
+   * 机制：`pet-core` 每帧把"身体此刻在画布上的位置"连同**最近 0.4 秒的位置历史**喂进
+   * `o.bx` / `o.by` / `o.posHist`（见 pet-core.js 里 `frame.bx` 那段注释）。这里取
+   * **0.1 秒前**那个点，`(现在 - 0.1 秒前) / 0.1` 就是"因为运动而产生的、发梢该落后多少"。
+   *
+   * 为什么要"延迟"而不是直接用当前速度：直接用当前速度的话，头发和身体**同时**响应，
+   * 看着还是黏在一起（现有的弹簧本来就有惯性，所以光调弹簧阻尼看不出"晚一步"的效果）；
+   * 而按 0.1 秒前的速度驱动，头发就是**跟着身体刚刚做过的事**走 —— 这才是"甩一下、顿一下、再跟上"。
+   *
+   * 单位：px/s。`LAG_S` 是延迟窗口（想更"飘"就调大，0.16 左右很明显；想更紧就调小）。
+   */
+  const LAG_S = .1;
+  /** 延迟速度 → 形变幅度的系数（hair/tail 各有一套，都是手感数字，改这里即可）。 */
+  const LAG_HAIR = .05, LAG_TAIL = .045, LAG_Y = .05;
+  let lagX = 0, lagY = 0;
+  /**
+   * 取 `o.posHist` 里 LAG_S 秒前的那个点；没有历史（老页面 / 内置身体）就返回 0，行为同上游。
+   *
+   * ⚠️ 门槛是 **`length < 1`**，不是 `< 2`：只有**一个**历史点的情形是真实存在的
+   * （她刚落地/刚被放下、上一帧还没入队），这时候那一点就是"0.1 秒前"的最好近似，
+   * 正好是"竖直方向刚发生过大位移"最该出效果的一帧。写成 `< 2` 会把这一帧吃掉，
+   * 症状是"跳起来的那一下发梢不拖、落地之后才开始拖"。
+   */
+  function lagged(o) {
+    const h = o.posHist;
+    if (!Array.isArray(h) || h.length < 1 || !Number.isFinite(o.t)) return [0, 0];
+    const want = o.t - LAG_S;
+    let best = h[0];
+    for (let i = h.length - 1; i >= 0; i--) { if (h[i].t <= want) { best = h[i]; break; } }
+    const dt = Math.max(1e-3, o.t - best.t);
+    return [(o.bx - best.x) / dt, (o.by - best.y) / dt];
+  }
   /** 上一帧那张脸的指纹（见 `faceStamp`）。`undefined` = 必须重画一次。 */
   let lastFaceSig;
   /** 绘制抛错的次数与上一次上报的时刻（见 `draw` 外面那层 try/catch）。 */
@@ -488,9 +549,17 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     /* springs */
     const sway = clamp(o.swing / 26, -1.6, 1.6);
     const up = airborne || held ? 1 : 0;
-    const hair = sp.hair.step(sway * 1.1 - tiltVel * .004 + (walking ? -.25 : 0), dt);
-    const hairY = sp.hairY.step(up * -1 + lowV * .006, dt);
-    const bangs = sp.bangs.step(sway * .7 - tiltVel * .004, dt);
+    /**
+     * ★ 次级动画的输入：**0.1 秒前**的身体速度（竖直也算，所以跳起/被拎起/坐下都有跟随）。
+     * 拖拽（`held`）时不叠加：那时候位置变化太猛，会把头发甩到抽（现有的 `swing` 已经在管它）。
+     */
+    [lagX, lagY] = held ? [0, 0] : lagged(o);
+    const lagH = clamp(-lagX * LAG_HAIR, -2.2, 2.2);      // 往右走 → 发梢往左飘（形变单位）
+    const lagT = clamp(-lagX * LAG_TAIL, -14, 14);        // 尾巴同一方向，但单位是度
+    const lagV = clamp(-lagY * LAG_Y, -1.1, 1.1);         // 上升/下落 → 头发/发梢上下拖
+    const hair = sp.hair.step(sway * 1.1 - tiltVel * .004 + (walking ? -.25 : 0) + lagH, dt);
+    const hairY = sp.hairY.step(up * -1 + lowV * .006 + lagV, dt);
+    const bangs = sp.bangs.step(sway * .7 - tiltVel * .004 + lagH * .8, dt);
     const skirt = sp.skirt.step(sway * .8 + (walking ? -.2 : 0), dt);
     const flare = sp.skirtY.step(up * .8 + sitK * .6 + clamp(-lowV * .01, -.3, .6), dt);
     const [fm, wg] = MOOD[face] || MOOD.neutral;
@@ -501,10 +570,10 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     const finTwitch = Math.pow(Math.max(0, Math.sin(t * .6 + 1)), 16) * 7;   // 每约 10 秒抖一下"耳朵"
     const fins = sp.fins.step(finMood * 14 + sway * 10 + finMood * 3.5 * Math.sin(t * (3 + 4 * Math.abs(finMood))) + (face === 'angry' ? 6 * Math.sin(t * 40) : 0), dt)
       + finTwitch;
-    const ahoge = sp.ahoge.step(-tiltVel * .12 + sway * 18 + (face === 'surprised' ? -16 : 0) + (mode === 'sleep' ? 22 : 0) - hairY * 12, dt)
+    const ahoge = sp.ahoge.step(-tiltVel * .12 + sway * 18 + (face === 'surprised' ? -16 : 0) + (mode === 'sleep' ? 22 : 0) - hairY * 12 + lagH * 6, dt)
       + wagAmp * 8 * Math.sin(t * (2.6 + 3 * wagAmp))    // 情绪摆：开心/被爱时晃得最欢（跟尾巴共用 wagAmp）
       + Math.sin(t * 1.5) * 5;                           // 闲置呼吸（原来 ±2°，等于没动）
-    const tail = sp.tail.step(sway * 14 + tailMood * 12, dt) + wagAmp * 13 * Math.sin(t * (4 + 5 * wagAmp)) + Math.sin(t * 1.3) * 3;
+    const tail = sp.tail.step(sway * 14 + tailMood * 12 + lagT, dt) + wagAmp * 13 * Math.sin(t * (4 + 5 * wagAmp)) + Math.sin(t * 1.3) * 3;
 
     /* legs: pet-core hands hip→foot segments sized for Coo; keep their angle (forward = foot to the right) */
     const legA = o.legs.map(l => -Math.atan2(l[2] - l[0], Math.max(4, l[3] - l[1])) * 180 / Math.PI);
@@ -533,14 +602,26 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     const bDepth = bEnergy === null ? 1 : bEnergy < .36 ? .7 : bEnergy > .74 ? 1.5 : 1;
     const bRate = bEnergy === null ? 1 : bEnergy < .36 ? .82 : bEnergy > .74 ? 1.12 : 1;
     const breathe = breatheBase * bRate;
+    /**
+     * ★ **呼吸起伏**（用户点名的第三条）。
+     *
+     * 原来呼吸只驱动 `st.body` 的 `sx/sy`，也就是**整个身体一起**吸气 —— 幅度 ±0.6%/±1.2%，
+     * 而"起伏"真正看得出来靠的是**躯干**：所以这里的 `sx` 加深到 ±1.0%、`sy` 到 ±1.9%。
+     * 另外头/发梢**慢一拍**才跟上去（`sp.neckY` 那个慢弹簧），于是每口气是"胸腔先起、脖子随后"，
+     * 而不是整个人被缩放了一下。
+     *
+     * 速度和深浅照旧跟心情走（`bRate`/`bDepth`，见 `frame.accMood`）：
+     * 困了就浅而慢、有精神就深而快。**没有心情这一层时两个系数都是 1**，回到上游行为。
+     */
+    const neckL = sp.neckY.step(breathe * bDepth * .55, dt);
     // 不说话的小动作：换重心（身上那半边的位移+微转）——呆毛和鳍会**自动**跟着惯性甩
     // （它们本来就是被 `tiltVel` 驱动的），所以这里只动身体和头。
     const stepK = (o.microStep || 0) * (Math.sin(t * 5.2) * .5 + .5);
     st.body = {
       a: -sway * 1.2 + (held ? o.swing * .15 : 0) + stepK * 4.2,
       ty: low - 9.6 * sitK - stepK * 1.7,
-      sx: 1 + .006 * breathe * bDepth + .04 * plop,
-      sy: 1 - .012 * breathe * bDepth - .06 * plop,
+      sx: 1 + .010 * breathe * bDepth + .04 * plop,
+      sy: 1 - .019 * breathe * bDepth - .06 * plop,
     };
 
     st.skirt = {
@@ -561,7 +642,7 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     st.legFront = { a: lerp(legA[1], -60, sitK), ty: -lift[1] * .9 * (1 - sitK) };
     st.tail = { a: tail - 10 * sitK };
     st.tailBend = { fn: u => [0, -tail * .5 * u * u] };
-    st.neck = { a: headTilt + clamp(bend * .8, -10, 12) + (o.microTilt || 0), ty: (mode === 'sleep' ? 2.5 : 0) + breathe * .35 };
+    st.neck = { a: headTilt + clamp(bend * .8, -10, 12) + (o.microTilt || 0), ty: (mode === 'sleep' ? 2.5 : 0) + breathe * .35 + neckL };
     const parallax = (k, ky) => (u, v) => [angleX * k * bump(u) * (.4 + .6 * bump(v)), angleY * ky * bump(v) * (.4 + .6 * bump(u))];
     st.headFront = { fn: parallax(4.2, 2.8) };
     // the eyes and mouth move with the face: the eyes' outline is shared between the two layers

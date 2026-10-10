@@ -27,10 +27,12 @@
   .item.locked { cursor: not-allowed; opacity: .55; }
   .item.locked:hover { border-color: #2b3648; transform: none; }
   .thumb {
-    width: 74px; height: 74px; margin: 0 auto 10px; border-radius: 14px; display: grid; place-items: center;
+    width: 96px; height: 96px; margin: 0 auto 10px; border-radius: 14px; display: grid; place-items: center;
     background: radial-gradient(circle at 50% 42%, #223049, #151a24 70%); border: 1px dashed #33415a;
-    font-size: 26px;
+    font-size: 26px; overflow: hidden;
   }
+  /* 服装缩略图：铺满方块、不裁掉衣服的主体 */
+  .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
   .item.on .thumb { border-style: solid; border-color: #4d6bfe; }
   .name { font-weight: 600; }
   .note { color: #8b98ae; font-size: 12px; line-height: 1.5; margin-top: 4px; }
@@ -49,7 +51,7 @@
 </head>
 <body>
   <h1>服装</h1>
-  <p class="sub">换她身上这一整套。<b>现在只有「原版」能穿</b>——配色那 8 套是上游的，不做；服装要等你画好新贴图。</p>
+  <p class="sub">换她身上这一整套。**「原版」和已经做好贴图的那几套**都能穿；没贴图的格子是"预留"（点了会说明原因）。</p>
 
   <section class="card">
     <div class="grid" id="grid"></div>
@@ -82,12 +84,16 @@
     $('file').textContent = d.file;
     // **卡片是按钮**：键盘能 Tab 到、回车/空格能穿；"在穿"用 aria-current、"还没贴图"用 aria-disabled
     // 说出来（原来只有一个颜色 + 一句 tag，读屏和键盘用户都拿不到）。
+    // 缩略图：有 `preview`（`fit-outfit.py` 生成的衣服特写）就显示它，
+    // 没有才退回 🐳/＋ —— 用户要求"小鲸鱼换成对应服装的图片"。
     $('grid').innerHTML = (d.outfits || []).map((o) => `
       <button type="button" class="item ${o.id === d.current ? 'on' : ''} ${o.ready ? '' : 'locked'}"
         data-id="${esc(o.id)}" data-ready="${o.ready ? '1' : '0'}"
         ${o.id === d.current ? 'aria-current="true"' : ''} ${o.ready ? '' : 'aria-disabled="true"'}>
         ${o.id === d.current ? '<span class="tag">在穿</span>' : ''}
-        <span class="thumb" aria-hidden="true">${o.ready ? '🐳' : '＋'}</span>
+        <span class="thumb" aria-hidden="true">${o.preview
+          ? `<img src="${esc(o.preview)}" alt="" loading="lazy">`
+          : (o.ready ? '🐳' : '＋')}</span>
         <span class="name">${esc(o.label)}</span>
         <span class="note">${esc(o.note || '')}</span>
       </button>`).join('');

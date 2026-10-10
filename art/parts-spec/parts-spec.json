@@ -1,0 +1,758 @@
+[
+  {
+    "tex": "hair_back",
+    "file": "hair_back.png",
+    "px": [
+      455,
+      548
+    ],
+    "box": [
+      39.46,
+      48.33,
+      144.21,
+      173.66
+    ],
+    "z": 1,
+    "parent": "hairSway",
+    "grid": [
+      8,
+      12
+    ],
+    "above": [
+      "tail",
+      "hair_back_curl",
+      "leg_back",
+      "leg_front",
+      "arm_far",
+      "torso_up",
+      "hair_front_right",
+      "arm_far_end_front",
+      "skirt",
+      "skirt_sit",
+      "hair_front_left",
+      "waist_bow_front",
+      "waist_bow_sit_front",
+      "arm_near",
+      "fin_far",
+      "sidelocks",
+      "face",
+      "eye_creases",
+      "brows",
+      "fin_near",
+      "headdress",
+      "bangs",
+      "bow",
+      "ahoge"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "tail",
+    "file": "tail.png",
+    "px": [
+      262,
+      128
+    ],
+    "box": [
+      24.26,
+      172.21,
+      83.03,
+      40.47
+    ],
+    "z": 1.5,
+    "parent": "tailBend",
+    "grid": [
+      10,
+      4
+    ],
+    "above": [
+      "hair_back_curl",
+      "leg_back",
+      "torso_up",
+      "skirt",
+      "skirt_sit",
+      "hair_front_left",
+      "waist_bow_front",
+      "waist_bow_sit_front",
+      "arm_near",
+      "sidelocks"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "hair_back_curl",
+    "file": "hair_back_curl.png",
+    "px": [
+      130,
+      151
+    ],
+    "box": [
+      74.23,
+      171.83,
+      41.23,
+      47.88
+    ],
+    "z": 1.75,
+    "parent": "hairSway",
+    "grid": [
+      4,
+      8
+    ],
+    "above": [
+      "leg_back",
+      "torso_up",
+      "skirt",
+      "skirt_sit",
+      "hair_front_left",
+      "waist_bow_front",
+      "waist_bow_sit_front",
+      "arm_near",
+      "sidelocks"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "arm_far",
+    "file": "arm_far.png",
+    "px": [
+      90,
+      125
+    ],
+    "box": [
+      144.91,
+      163.28,
+      28.5,
+      39.71
+    ],
+    "z": 4.5,
+    "parent": "armFar",
+    "grid": [
+      3,
+      5
+    ],
+    "above": [
+      "torso_up",
+      "hair_front_right",
+      "arm_far_end_front",
+      "skirt",
+      "skirt_sit",
+      "sidelocks"
+    ],
+    "needs_new_art_for_spring_pink": true,
+    "may_be_fully_transparent": false,
+    "note": "远侧手臂：靠近肩膀那一段会被上衣盖住（画了也看不见）。"
+  },
+  {
+    "tex": "leg_back",
+    "file": "leg_back.png",
+    "px": [
+      127,
+      267
+    ],
+    "box": [
+      96.08,
+      173.16,
+      40.28,
+      84.55
+    ],
+    "z": 3,
+    "parent": "legBack",
+    "grid": [
+      3,
+      6
+    ],
+    "above": [
+      "leg_front",
+      "torso_up",
+      "skirt",
+      "skirt_sit",
+      "hair_front_left",
+      "waist_bow_front",
+      "waist_bow_sit_front",
+      "arm_near",
+      "sidelocks"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "leg_front",
+    "file": "leg_front.png",
+    "px": [
+      138,
+      274
+    ],
+    "box": [
+      120.21,
+      168.79,
+      43.7,
+      86.83
+    ],
+    "z": 4,
+    "parent": "legFront",
+    "grid": [
+      3,
+      6
+    ],
+    "above": [
+      "arm_far",
+      "torso_up",
+      "hair_front_right",
+      "arm_far_end_front",
+      "skirt",
+      "skirt_sit",
+      "arm_near",
+      "sidelocks"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "torso_up",
+    "file": "torso_up.png",
+    "px": [
+      154,
+      147
+    ],
+    "box": [
+      106.15,
+      147.89,
+      48.83,
+      46.55
+    ],
+    "z": 5,
+    "parent": "body",
+    "grid": [
+      6,
+      6
+    ],
+    "above": [
+      "hair_front_right",
+      "skirt",
+      "skirt_sit",
+      "waist_bow_front",
+      "waist_bow_sit_front",
+      "arm_near",
+      "sidelocks",
+      "face",
+      "bangs"
+    ],
+    "needs_new_art_for_spring_pink": true,
+    "may_be_fully_transparent": false,
+    "note": "上衣（粉水手服）：领子、领结、胸口的宝石都画在这一张里。"
+  },
+  {
+    "tex": "hair_front_right",
+    "file": "hair_front_right.png",
+    "px": [
+      95,
+      135
+    ],
+    "box": [
+      146.62,
+      148.27,
+      30.21,
+      42.75
+    ],
+    "z": 5.05,
+    "parent": "hairSway",
+    "grid": [
+      4,
+      6
+    ],
+    "above": [
+      "arm_far_end_front",
+      "skirt",
+      "skirt_sit",
+      "sidelocks",
+      "face",
+      "bangs"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "arm_far_end_front",
+    "file": "arm_far_end_front.png",
+    "px": [
+      52,
+      60
+    ],
+    "box": [
+      156.88,
+      183.99,
+      16.53,
+      19
+    ],
+    "z": 5.1,
+    "parent": "armFar",
+    "grid": [
+      3,
+      3
+    ],
+    "above": [
+      "skirt",
+      "skirt_sit"
+    ],
+    "needs_new_art_for_spring_pink": true,
+    "may_be_fully_transparent": false,
+    "note": "远侧手的「压在身前的那一小块」。"
+  },
+  {
+    "tex": "skirt",
+    "file": "skirt.png",
+    "px": [
+      310,
+      193
+    ],
+    "box": [
+      79.55,
+      168.41,
+      98.04,
+      61.18
+    ],
+    "z": 5.2,
+    "parent": "skirt",
+    "grid": [
+      8,
+      6
+    ],
+    "above": [
+      "skirt_sit",
+      "hair_front_left",
+      "waist_bow_front",
+      "waist_bow_sit_front",
+      "arm_near",
+      "sidelocks"
+    ],
+    "needs_new_art_for_spring_pink": true,
+    "may_be_fully_transparent": false,
+    "note": "站姿裙（浅灰百褶裙）。"
+  },
+  {
+    "tex": "skirt_sit",
+    "file": "skirt_sit.png",
+    "px": [
+      479,
+      218
+    ],
+    "box": [
+      47.44,
+      168.98,
+      151.81,
+      68.97
+    ],
+    "z": 5.3,
+    "parent": "skirtSit",
+    "grid": [
+      8,
+      4
+    ],
+    "above": [
+      "hair_front_left",
+      "waist_bow_front",
+      "waist_bow_sit_front",
+      "arm_near",
+      "sidelocks"
+    ],
+    "needs_new_art_for_spring_pink": true,
+    "may_be_fully_transparent": false,
+    "note": "坐姿下半身：这张里本来就画着腿、白袜、鞋和铺开的裙摆（坐下时独立的腿部件会淡出）。"
+  },
+  {
+    "tex": "hair_front_left",
+    "file": "hair_front_left.png",
+    "px": [
+      142,
+      242
+    ],
+    "box": [
+      60.93,
+      118.63,
+      44.84,
+      76.57
+    ],
+    "z": 5.4,
+    "parent": "hairSway",
+    "grid": [
+      4,
+      8
+    ],
+    "above": [
+      "waist_bow_front",
+      "waist_bow_sit_front",
+      "arm_near",
+      "sidelocks",
+      "face",
+      "fin_near",
+      "bangs",
+      "bow"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "waist_bow_front",
+    "file": "waist_bow_front.png",
+    "px": [
+      94,
+      104
+    ],
+    "box": [
+      84.87,
+      168.41,
+      29.83,
+      33.06
+    ],
+    "z": 5.5,
+    "parent": "skirt",
+    "grid": [
+      4,
+      4
+    ],
+    "above": [
+      "waist_bow_sit_front",
+      "arm_near",
+      "sidelocks"
+    ],
+    "needs_new_art_for_spring_pink": true,
+    "may_be_fully_transparent": true,
+    "note": "站姿腰饰（原版是白蝴蝶结）。这套没有腰饰 → 整片透明即可。"
+  },
+  {
+    "tex": "waist_bow_sit_front",
+    "file": "waist_bow_sit_front.png",
+    "px": [
+      125,
+      91
+    ],
+    "box": [
+      79.74,
+      168.98,
+      39.52,
+      28.88
+    ],
+    "z": 5.55,
+    "parent": "skirtSit",
+    "grid": [
+      4,
+      4
+    ],
+    "above": [
+      "arm_near",
+      "sidelocks"
+    ],
+    "needs_new_art_for_spring_pink": true,
+    "may_be_fully_transparent": true,
+    "note": "坐姿腰饰。这套没有 → 整片透明即可。"
+  },
+  {
+    "tex": "arm_near",
+    "file": "arm_near.png",
+    "px": [
+      91,
+      172
+    ],
+    "box": [
+      93.8,
+      157.96,
+      28.69,
+      54.53
+    ],
+    "z": 6,
+    "parent": "armNear",
+    "grid": [
+      4,
+      6
+    ],
+    "above": [
+      "sidelocks"
+    ],
+    "needs_new_art_for_spring_pink": true,
+    "may_be_fully_transparent": false,
+    "note": "近侧手臂：整条胳膊 + 手。它画在最上层，会盖住上衣。"
+  },
+  {
+    "tex": "fin_far",
+    "file": "fin_far.png",
+    "px": [
+      122,
+      124
+    ],
+    "box": [
+      166,
+      103.62,
+      38.76,
+      39.14
+    ],
+    "z": 7,
+    "parent": "finFar",
+    "grid": [
+      4,
+      3
+    ],
+    "above": [
+      "sidelocks",
+      "face",
+      "eye_creases",
+      "brows",
+      "headdress",
+      "bangs"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "sidelocks",
+    "file": "sidelocks.png",
+    "px": [
+      310,
+      155
+    ],
+    "box": [
+      87.72,
+      124.14,
+      98.23,
+      49.21
+    ],
+    "z": 7.5,
+    "parent": "bangsSway",
+    "grid": [
+      4,
+      8
+    ],
+    "above": [
+      "face",
+      "fin_near",
+      "bangs"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "face",
+    "file": "face.png",
+    "px": [
+      239,
+      259
+    ],
+    "box": [
+      100.26,
+      73.98,
+      75.62,
+      82.08
+    ],
+    "z": 8,
+    "parent": "headMid",
+    "grid": [
+      6,
+      6
+    ],
+    "above": [
+      "eye_creases",
+      "brows",
+      "headdress",
+      "bangs"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "eye_creases",
+    "file": "eye_creases.png",
+    "px": [
+      140,
+      31
+    ],
+    "box": [
+      126.29,
+      108.94,
+      44.46,
+      9.88
+    ],
+    "z": 8.5,
+    "parent": "headFeat",
+    "grid": [
+      4,
+      2
+    ],
+    "above": [
+      "headdress",
+      "bangs"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "brows",
+    "file": "brows.png",
+    "px": [
+      184,
+      29
+    ],
+    "box": [
+      117.74,
+      97.35,
+      58.33,
+      9.12
+    ],
+    "z": 8.6,
+    "parent": "headFeat",
+    "grid": [
+      12,
+      2
+    ],
+    "above": [
+      "headdress",
+      "bangs"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "headdress",
+    "file": "headdress.png",
+    "px": [
+      362,
+      228
+    ],
+    "box": [
+      72.71,
+      38.64,
+      114.76,
+      72.2
+    ],
+    "z": 12.5,
+    "parent": "headMid",
+    "grid": [
+      8,
+      4
+    ],
+    "above": [
+      "bangs",
+      "bow",
+      "ahoge"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "fin_near",
+    "file": "fin_near.png",
+    "px": [
+      189,
+      135
+    ],
+    "box": [
+      37.37,
+      100.39,
+      59.85,
+      42.75
+    ],
+    "z": 11,
+    "parent": "finNear",
+    "grid": [
+      5,
+      3
+    ],
+    "above": [
+      "headdress",
+      "bangs",
+      "bow"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "bow",
+    "file": "bow.png",
+    "px": [
+      91,
+      77
+    ],
+    "box": [
+      66.06,
+      94.5,
+      28.88,
+      24.32
+    ],
+    "z": 13.8,
+    "parent": "headMid",
+    "grid": [
+      3,
+      3
+    ],
+    "above": [],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "bangs",
+    "file": "bangs.png",
+    "px": [
+      355,
+      315
+    ],
+    "box": [
+      80.69,
+      51.75,
+      112.29,
+      99.75
+    ],
+    "z": 13,
+    "parent": "bangsSway",
+    "grid": [
+      8,
+      10
+    ],
+    "above": [
+      "bow",
+      "ahoge"
+    ],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  },
+  {
+    "tex": "ahoge",
+    "file": "ahoge.png",
+    "px": [
+      168,
+      115
+    ],
+    "box": [
+      87.15,
+      20.4,
+      53.2,
+      36.29
+    ],
+    "z": 14,
+    "parent": "ahoge",
+    "grid": [
+      5,
+      4
+    ],
+    "above": [],
+    "needs_new_art_for_spring_pink": false,
+    "may_be_fully_transparent": false,
+    "note": "保持原版（这套衣服不用动）"
+  }
+]

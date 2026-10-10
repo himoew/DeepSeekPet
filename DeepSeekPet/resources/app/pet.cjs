@@ -959,6 +959,47 @@ function attach(ws) {
   send(ws, INIT);
   state.ballMode = INIT.ballMode;
 
+  /**
+   * ★ **换装窗口里点一下，立刻换她身上的衣服**（2026-10-10 用户实测："切换后模型服装没有跟着切换"）。
+   *
+   * 真因：`SKIN` 只在**启动时**读一次，换装窗口点一下只改了 `data\dress.json` → 页面收不到，
+   * 不重启永远不变。现在 `dress.wear()` 成功后触发订阅，这里给页面发一条 `{t:'prefs', skin}`；
+   * 页面 `applyPrefs` 里本来就有 `if (p.skin) { ctl.setSkin(s); applyFigure(s) }` → 立刻换。
+   *
+   * 注意订阅**注册在连接处理器里**（`ws` 是这条连接的局部变量）；连接断开时取消，免得重连后累积。
+   */
+  const onDressChange = () => {
+    const skin = dress.skinOverride() || { figure: 'whale', scheme: 'deepseek' };
+    send(ws, { t: 'prefs', skin });
+    log.info(`换装：已通知页面换成 ${skin.scheme}`);
+  };
+  dress.onChange(onDressChange);
+  ws.on('close', () => dress.offChange(onDressChange));
+
+  /**
+   * ★ **调试用的动作入口**（2026-10-10，用户问"有没有预留调试接口"）。
+   *
+   * 往 `data\dev-act.txt` 里写一个动作名（`sit` / `sleep` / `dizzy` / `stand` / `hop` / `spin` …，
+   * 就是 `pet-app.js` 顶部 `DUR` 表里的那套），文件内容一变就把这个动作下发给她 ——
+   * 这样"我从外面驱动她摆姿势"（截图/测试）不用来回点界面。
+   * ★ 2026-10-10：右键菜单里那四个测试按钮（站好/坐下/睡觉/晕倒）已按用户要求删掉，
+   *   **这个文件入口现在是唯一的摆姿势办法**（将来要截图/验姿势，写这个文件就行）。
+   */
+  const devActFile = path.join(path.dirname(log.file), 'dev-act.txt');
+  const fsDev = require('node:fs');          // 这个文件里没引 fs，就地引一下（别为调试口去动别处）
+  let devActLast = '';
+  const devTimer = setInterval(() => {
+    try {
+      const want = (fsDev.readFileSync(devActFile, 'utf8') || '').trim();
+      if (want && want !== devActLast) {
+        devActLast = want;
+        send(ws, { t: 'act', actions: [want] });
+        log.info(`调试动作：${want}`);
+      }
+    } catch { /* 文件不在就算了 —— 这个入口本来就是可有可无的 */ }
+  }, 1000);
+  ws.on('close', () => clearInterval(devTimer));
+
   /** 认识的第 7/30/100/180/365 天（说句子用的），心情那边也要用，所以放在最前面。 */
   const MILESTONE_DAYS = new Set([7, 30, 100, 180, 365, 730]);
 

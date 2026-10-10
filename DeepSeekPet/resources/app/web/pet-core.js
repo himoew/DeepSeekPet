@@ -623,6 +623,9 @@ export function createPet(els, opts) {
     grabAt: null, grabHang: 0,
     eyeSig: '', eyeCur: null, eyePrev: null, eyeDims: [[16, 16, 0, 0], [16, 16, 0, 0]], swapAge: 9,
     glance: [0, 0], glanceAt: 0, swing: 0, swingV: 0, prevA: null, velX: 0, talkK: 0, sfxAt: 0, skid: false, cue: 0,
+    // 身体位置的**环形历史**：给自定义身体（whale/figure.js）算"0.1 秒前身体在哪儿"用的，
+    // 那条延迟速度就是"发梢/尾巴晚一步跟上"的全部机制（见 frame.bx/by 的注释）
+    posHist: [],
     pulse: null, walkId: 0, listening: false, thinking: false, placed: false,
   };
   const pointer = { x: -1e4, y: -1e4, inside: false, vx: 0, samples: [] };
@@ -1092,6 +1095,17 @@ export function createPet(els, opts) {
     const AX = pet.mode === 'drag' ? pet.dx : pet.x;
     if (pet.prevA != null) pet.velX = lerp(pet.velX, (AX - pet.prevA) / dt, .25);
     pet.prevA = AX;
+    /**
+     * ★ **身体位置的环形历史**（给自定义身体的次级动画用，见下面的 `frame.bx/by`）。
+     *
+     * 为什么要它：头发/尾巴要"晚 0.1 秒跟上"，就得知道**0.1 秒前身体在哪**。
+     * 只喂"当前速度"是不够的 —— 那和身体同时响应，看着还是黏在一起。
+     * 竖直方向（跳、被拎起来、坐下）也算，所以 `dy` 一起记。
+     * 0.4 秒的窗足够长（帧率 30 时也有 12 帧），自定义身体那边按时间戳取 0.1 秒前的点。
+     */
+    const BY = pet.mode === 'drag' ? pet.dy : pet.fy;
+    pet.posHist.push({ t: T, x: AX, y: BY });
+    while (pet.posHist.length && T - pet.posHist[0].t > .4) pet.posHist.shift();
     const swingT = clamp(-pet.velX * .06 * Math.sign(pet.faceVis || 1), -28, 28);
     pet.swingV += ((swingT - pet.swing) * 110 - pet.swingV * 7) * dt;
     pet.swing = clamp(pet.swing + pet.swingV * dt, -40, 40);
@@ -1175,6 +1189,13 @@ export function createPet(els, opts) {
       // 不再动、也不再接鼠标（实测踩过：坐着一动不动、点也没反应）。
       microTilt: microState.kind === 'tilt' ? 8.5 * microState.k : 0,
       microStep: microState.kind === 'step' ? microState.k : 0,
+      /**
+       * ★ **身体此刻在画布上的位置**（`bx`/`by`）与**这 0.4 秒的位置历史**（`posHist`）。
+       * 自定义身体（`whale/figure.js`）拿它自己算"0.1 秒前的身体速度"，用来驱动
+       * 发梢/尾巴的延迟跟随 —— 也就是"你甩鼠标，发梢晚 0.1 秒跟上"。
+       * 只读：**外面的模块不许拿它把身体搬走**（它就是个快照）。
+       */
+      bx: AX, by: AY, posHist: pet.posHist,
     };
     if (custom) {
       /**

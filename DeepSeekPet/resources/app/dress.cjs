@@ -45,9 +45,30 @@ const FILE = path.join(path.dirname(log.file), 'dress.json');
  * 这样"将来要加什么"是看得见的，而不是空空一片。
  */
 const OUTFITS = [
-  { id: 'original', label: '原版', note: '她本来的样子', ready: true, scheme: 'deepseek' },
-  { id: 'outfit-01', label: '（预留）', note: '等你画好第一套新衣服，把贴图放进来就点得动了', ready: false, scheme: '' },
-  { id: 'outfit-02', label: '（预留）', note: '同上：这一格是留给第二套的', ready: false, scheme: '' },
+  /**
+   * `preview` 是换装页卡片里那张图（`tools\model-render.py` / `fit-outfit.py` 生成的衣服特写方图）。
+   * 原来卡片里写死一个 🐳 emoji —— 用户要求换成"对应服装的图片"，所以这里给每套一个 URL，
+   * 页面拿不到图时才会退回 emoji。
+   */
+  { id: 'original', label: '原版', note: '她本来的样子', ready: true, scheme: 'deepseek', preview: '/web/whale/preview.png' },
+  /**
+   * ★ **第二套〔真衣服〕2026-10-10 撤下** —— 用户原话："把第二套服装去掉吧，太多bug了"。
+   *
+   * 走过的两步留在这里（别重蹈）：
+   *   1. `school-blue`（藏蓝校服，第一件试装，`tools\fit-outfit.py`）；
+   *   2. `spring-pink`（樱粉水手服）：先由脚本（`art\_outfit-v3.py`）从即梦生成图实装，
+   *      后来用户按 `art\parts-spec\` 的**画框模板**自己重画了 6 张部位图（尺寸像素级吻合）实装，
+   *      实测后仍然决定撤下 —— 根因不是"某张图错了"，而是**换装这条路本身的收益/代价不划算**：
+   *      贴图与骨骼、遮挡、姿势切换（站/坐两套）之间的接缝总在，逐张修不收敛。
+   *
+   * ★ **贴图一张都没删**：整套仍在 `web\whale\schemes\spring-pink\`（含用户手绘的 6 张），
+   *   画框模板/对照图在 `art\parts-spec\`（用户桌面也有一份）。
+   *   **将来想再上**：取消下面这行的注释 + 在 `web\whale\model.json` 的 `schemes` 里加回
+   *   `{ "id": "spring-pink", "brand": "Blue Fish", "label": "樱粉水手服", "accent": "#E8A0B4", "ready": true }`
+   *   （`art\_add-scheme.py` 就是干这个的），然后重启桌宠。
+   */
+  // { id: 'outfit-01', label: '樱粉水手服', note: '生图抠的（春装 · 粉水手领+浅灰百褶裙）', ready: true, scheme: 'spring-pink', preview: '/web/whale/schemes/spring-pink/preview.png' },
+  { id: 'outfit-02', label: '（预留）', note: '这一格留给以后的新衣服', ready: false, scheme: '', preview: '' },
 ];
 
 const byId = (id) => OUTFITS.find((o) => o.id === id) || null;
@@ -57,6 +78,33 @@ function blank() {
 }
 
 let data = null;
+
+/**
+ * ★ **换装变更通知**（2026-10-10 用户实测："服装界面切换后模型服装没有跟着切换"）。
+ *
+ * 真因：`skinOverride()` 只在**启动时**被 `pet.cjs` 读一次（`const SKIN = …`），
+ * 所以换装窗口点一下只改了记录文件，**页面根本不知道** → 不重启永远不变。
+ * 现在 `wear()` 成功后触发这里，`pet.cjs` 订阅后给页面发一条 `{t:'prefs', skin}`，
+ * 页面已有的 `applyPrefs` 会立刻 `applyFigure()` 换过来（不用重启）。
+ */
+const listeners = [];
+function onChange(fn) {
+  if (typeof fn === 'function') listeners.push(fn);
+}
+/** 取消订阅（页面重连时用，免得监听器越积越多）。 */
+function offChange(fn) {
+  const i = listeners.indexOf(fn);
+  if (i >= 0) listeners.splice(i, 1);
+}
+function emit() {
+  for (const fn of listeners) {
+    try {
+      fn(current());
+    } catch (err) {
+      log.warn(`换装通知失败：${(err && err.message) || err}`);
+    }
+  }
+}
 
 function load() {
   if (data) return data;
@@ -94,6 +142,7 @@ function wear(id) {
     d.at = new Date().toISOString();
     save();
     log.info(`换装：${want.label}（${want.id}）`);
+    emit();                       // ★ 通知 `pet.cjs` 立刻给页面换（见下面的 listeners 说明）
   }
   return { ok: true, outfits: OUTFITS, current: want.id };
 }
@@ -124,4 +173,4 @@ function forget() {
   return list();
 }
 
-module.exports = { OUTFITS, list, current, wear, skinOverride, forget, FILE };
+module.exports = { OUTFITS, list, current, wear, skinOverride, onChange, offChange, forget, FILE };

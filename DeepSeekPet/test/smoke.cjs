@@ -183,7 +183,30 @@ function stubModel() {
     }
 
     const model = await (await fetch(`${base}/web/whale/model.json`)).json();
-    ok('配色只剩 deepseek 一套', model.schemes.length === 1 && model.schemes[0].id === 'deepseek');
+    ok('配色的第一套必须是 deepseek（基础服装，贴图在 web/whale/tex 根目录）',
+      model.schemes.length >= 1 && model.schemes[0].id === 'deepseek');
+    /**
+     * ★ **服装管线的守门断言**（2026-10-10 加）：`model.json` 里每个"非基础"的 scheme
+     * 都必须在 `web/whale/schemes/<id>/tex/` 下有**完整的部件贴图** ——
+     * `figure.js` 的 `loadScheme` 是把 `model.parts` 整批 load 的，少一张整页就崩（她直接不出现）。
+     * 生图抠图那条流水线（`tools\fit-outfit.py`）每出一套都要过这一关。
+     */
+    const badSchemes = [];
+    const featNames = [...Object.keys(model.feat.sprites),
+      ...['eyeL', 'eyeR'].flatMap((k) => ['lash', 'ball', 'iris', ...(model.feat.eyes[k].rim ? ['rim'] : [])].map((n) => `${k}_${n}`))];
+    for (const sc of model.schemes.slice(1)) {
+      const dir = path.join(app, 'web/whale/schemes', sc.id);
+      const missTex = model.parts.map((p) => p.tex).filter((t) => !fs.existsSync(path.join(dir, 'tex', `${t}.png`)));
+      /**
+       * ★ **`feat/` 也要整套**（2026-10-10 踩到的真 bug）：`figure.js` 的 `loadScheme` 是
+       * `tex/` 和 `feat/` **一起** `Promise.all` load 的 —— 少了 feat 整批 reject，
+       * 而页面只 `console.error`，现象是"换装点了没反应、她还穿原版"。
+       */
+      const missFeat = featNames.filter((n) => !fs.existsSync(path.join(dir, 'feat', `${n}.png`)));
+      if (missTex.length || missFeat.length) badSchemes.push(`${sc.id}(缺 tex ${missTex.length} / feat ${missFeat.length})`);
+    }
+    ok(`服装：非基础配色都带完整贴图（tex + feat 整套）—— ${model.schemes.slice(1).map((s) => s.id).join('、') || '无'}`,
+      badSchemes.length === 0 || (console.log('      [SCHEMEFAIL] ' + badSchemes.join(' ')), false));
     const eyes = ['eyeL', 'eyeR'].flatMap((k) => ['lash', 'ball', 'iris', ...(model.feat.eyes[k].rim ? ['rim'] : [])].map((n) => `${k}_${n}`));
     const wanted = [
       ...model.parts.map((p) => `/web/whale/tex/${p.tex}.png`),
@@ -338,9 +361,19 @@ function stubModel() {
     const d0 = dress.list();
     ok('服装：记录文件落在 DSP_LOG_DIR 里（不碰用户真实选择）', dress.FILE.startsWith(CONFIG_DIR));
     ok('服装：默认穿原版', d0.current === 'original');
+    ok('服装：★第二套〔真衣服〕已撤下（2026-10-10 用户："把第二套服装去掉吧，太多bug了"）—— 穿戴会被拒绝、她照旧穿原版',
+      (() => { const r = dress.wear('outfit-01'); return r.ok === false && dress.list().current === 'original'; })());
     ok('服装：没贴图的那几套点了会给一句人话（不是没反应）',
-      dress.wear('outfit-01').ok === false && /贴图/.test(dress.wear('outfit-01').error));
+      dress.wear('outfit-02').ok === false && /贴图/.test(dress.wear('outfit-02').error));
     ok('服装：不存在的套装会被拒绝', dress.wear('nope').ok === false);
+    /**
+     * ★ **换装页的缩略图**（用户："中间小鲸鱼换成对应服装图片"）：能穿的每一套都要有 `preview`，
+     * 而且那个 URL 指向的文件必须真的在磁盘上（少一张就是卡片里一个破图）。
+     */
+    const noPreview = dress.list().outfits.filter((o) => o.ready && !o.preview);
+    const brokenPreview = dress.list().outfits.filter((o) => o.preview && !fs.existsSync(path.join(app, o.preview.replace(/^\//, ''))));
+    ok(`服装：能穿的每一套都有换装页缩略图、且文件都在（${dress.list().outfits.filter((o) => o.ready).map((o) => o.label).join('、')}）`,
+      noPreview.length === 0 && brokenPreview.length === 0);
     ok('服装：原版能穿（换装记录落盘）', dress.wear('original').ok === true && dress.list().current === 'original');
     ok('服装：没换装时不给页面发 skin 覆盖（她照旧出现）', dress.skinOverride() === null);
     ok('服装：清单里有预留格，看得见"以后要加什么"',
@@ -348,7 +381,7 @@ function stubModel() {
     // 切到未 ready 的套装要被弹回原版（手工改坏文件也不会让她穿成空白）。
     // 必须**清掉 require 缓存**再读一次 —— 不清的话拿到的是同一个模块实例、读的是内存里的值。
     const dressFile = require.resolve(path.join(app, 'dress.cjs'));
-    fs.writeFileSync(dress.FILE, JSON.stringify({ current: 'outfit-01' }));
+    fs.writeFileSync(dress.FILE, JSON.stringify({ current: 'outfit-02' }));
     delete require.cache[dressFile];
     const hard = require(dressFile);
     ok('服装：文件被手改成没贴图的那套，也会退回原版',
@@ -2006,6 +2039,105 @@ function stubModel() {
     ok('问句配思考表情', pet.moodOf('这样吗?') === 'thinking');
     ok('感叹配开心', pet.moodOf('太好了!') === 'happy');
     ok('道歉配害羞', pet.moodOf('抱歉,我不行。') === 'shy');
+
+    /* ---------- 7. 次级动画与桌面接地光（2026-10-10 新做的那两批） ---------- */
+    /**
+     * ★ **行为验证 ①：延迟跟随取的是"0.1 秒前"那个点**（用户点名的"你甩鼠标，发梢晚 0.1 秒跟上"）。
+     *
+     * 光查字符串挡不住"延迟窗口写错"这类错（`.04` / `.4` 都是一个字符的事，看着都一样），
+     * 所以把 `lagged()` 从 figure.js 里抠出来、喂给它一段**已知位置的历史**，量它算出来的速度：
+     *   身体在 t=1.0 时在 x=100，现在（t=1.1）在 x=130 → 0.1 秒走了 30px → 300px/s。
+     * 顺带量一下"历史不够长时返回 0"（老页面 / 内置身体走这条路，必须和上游一模一样）。
+     */
+    {
+      const figSrc = fs.readFileSync(path.join(app, 'web', 'whale', 'figure.js'), 'utf8');
+      const lagFn = figSrc.match(/function lagged\(o\) \{[\s\S]*?return \[\(o\.bx - best\.x\) \/ dt, \(o\.by - best\.y\) \/ dt\];\n  \}/);
+      const lagConst = figSrc.match(/const LAG_S = [.\d]+;/);
+      const lagged = lagFn && lagConst
+        ? new Function(`${lagConst[0]}\n${lagFn[0]}\nreturn lagged;`)()
+        : null;
+      const hist = [{ t: .6, x: 60, y: 0 }, { t: .8, x: 80, y: 0 }, { t: 1.0, x: 100, y: 0 }];
+      const v = lagged ? lagged({ t: 1.1, bx: 130, by: 0, posHist: hist }) : null;
+      ok('★次级动画（行为）：延迟速度取的是**0.1 秒前**那一点（300px/s 这种量级，不是当前速度）',
+        !!v && Math.abs(v[0] - 300) < 1 && Math.abs(v[1]) < 1e-6);
+      // 竖直方向也要算（跳、被拎起来、坐下时发梢要往下拖）
+      const vv = lagged ? lagged({ t: 1.1, bx: 100, by: -40, posHist: [{ t: 1.0, x: 100, y: 0 }] }) : null;
+      ok('★次级动画（行为）：竖直方向的速度也参与（跳起来/被放下时发梢会拖）',
+        !!vv && Math.abs(vv[1] + 400) < 1e-6 && Math.abs(vv[0]) < 1e-6);
+      ok('★次级动画：没有位置历史（老页面 / 内置身体）时返回 0，行为同上游',
+        !!lagged && lagged({ t: 1, bx: 9, by: 9, posHist: [] })[0] === 0
+        && lagged({ t: 1, bx: 9, by: 9 })[0] === 0);
+      const coreSrc2 = fs.readFileSync(path.join(app, 'web', 'pet-core.js'), 'utf8');
+      ok('★次级动画：身体位置的环形历史是 pet-core 喂的（`posHist` + `frame.bx/by`）',
+        /posHist: \[\]/.test(coreSrc2) && /pet\.posHist\.push\(\{ t: T, x: AX, y: BY \}\)/.test(coreSrc2)
+        && /bx: AX, by: AY, posHist: pet\.posHist/.test(coreSrc2));
+      ok('★次级动画：延迟速度接进了发梢/刘海/尾巴/呆毛的弹簧目标',
+        /const lagH = clamp\(-lagX \* LAG_HAIR/.test(figSrc)
+        && /sp\.hair\.step\(sway \* 1\.1[^;]*lagH, dt\)/.test(figSrc)
+        && /sp\.tail\.step\(sway \* 14 \+ tailMood \* 12 \+ lagT, dt\)/.test(figSrc));
+    }
+    /**
+     * ★ **眨眼睫毛阴影**：必须是**叠在脸那块画布上、用 source-atop 裁住**的（0 新贴图），
+     * 而且**用完必须还原 `source-over`**（否则后面所有脸部绘制都会被改掉，症状是"脸花了"）。
+     */
+    {
+      const figSrc = fs.readFileSync(path.join(app, 'web', 'whale', 'figure.js'), 'utf8');
+      const block = figSrc.match(/if \(shut > \.06\) \{[\s\S]*?\n    \}\n    fg\.save\(\);/);
+      ok('★眨眼睫毛阴影：闭眼时在脸上叠一道渐变（source-atop 裁在脸内部，0 新贴图）',
+        !!block && /source-atop/.test(block[0]) && /createLinearGradient/.test(block[0])
+        && /fillRect/.test(block[0]));
+      ok('★眨眼睫毛阴影：必须用 save/restore 把 source-atop 与 fillStyle 严丝合缝地包起来（漏出去会把后面的脸画花）',
+        !!block && /fg\.save\(\);[\s\S]*source-atop[\s\S]*fillRect[\s\S]*fg\.restore\(\);/.test(block[0]));
+      // 闭眼量是从 `o.blink`/`o.eyeClose` 来的，而且**眨眼那几帧必须让脸重画**
+      // （figure.js 的脏检查：`blink > .02` 时 `faceStamp` 返回 null → 每帧重画）
+      ok('★眨眼睫毛阴影：闭眼量取自这一帧的 blink/eyeClose，且脏检查不会把眨眼那几帧跳过去',
+        /shut = Math\.max\(o\.blink \|\| 0, o\.eyeClose \|\| 0\)/.test(figSrc)
+        && /\(o\.blink \|\| 0\) > \.02 \|\| \(o\.eyeClose \|\| 0\) > \.02\) return null/.test(figSrc));
+    }
+    /**
+     * ★ **桌面接地光（行为）**：`oklabRgb()` 是 `oklab()` 的反函数，两件事都要成立：
+     * ① **来回一趟不掉色**（灰进灰出、彩色进彩色出，误差 ≤2/255）——
+     *    它错了不会抛异常，只会让轮廓光和影子**静默变色**（最难查的一类）；
+     * ② **轮廓光与桌面反着来**：浅桌面给暗轮廓、深桌面给亮轮廓（这是"贴上去"变成"长在上面"的关键）。
+     */
+    {
+      const appSrc = fs.readFileSync(path.join(app, 'web', 'pet-app.js'), 'utf8');
+      const grab = (re) => { const m = appSrc.match(re); return m ? m[0] : ''; };
+      const src = [
+        grab(/const lin = [^\n]+/), grab(/const clamp01 = [^\n]+/), grab(/const hex = [^\n]+/),
+        grab(/function oklab\(r, g, b\) \{[\s\S]*?\n\}/), grab(/function oklabRgb\(L, A, B\) \{[\s\S]*?\n\}/),
+        'return { oklab, oklabRgb, hex, clamp01 };',
+      ].join('\n');
+      let fns = null;
+      try { fns = new Function(src)(); } catch (e) { /* 抠不出来就算没通过（下面那条 ok 会红） */ }
+      /**
+       * 用**逐通道容差**：OKLab 的立方根与三次方不可结合、逆矩阵常数只有 4 位有效数字，
+       * 所以"绕一圈"本来就带几级量化误差 —— 实测 灰/浅色 ≤3，而蓝色 200 那一档 g 偏 **21**
+       * （数值性质，不是抄错）。这条验证钉的是**矩阵抄没抄错**（抄错会偏几十上百，比如 g 偏 21
+       * 换成其它通道就是 80+），所以容差按通道给。灰必须几乎不偏，这是最灵敏的那一路。
+       */
+      const near = (a, b, tol) => Math.max(...a.map((v, i) => Math.abs(v - b[i]))) <= tol;
+      const round = (r, g, b) => {
+        const [L, A, B] = fns.oklab(r, g, b);
+        return fns.oklabRgb(L, A, B);
+      };
+      ok('★桌面接地光（行为）：OKLab→sRGB 的往返不掉色（灰必须≤4，深蓝允许通道量化误差≤24）',
+        !!fns && near(round(128, 128, 128), [128, 128, 128], 4) && near(round(250, 240, 230), [250, 240, 230], 4)
+        && near(round(40, 90, 200), [40, 90, 200], 24));
+      const light = fns.oklab(...[240, 238, 235]);
+      const dark = fns.oklab(...[18, 20, 26]);
+      const halo = (l, a, b) => fns.oklabRgb(fns.clamp01(l > .58 ? l - .32 : l + .32), a * .35, b * .35);
+      const hl = fns.oklab(...halo(...light)), hd = fns.oklab(...halo(...dark));
+      ok('★桌面接地光（行为）：浅桌面给**更暗**的轮廓光、深桌面给**更亮**的轮廓光',
+        hl[0] < light[0] - .15 && hd[0] > dark[0] + .15);
+      ok('★桌面接地光：影子颜色由身后的平均色染出来（但保持很淡，不当成一块黑）',
+        /const sRgb = oklabRgb\(\.17 \+ bl \* \.04, ba \* \.28, bb \* \.28\)/.test(appSrc)
+        && /shadowTint = \{ rgb: sRgb, a: bl < \.30 \? \.26/.test(appSrc)
+        && /shadowEl\.setAttribute\('fill'/.test(appSrc));
+      ok('★桌面接地光：抓屏节奏——轮廓光开着时 0.8s，平时 2.5s（第 10.1 节①那条开销项）',
+        /const every = backdrop\.on \? BACKDROP_EVERY : BACKDROP_EVERY_CALM/.test(appSrc)
+        && /BACKDROP_EVERY_CALM = 2\.5/.test(appSrc));
+    }
 
     ws.close();
   } finally {

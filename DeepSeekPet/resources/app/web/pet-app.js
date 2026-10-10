@@ -263,6 +263,8 @@ function goalGlow(hers) {
     glowTimer = setTimeout(() => el.classList.remove('on'), 550);
   } catch { /* 发光失败不影响比赛 */ }
 }
+
+
 hooks.step = (s) => game.onStep(s);
 hooks.kick = (i) => game.onKick(i);
 /**
@@ -339,12 +341,25 @@ let whale = null, wanted = 'coo';
 async function applyFigure(s) {
   wanted = s.figure;
   if (s.figure !== 'whale') { ctl.setFigure(null); return; }
-  whale ??= import('./whale/figure.js').then((m) => m.createWhaleFigure(undefined, { scheme: s.scheme }));
-  const fig = await whale;
-  if (wanted !== 'whale') return;
-  // a scheme picked while she is on screen fades in
-  await fig.setScheme(s.scheme, { fade: ctl.figure === fig ? .45 : 0, at: ctl.time });
-  ctl.setFigure(fig);
+  /**
+   * ⚠️ **这一段的失败必须留痕**（2026-10-10 踩到）：服装贴图少一张（比如只放了 `tex\` 忘了 `feat\`），
+   * `createWhaleFigure` / `setScheme` 会 reject，而调用点只 `console.error` ——
+   * 页面日志一片干净，用户看到的现象是"换装点了没反应、她还穿原版"，极难查。
+   * 所以这里**成功失败都报一行**（`report` 会进 pet-host.log）。
+   */
+  const tag = `[形象] scheme=${s.scheme || '(默认)'}`;
+  try {
+    whale ??= import('./whale/figure.js').then((m) => m.createWhaleFigure(undefined, { scheme: s.scheme }));
+    const fig = await whale;
+    if (wanted !== 'whale') return;
+    // a scheme picked while she is on screen fades in
+    await fig.setScheme(s.scheme, { fade: ctl.figure === fig ? .45 : 0, at: ctl.time });
+    ctl.setFigure(fig);
+    report(`${tag} 加载成功（她换过来了）`);
+  } catch (err) {
+    report(`${tag} 加载失败：${(err && err.message) || err} —— 这套的贴图是不是少放了？（schemes/<id>/ 下 tex/ 和 feat/ 都要整套）`);
+    throw err;
+  }
 }
 
 /**
@@ -1454,6 +1469,21 @@ const ACTIONS = {
     run: () => host.hide(),
   },
 };
+
+/**
+ * ★★ **摆姿势四格（调试用）2026-10-10 删掉** —— 用户："右键桌宠里的测试按钮姿势全部删了，
+ * 站坐睡晕这四个"。
+ *
+ * 它们本来只是为了让用户能截四张姿势图（原来右键菜单里没有动作入口）。菜单是遍历 `ACTIONS`
+ * 生成的，所以**删掉条目就等于删掉按钮**，没有别的开关要改（删完菜单剩 9 格：
+ * 对话/球/语音/走动/主题/声音/自动/换装/隐藏）。
+ *
+ * 想再加回来：照抄一行即可（动作名就是本文件顶部 `DUR` 表里那套，`ctl.act(name)` 直接入队），
+ * 再把下面那个 `poseIcon` 小工具函数一起加回来：
+ *   `sit: { icon: () => poseIcon('M12 4.6a2 2 0 1 0 0 4 2 2 0 0 0 0-4M12 9v5M12 14h4.4M16.4 14v4.4M12 14l-4.4 4.4'), state: () => '坐下', run: () => ctl.act('sit') },`
+ *
+ * **不给界面也能摆姿势**：往 `data\dev-act.txt` 里写动作名（见 `pet.cjs` 的"调试用的动作入口"）。
+ */
 const available = (id) => ACTIONS[id] && (ACTIONS[id].available?.() ?? true);
 
 /** One action as a button: its icon, the badge, and whether a switch is on. */
@@ -2140,17 +2170,28 @@ function layout() {
 /* ---------- backdrop: a light gray halo when the body melts into what is behind it ---------- */
 /** Seconds between looks at the screen around the body. */
 const BACKDROP_EVERY = .8;
+/** ★ 只有"她身后的颜色和她的身体很像"时才需要每 0.8 秒看一眼；平时 2.5 秒一次就够（省 CPU）。 */
+const BACKDROP_EVERY_CALM = 2.5;
 /** OKLab distance under which a backdrop pixel counts as the body's color. */
 const SAME_COLOR = .15;
 /** Share of such pixels around the body that turns the halo on (most of them), and the share it turns off below. */
 const HALO_ON = .6, HALO_OFF = .45;
 /** The halo's opacity when fully on. */
 const HALO_STRENGTH = .5;
-const petG = $('#pet'), haloFlood = $('#haloFlood');
+const petG = $('#pet'), haloFlood = $('#haloFlood'), shadowEl = $('#shadow');
 // a window host too old to sample the screen keeps the halo on; a browser tab draws its own wall
 const backdrop = { on: !!host && !host.sampleBackdrop, fixed: !!host && !host.sampleBackdrop, k: 0, busy: false, next: 0 };
+// 上一次采到的"她身后的平均色"与它染出来的影子颜色（null = 还没采到 / 平台读不到屏幕）
+let backdropAvg = null, shadowTint = null;
 
 const lin = (c) => (c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4);
+/**
+ * sRGB → OKLab（Björn Ottosson 的定义）。
+ *
+ * ⚠️ **三个矩阵系数别抄错**（我自己抄错过一次，症状是"灰色没问题、彩色悄悄偏色"）：
+ * 这里用的是**正向**矩阵的 M1/M2；写完 `oklabRgb()` 之后 smoke.cjs 会拿
+ * "灰/彩色绕一圈不掉色"的行为验证把这条钉住 —— 抄错就红，不用靠眼睛看。
+ */
 function oklab(r, g, b) {
   r = lin(r / 255); g = lin(g / 255); b = lin(b / 255);
   const l = Math.cbrt(.4122214708 * r + .5363325363 * g + .0514459929 * b);
@@ -2158,6 +2199,26 @@ function oklab(r, g, b) {
   const s = Math.cbrt(.0883024619 * r + .2817188376 * g + .6299787005 * b);
   return [.2104542553 * l + .793617785 * m - .0040720468 * s, 1.9779984951 * l - 2.428592205 * m + .4505937099 * s, .0259040371 * l + .7827717662 * m - .808675766 * s];
 }
+/**
+ * OKLab → sRGB（`oklab()` 的反函数），夹在 0..255。
+ * 用来把"她身后的平均色"变成**轮廓光的颜色**与**影子的染色**：
+ * 采样回来的值是屏幕像素，先取平均、再在这个空间里改明度/彩度，比在 sRGB 里乱调更稳。
+ */
+function oklabRgb(L, A, B) {
+  const l_ = L + .3963377774 * A + .2158037573 * B;
+  const m_ = L - .1055613458 * A - .0638541728 * B;
+  const s_ = L - .0894841775 * A - 1.2914855480 * B;
+  const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
+  const r = 4.0767416621 * l - 3.3077115913 * m + .2309699292 * s;
+  const g = -.2684383544 * l + 1.6097577026 * m - .3413193479 * s;
+  const b = -.0041960849 * l - .7034186179 * m + 1.7076147010 * s;
+  const back = (c) => (c <= .0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - .055);
+  const px = (c) => Math.max(0, Math.min(255, Math.round(back(c) * 255)));
+  return [px(r), px(g), px(b)];
+}
+const clamp01 = (c) => Math.max(0, Math.min(1, c));
+/** 采样值 → "#rrggbb"。 */
+const hex = ([r, g, b]) => '#' + [r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('');
 /** The body's color as [r, g, b], from `--skin-ink` (#rgb or #rrggbb). */
 function inkRgb() {
   let h = getComputedStyle(document.documentElement).getPropertyValue('--skin-ink').trim().replace('#', '');
@@ -2176,7 +2237,15 @@ function bodyRect() {
 const inflate = (r, d) => ({ x: r.x - d, y: r.y - d, width: r.width + 2 * d, height: r.height + 2 * d });
 const rectOf = (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
 
-/** Samples a ring around the body (past the halo's reach, minus the page's own bubbles) and flips the halo. */
+/**
+ * Samples a ring around the body (past the halo's reach, minus the page's own bubbles).
+ *
+ * 一次采样出**两件事**（用户点名的那条"桌面接地光"）：
+ * ① 身后有多少像素和她的身体同色 → 决定轮廓光开不开（原来的逻辑，一行没改）；
+ * ② 身后的**平均色** → 拿它定**轮廓光的颜色**和**影子的染色**（`backdropAvg` / `shadowTint`）。
+ *    这样"贴上去"的感觉才消失：浅色桌面上给她一圈深轮廓、深色桌面上给她一圈亮轮廓，
+ *    影子也会带上桌面的色相（不再是死黑一块）。
+ */
 async function probeBackdrop() {
   const ink = inkRgb();
   if (!ink) return;
@@ -2191,24 +2260,53 @@ async function probeBackdrop() {
   const n = px.length / 3;
   if (n < 24) return;
   const [L, A, B] = oklab(...ink);
-  let same = 0;
+  let same = 0, sr = 0, sg = 0, sb = 0;
   for (let i = 0; i < px.length; i += 3) {
     const [l, a, b] = oklab(px[i], px[i + 1], px[i + 2]);
     if (Math.hypot(l - L, a - A, b - B) < SAME_COLOR) same++;
+    sr += px[i]; sg += px[i + 1]; sb += px[i + 2];
   }
   const share = same / n;
   backdrop.on = backdrop.on ? share >= HALO_OFF : share > HALO_ON;
+
+  /* ---- ② 接地光：身后的平均色 → 轮廓光颜色 + 影子染色 ---- */
+  const [bl, ba, bb] = oklab(sr / n, sg / n, sb / n);
+  backdropAvg = [sr / n, sg / n, sb / n];
+  // 轮廓光要和桌面**反着来**才看得见：桌面偏亮就给她暗轮廓，偏暗就给她亮轮廓。
+  // 明度差固定 **0.32**（对比足够、又不像描边贴纸）；彩度压到 0.35 倍，免得在彩色壁纸上变成彩色描边。
+  // 阈值取 0.58：比它亮（白/浅灰桌面）往暗走，比它暗（深色桌面/深色壁纸）往亮走。
+  const hL = clamp01(bl > .58 ? bl - .32 : bl + .32);
+  const hRgb = oklabRgb(hL, ba * .35, bb * .35);
+  haloFlood.setAttribute('flood-color', hex(hRgb));
+  // 影子：**保留原来的手感**（原来浅色桌面是 rgba(27,22,38,.12)），只把**色相**从桌面借一点
+  // （彩度 0.28 倍、明度 0.17 左右）——"落在桌面上"的观感来自色相相近，而它必须仍然很淡；
+  // 桌面本来就暗时加一点不透明度，否则整块影子看不见（那才是"贴上去"最明显的症状）。
+  const sRgb = oklabRgb(.17 + bl * .04, ba * .28, bb * .28);
+  shadowTint = { rgb: sRgb, a: bl < .30 ? .26 : bl < .55 ? .20 : .15 };
 }
+
 function stepBackdrop(dt) {
   const now = performance.now() / 1000;
+  /**
+   * ★ **抓屏的节奏**（HANDOVER 第 10.1 节①那条悬了很久的手感/开销项）：
+   * 只有"身后颜色和她很像"（轮廓光正开着）时才需要盯紧一点（0.8 秒）——
+   * 那种情况下桌面一变她就该有反应；其余时候 2.5 秒一次足够，GDI `BitBlt` 的次数少 3 倍。
+   */
+  const every = backdrop.on ? BACKDROP_EVERY : BACKDROP_EVERY_CALM;
   if (host?.sampleBackdrop && !backdrop.fixed && !backdrop.busy && now >= backdrop.next && document.visibilityState === 'visible') {
     backdrop.busy = true;
-    probeBackdrop().catch(() => {}).finally(() => { backdrop.busy = false; backdrop.next = performance.now() / 1000 + BACKDROP_EVERY; });
+    probeBackdrop().catch(() => {}).finally(() => { backdrop.busy = false; backdrop.next = performance.now() / 1000 + every; });
   }
   const k = backdrop.k + ((backdrop.on ? 1 : 0) - backdrop.k) * Math.min(1, dt * 6);
   backdrop.k = k < .005 ? 0 : k;
   if (backdrop.k) { haloFlood.setAttribute('flood-opacity', (backdrop.k * HALO_STRENGTH).toFixed(2)); petG.setAttribute('filter', 'url(#halo)'); }
   else petG.removeAttribute('filter');
+  // 影子染色：采样成功后才接管这块影子的 `fill`（用它自己的 `.shadow` 类，**不去改 `--shadow`**
+  // ——那个变量还管着气泡和菜单的投影，跟她脚下这块不是一回事）；采样不到时保持 CSS 里的原色。
+  if (shadowTint) {
+    const [r, g, b2] = shadowTint.rgb;
+    shadowEl.setAttribute('fill', `rgba(${r},${g},${b2},${shadowTint.a})`);
+  }
 }
 
 /* ---------- loop ---------- */
