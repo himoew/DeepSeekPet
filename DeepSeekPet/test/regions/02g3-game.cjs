@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 自检区域：弹弹乐（进球不卡死 + 四档决策）
  *
  * 代码从原 `test\smoke.cjs` 的 2g-3 那一段**整段照抄**，一字未改。
@@ -176,6 +176,10 @@ module.exports = {
       // 2g-3 自己的兜底：它抛错也算一条失败（别把整份自检带崩）
       ok(`弹弹乐：进球与三态切换（不抛错）—— 实际抛了 ${err && err.message}`, false);
       console.log(`      弹弹乐那段抛错的堆栈：${((err && err.stack) || '').split('\n').slice(0, 4).join(' | ')}`);
+    } finally {
+      // ★ 2026-10-11 复核补回：原文这里是 `finally { delete globalThis.document/petHost }`（拆分时丢了）
+      delete globalThis.document;
+      delete globalThis.petHost;
     }
   }
 };

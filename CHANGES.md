@@ -18,7 +18,13 @@
 > World / 事件总线 / terminal / CUA / 遥测 / pnpm 扩展**一个都没有带**。
 
 - 抽取与修改起始日期：**2026-10-05**
-- 最近一次修改：**2026-10-11**（**自检模块化 + 存档节点**：2655 行 / 372 项的单体 `test\smoke.cjs` 拆成
+- 最近一次修改：**2026-10-11**（**自检模块化第二刀**：把 1089 行 / 123 项、含 8 小节的
+  `test\regions\05-live.cjs` 切成 7 片（`05a-handshake` ~ `05g-autochat`），共用连接与 helper
+  抽成 `test/lib/live.cjs`（挂全局，所以各区域正文一字未改）；原「7」再切三层
+  （`07a-anim` 0.3s / `07b-fx-particles` 46.7s / `07c-ambience` 0.4s）。同时修掉复核报告里的四条：
+  假 DOM 泄漏（`02g2`/`02g3` 的 `finally` 补回）、`withTimeout()` 真接上（+ 删掉 `cli()`/`state.failed`）、
+  `touchSay` 被自说自话插队时重发一次、三处误导性注释。区域数 **20 → 29**，全量 **372 项**
+  与切分前完全一致，7 个 live 区单独跑 7/7 通过。见 HANDOVER 第 1.38 节）｜上一次：**2026-10-11**（**自检模块化 + 存档节点**：2655 行 / 372 项的单体 `test\smoke.cjs` 拆成
   `test\lib\harness.cjs`（骨架）+ **20 个区域** `test\regions\*.cjs` + 总入口（`--list` / 关键词过滤）
   + `test\run-one.cjs`（单跑一个区域）；**产品代码一个字节没动**，拆分前的原文留档为 `test\smoke.full.cjs`。
   实测：工作区 **372 项 / 159.4s**，`D:\pet` 那份 **384 项 / 197.4s**（多 12 项是因为它装了语音）；
@@ -64,7 +70,32 @@
 - 语音：`tts.cjs` · `tts-voice.cjs` · `tts-worker.cjs` · `voice-config.cjs`
 - 窗口：`settings.cjs` · `settings-preload.cjs` · `voice-preload.cjs` · `preload.cjs`
 - 页面：`web/settings.html` · `web/voice.html` · **`web/diag.js`**（页面全局错误捕获）· 图标（`web/app-icon.png` 等，见 `tools/make-icons.py`）
-- 工程：**`test/lib/harness.cjs` + `test/regions/*.cjs`（20 个区域）+ `test/run-one.cjs` + `test/smoke.full.cjs`（拆分前原文存档）** —— 模块化自检，2026-10-11 · `test/smoke.cjs`（总入口）· `tools/*`（抽取、部署、装配、图标、试音、抠球贴图）
+- 工程：**`test/lib/harness.cjs`（骨架）· `test/lib/live.cjs`（"真连一遍"7 个区域共用的一条连接 + helper）· `test/regions/*.cjs`（29 个区域）· `test/run-one.cjs`（单跑一个）· `test/smoke.full.cjs`（拆分前原文存档）** —— 模块化自检，2026-10-11 · `test/smoke.cjs`（总入口）· `tools/*`（抽取、部署、装配、图标、试音、抠球贴图）
+
+## 2026-10-11 自检模块化第二刀：`05-live` 切成 7 片 + 修掉复核报告里的四条
+
+上一棒把 2655 行单体拆成"骨架 + 20 个区域"之后，独立复核留了四条账（见 `自检模块化-复核报告.md`）。
+这一棒把四条修掉，并把那个 **1089 行 / 123 项 / 含 8 小节**的 `regions\05-live.cjs` 再切一刀。
+
+| 改了什么 | 文件 |
+|---|---|
+| **共用连接抽出来**：`ws` / `fromPet` / `init` / `waitFor` / `nextReply` / `drain` / `touchSay` … 由它提供并**挂成全局**（前三个是 getter+setter，因为第 4d 节会换一条新连接），所以各区域正文**一字未改** | 新增 `test/lib/live.cjs` · `test/lib/harness.cjs`（`ctx.live` + 区域超时兜底） |
+| **`05-live.cjs` 切成 7 片**（按行号整段搬）：`05a-handshake` / `05b-ball-live` / `05c-speak` / `05d-touch` / `05e-areas` / `05f-ask` / `05g-autochat` | 新增 7 个区域文件，删掉 `05-live.cjs` |
+| **原来的「7」再切三层**：`07a-anim`（动画/眨眼/接地光/**部位判定**，0.3s）· `07b-fx-particles`（天气粒子，**46.7s**）· `07c-ambience`（环境音，0.4s） | 新增 3 个区域文件 |
+| **假 DOM 不再泄漏**：`02g2` / `02g3` 被换成 `catch` 的 `finally { delete globalThis.document/petHost }` 补回 | `test/regions/02g2-ball-physics.cjs` · `02g3-game.cjs` |
+| **计时竞态（两处）**：`touchSay` 被自说自话插队（产品把排队的那条回话判过期丢掉）时**重发一次**；`05d` 的连击节奏改成"距这次按下 1.4 秒"（原来"等回话再 sleep 1400ms"→ 真实间隔 = 回话+1400ms，越过产品的 `POKE_COMBO_MS=2500` 就升不了档，装语音那份实测红过）—— 断言与产品逻辑都没动 | `test/lib/live.cjs` · `test/regions/05d-touch.cjs` |
+| **死代码**：`cli()` 与 `state.failed` 删掉；`withTimeout()` 真正接进 `run()`（默认 6 分钟，`DSP_SMOKE_TIMEOUT_MS` 可调） | `test/lib/harness.cjs` |
+| **注释更正**：`smoke.cjs` 头部（"少数区域故意没切出来"是错的；补上"§7 慢在 CPU 不在等"）、`__mark` 的来历（拆分那一棒自己加的埋点，存档里 0 个）、`run-one` 里不存在的 `regions.cjs` | `test/smoke.cjs` · `test/lib/harness.cjs` · `test/run-one.cjs` |
+
+**实测**：区域数 **20 → 29**；全量（工作区，没装语音）**372 项全部通过**（165.9s / 167.4s / 166.7s，
+与切分前项数**完全一致**）；全量（`D:\pet`，装了语音）**384 项全部通过 / 193.4s**；
+7 个 live 区单独跑 **7/7 通过**（5.8~53.4 秒）；
+项数守恒（`05-live` 123 处 `ok()` → 切出来仍 123 处；`07` 38 处 → 21+12+5 = 38）。
+
+⚠️ **一个被纠正的预期**：切完才知道那 50 秒**是 CPU 不是等待** —— 天气粒子在假画布上真的推
+4 段动画（雪 40s / 雨 10s / 落叶 40s / 樱花 60s，每帧还有逐像素合成的 `drawImage`），
+所以 `07b` 单跑仍要 **46.7 秒**；真要提速属于"优化"（压缩模拟时长，或让假画布的 `drawImage`
+只记调用数不逐像素合成），用户说后面再做。**"部位"倒是真快了**：50s → `05e`(19.6s)+`07a`(0.3s)。
 
 ## 2026-10-11 自检模块化：单体 2655 行 → 骨架 + 20 个区域（用户："能不能模块化自检"）
 

@@ -129,8 +129,16 @@ module.exports = {
       /stage\.addEventListener\('pointerup'/.test(appSrc));
     ok('玩具球：丢出去的速度按"最近 100ms 的位移"算（停一下再松手也能丢）',
       /velocityNow/.test(ballSrc) && /100/.test(ballSrc.match(/const samples[\s\S]{0,600}/)?.[0] || ''));
-} catch (err) {
-  throw err;
+} finally {
+  /**
+   * ★ 2026-10-11 复核补回：**原文这里是 `finally`**，拆分区的时候被换成了
+   * `catch (err) { throw err; }` —— 于是这一节装的**假 DOM 会泄漏到后面的区域**
+   * （02g2 装、要等 02g4 末尾才被删）。清理必须留在这里，别删。
+   * （原文写的是 `if (hadDoc) delete …; else delete …;` —— 两个分支一模一样，
+   *  等于无条件删；这里按它真正的行为写清楚。）
+   */
+  delete globalThis.document;
+  delete globalThis.petHost;
 }
   },
 };

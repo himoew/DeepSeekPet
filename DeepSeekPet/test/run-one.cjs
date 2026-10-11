@@ -1,6 +1,9 @@
 /**
- * 跑**一个**自检区域（由 `test\regions.cjs` 派发；也可以自己直接调：`node test\run-one.cjs 02c-mood.cjs`）。
+ * 跑**一个**自检区域（也可以直接调：`node test\run-one.cjs 02c-mood.cjs`）。
  * 每个区域单独一个进程 —— 互不污染（临时配置目录、全局桩、模块状态都各是各的）。
+ *
+ * 注意 `regions\05a` ~ `05g` 那 7 个是**同一条连接上的连续对话**：单跑其中一个时，
+ * `lib\live.cjs` 会让它自己连、自己等 init（能跑，但少了前面几节铺的状态）。
  */
 const path = require('node:path');
 const harness = require('./lib/harness.cjs');

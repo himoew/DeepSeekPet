@@ -6,7 +6,9 @@
  * 所以改一处小地方也得等两三分钟，没法"只跑我改的那一块"。
  *
  * **现在长这样**：
- *   · `lib/harness.cjs`（本文件）：临时目录、`ok()`、计数、区域清单、加载器。
+ *   · `lib/harness.cjs`（本文件）：临时目录、`ok()`、计数、区域清单、加载器、区域超时兜底。
+ *   · `lib/live.cjs`：「真连一遍」那 7 个区域**共用的一条 WebSocket + 全套 helper**
+ *     （`ws` / `fromPet` / `init` / `waitFor` / `nextReply` / `drain` / `touchSay` …）。
  *   · `regions\NN-名字.cjs`：**一个区域一个文件**，互不依赖，可以单独跑（各自一个 Node 进程）。
  *   · `smoke.cjs`：把区域按顺序拼起来 —— `node test\smoke.cjs` 全部，
  *     `node test\smoke.cjs 天气` 只跑名字/标签里带"天气"的，`--list` 列出来。
@@ -19,6 +21,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { pathToFileURL } = require('node:url');
+const live = require('./live.cjs');
 
 /** 应用本体（`resources\app`）与工作区根。 */
 const app = path.join(__dirname, '..', '..', 'resources', 'app');
@@ -99,7 +102,7 @@ function run(regions, { pick = null, note = '' } = {}) {
     const { startServer } = mod('server');
     const { server, port } = await startServer();
     const base = `http://127.0.0.1:${port}`;
-    const state = { passed: 0, failed: 0, ran: [] };
+    const state = { passed: 0, ran: [] };
     const ok = (name, cond) => {
       if (!cond) throw new Error(`FAIL ${name}`);
       state.passed += 1;
@@ -109,13 +112,21 @@ function run(regions, { pick = null, note = '' } = {}) {
     let stub = null;
     let current = '(启动)';
     const ensureStub = async () => (stub || (stub = await stubModel()));
+    /**
+     * 每个区域的**超时兜底**（`DSP_SMOKE_TIMEOUT_MS` 可调，默认 6 分钟）。
+     *
+     * 为什么要有：有些区域在等真实的计时器（气泡间隔、静默期、模型往返），机器一忙就会拖；
+     * 而"某个区域卡住"跟"自检很慢"在命令行上看起来一模一样。超时**不算失败**（它自己会报
+     * 哪个区域超时了），但也别让整个自检无限挂着不走。
+     */
+    const REGION_TIMEOUT_MS = Number(process.env.DSP_SMOKE_TIMEOUT_MS || 6 * 60 * 1000);
     const ctx = {
       app, root, CONFIG_DIR, ok, state, base, port, fs, path, http, pathToFileURL,
       checkLines, pageAreas, pageStages, pageGrabParts, textsOf, textsFilled, ACTIONS, FILES,
       /**
-       * 原文件每个区域开头都有一句 `__mark('…')`（那时是用来量各区域耗时的）。
-       * 现在耗时由骨架按区域打（`DSP_SMOKE_TIME=1`），所以这里保留成**空实现**：
-       * 区域代码一个字都不用改，也不会报 `__mark is not defined`。
+       * `__mark('…')` 是**拆分那一棒自己加的**埋点（用来量各节耗时），不是原文自带的东西 ——
+       * 存档 `smoke.full.cjs` 里一个都没有。现在耗时由骨架**按区域**打（`DSP_SMOKE_TIME=1`），
+       * 所以这里留个空实现：`02g5` 里还留着几个 `__mark`，不实现它会报 `__mark is not defined`。
        */
       __mark: () => {},
       /** 页面 WebSocket 客户端（区域 5 用真连接跑往返）。 */
@@ -123,6 +134,16 @@ function run(regions, { pick = null, note = '' } = {}) {
       /** 假模型端点：`const stub = await ctx.ensureStub()`。 */
       ensureStub,
       mod,
+      /**
+       * 「真连一遍」那 7 个区域共用的一条连接 + 全套 helper（见 `lib\live.cjs`）。
+       * 区域文件第一行写 `await ctx.live.ensure();` 就拿到了（`ws` / `fromPet` / `init` /
+       * `waitFor` / `nextReply` / `drain` / `touchSay` … 都由它挂成全局）。
+       */
+      live: {
+        ensure: () => live.ensure(ctx),
+        close: live.close,
+        get state() { return live.state; },
+      },
       /** 台词库 / 桌宠世界 / 模型客户端：常用，直接给（还是惰性）。 */
       get lines() { return mod('lines'); },
       get pet() { return mod('pet'); },
@@ -133,16 +154,18 @@ function run(regions, { pick = null, note = '' } = {}) {
     };
     try {
       exposeGlobals(ctx);
+      live.install(ctx);
       for (const r of chosen) {
         current = r.name;
         const t0 = Date.now();
-        await r.run(ctx);
+        await withTimeout(r.run(ctx), REGION_TIMEOUT_MS, r.name);
         state.ran.push(r.name);
         if (process.env.DSP_SMOKE_TIME) {
           console.log(`  [耗时] ${r.name} ${((Date.now() - t0) / 1000).toFixed(1)}s`);
         }
       }
     } finally {
+      live.close();
       try { mod('tts').close(); } catch (e) { /* 没装语音时没有 worker，无所谓 */ }
       if (stub) stub.server.close();
       server.close();
@@ -171,31 +194,19 @@ function selector(words) {
   };
 }
 
-/** 命令行：`--list` 就打印清单并退出。 */
-function cli({ regions, runAll, title }) {
-  const argv = process.argv.slice(2);
-  if (argv.includes('--list') || argv.includes('-l')) {
-    console.log(title);
-    for (const r of regions) console.log(`  ${(r.tags || []).join(',') || '-'}\t${r.name}`);
-    return Promise.resolve(null);
-  }
-  const pick = selector(argv.filter((a) => !a.startsWith('-')));
-  const note = pick ? `只跑了 ${regions.filter(pick).length}/${regions.length} 个区域` : '';
-  if (pick && !regions.some(pick)) {
-    console.error(`没有匹配的区域：${argv.join(' ')}（用 --list 看清单）`);
-    process.exit(2);
-  }
-  return runAll(pick, note);
-}
-
 /**
- * 区域超时兜底：某些区域在等真实计时器，机器忙的时候会拖。
- * 超时不是"失败"，但也别让整个自检挂着不走。
+ * 区域超时兜底（`run()` 里真的接上了，默认 6 分钟，`DSP_SMOKE_TIMEOUT_MS` 可调）：
+ * 某些区域在等真实计时器，机器忙的时候会拖；而"卡住"和"慢"在命令行上看着一模一样。
+ * 超时不是"失败"，但也别让整个自检无限挂着不走 —— 报出是哪个区域就够定位了。
  */
 function withTimeout(p, ms, what) {
+  let timer = null;
   return Promise.race([
-    p,
-    new Promise((_, rej) => { const t = setTimeout(() => rej(new Error(`区域超时（${ms / 1000}s）：${what}`)), ms); t.unref?.(); }),
+    p.finally(() => clearTimeout(timer)),
+    new Promise((_, rej) => {
+      timer = setTimeout(() => rej(new Error(`区域超时（${ms / 1000}s）：${what}`)), ms);
+      timer.unref?.();
+    }),
   ]);
 }
 
@@ -296,7 +307,7 @@ function textsFilled(...groups) {
 }
 
 module.exports = {
-  app, root, CONFIG_DIR, mod, run, listRegions, selector, cli, withTimeout,
+  app, root, CONFIG_DIR, mod, run, listRegions, selector, withTimeout,
   checkLines, pageAreas, pageStages, pageGrabParts, textsOf, textsFilled, ACTIONS, FILES,
   stubModel,
 };
