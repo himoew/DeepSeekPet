@@ -2462,6 +2462,44 @@ const weatherNow = () => WEATHER[weather.mode] || WEATHER.off;
  */
 const fx = createFx({ ctl, canvas: $('#fxCanvas'), canvasNear: $('#fxCanvasNear'), report });
 /**
+ * ★★ **天气与她的互动：每一帧把她"在画布上的变换"喂给粒子系统**（2026-10-11 晚，第 ③ 项 ③a）。
+ *
+ * 为什么喂"变换"而不是"她在哪"：她会被拎起来转、会歪头、走路会侧倾、落地会压缩拉伸 ——
+ * 只有**跟 render() 同一套变换**才说得出"她身上"是画布上的哪一块。这几个数就是 pet-core
+ * `render()` 刚写进 `pet.xf` 的那一份（**只读**，我们不反过来碰她的身体）。
+ *
+ * 时序天然是对的：帧循环里 `ctl.render()` 在前、`stepWeather()` 在后（见 `frame()`），
+ * 所以这里读到的一定是**这一帧**的她，不需要额外对齐。
+ *
+ * ⚠️ 复用同一个对象、只改字段（跟粒子池一个道理）；`weather=off` 或她还没画过第一帧时传 `null`
+ * —— 粒子那套互动会**整体关闭**，行为与没有这一项时逐字相同。
+ */
+const actorSnap = { AX: 0, AY: 0, ax: 128, ay: 256, kx: 0, ky: 0, rot: 0, S: .42, moving: false };
+/**
+ * ⚠️ `force` 只给**验收页**用（`?diag=1` 那套）：临时页面里没有 World，天气是页面外面
+ * 直接推给 `fx.frame()` 的，`weatherNow().kind` 一直是 `off` —— 不 force 的话她会永远"不在场"，
+ * 互动就验不到。产品自己的调用点（`stepWeather`）**永远不传它**。
+ */
+function pushActor(force = false) {
+  const xf = (force || weatherNow().kind) ? ctl.pet.xf : null;
+  if (!xf) { fx.actor(null); return; }
+  actorSnap.AX = xf.AX; actorSnap.AY = xf.AY;
+  actorSnap.ax = xf.ax; actorSnap.ay = xf.ay;
+  actorSnap.kx = xf.kx; actorSnap.ky = xf.ky; actorSnap.rot = xf.rot;
+  actorSnap.S = ctl.bounds.S;
+  /** 只有走/跑才算"带起一阵风"：拎着甩、跳、坐、睡都不吹（见 fx.js 的 `herWind`）。 */
+  const mode = ctl.move.mode;
+  actorSnap.moving = mode === 'walk' || mode === 'run';
+  fx.actor(actorSnap);
+}
+/**
+ * ★ **`?diag=1&fxbox=1`：把她的判定盒子画出来**（两个圆，与 `hitPet` 同源）。
+ * "盒子有没有对上她"不该靠猜（她走着、歪着头、被拎起来时尤其看不出来）—— 这是验收页与
+ * 人工核对的入口。默认关着，正式运行一格开销都没有。
+ */
+const FX_BOX = POINTER_DIAG && new URLSearchParams(location.search).has('fxbox');
+if (FX_BOX) fx.debugBox(true);
+/**
  * ★ **给 `?diag=1` 探针用的一行状态**（2026-10-11 加）。
  *
  * 为什么需要它：粒子改到 canvas 之后，"有没有在画"从窗口外面**完全看不出来** ——
@@ -2475,9 +2513,15 @@ function fxDiagLine() {
     const lc = fx.layerCounts();
     const sz = fx.size();
     const near = sz.nearCanvas ? `${sz.nearCanvas.px.join('x')}/${(sz.nearCanvas.css || []).join('x')}` : '无';
+    /** ★ 跟她的互动：她盒子的两个圆（舞台坐标）—— "盒子有没有跟着她动"从这一行就看出来。 */
+    const ab = fx.actorBox();
+    const boxLine = ab.on
+      ? ` 她盒[身体 ${Math.round(ab.c1.x)},${Math.round(ab.c1.y)} r${Math.round(ab.c1.r)}`
+        + ` / 下身 r${Math.round(ab.c2.r)}] 命中${st.meta.hits}`
+      : ' 她盒[无]';
     return ` fx=${fx.count}画${st.n}(远${lc.far}/近${lc.near})`
       + ` 层[px${sz.canvas ? sz.canvas.join('x') : '?'}/${(sz.css || []).join('x')} near:${near}]`
-      + ` 笔[s${st.meta.callStroke}/i${st.meta.callImage}]${sz.broken ? ' BROKEN' : ''}`;
+      + ` 笔[s${st.meta.callStroke}/i${st.meta.callImage}]${boxLine}${sz.broken ? ' BROKEN' : ''}`;
   } catch (e) { return ` fx=ERR(${(e && e.message) || e})`; }
 }
 /** `?diag=1` 的探针（`pet.html` 里那段）每秒取一次这一行。见 `fxDiagLine` 的注释。 */
@@ -2502,8 +2546,46 @@ if (POINTER_DIAG) {
     },
     clear: () => fx.clear(),
     counts: () => fx.layerCounts(),
-    stats: () => { const s = fx.stats(); return { n: s.n, meta: { strokes: s.meta.callStroke, images: s.meta.callImage } }; },
+    stats: () => {
+      const s = fx.stats();
+      return {
+        n: s.n,
+        meta: {
+          strokes: s.meta.callStroke, images: s.meta.callImage,
+          // ★ 跟她的互动那几个数（自检/验收页读它们，见 fx.js 的 meta 说明）
+          hits: s.meta.hits, onBody: s.meta.onBody, splash: s.meta.splash, box: s.meta.box,
+        },
+      };
+    },
     size: () => fx.size(),
+    /**
+     * ★ **跟她的互动这一套的只读视图**（2026-10-11 晚加，给 `dev-weather\v-actor.html` 用）。
+     * `box()` = 她现在被当成多大的盒子（两个圆的圆心与半径，舞台坐标）；`box(true)` = 把盒子画出来。
+     * `at(kind, x, y, over)` = **在指定位置生一颗粒子** —— 验收页靠它把"正好打在她身上"变成确定的
+     * （不必等雨自己飘到她身上），走的仍然是产品自己的 `fx.spawn`。
+     * `drive(kind, 秒)` = **带她的天气驱动**：每帧走产品自己那条路（`pushActor(true)` + `fx.frame()`），
+     * 所以"她的盒子有没有真的喂进粒子系统"是从页面外面验的（`step()` 那套不喂她，是给画布验收用的）。
+     */
+    actor: () => fx.actorBox(),
+    box: (on) => fx.debugBox(on !== false),
+    /** 让粒子系统**忘掉她**（验收页 ④ 要验"不喂她就一次命中都没有"，产品自己不用）。 */
+    detach: () => fx.actor(null),
+    at: (kind, x, y, over) => !!fx.spawn(kind, { x, y, ...(over || {}) }),
+    drive(kind, secs = 1) {
+      const dt = 1 / 60;
+      let t = ctl.time, hits = 0, onBody = 0, boxDrawn = 0;
+      for (let i = 0; i < Math.round(secs * 60); i += 1) {
+        t += dt;
+        pushActor(true);
+        fx.frame(dt, t, kind, 1);
+        const m = fx.stats().meta;
+        if (m.hits > hits) hits = m.hits;
+        if (m.onBody > onBody) onBody = m.onBody;
+        if (m.box > boxDrawn) boxDrawn = m.box;
+      }
+      const st = fx.stats();
+      return { n: fx.count, hits, onBody, boxDrawn, splash: st.meta.splash, actor: fx.actorBox(), counts: fx.layerCounts() };
+    },
   });
 }
 /** 她说话时从嘴边冒音符（页面在打字循环里调，见 `typeText`）。 */
@@ -2588,7 +2670,11 @@ function stepWeather(dt) {
     }
   }
   const cfg = weatherNow();
-  // ② 粒子：物理、外观、发射节奏、渲染都在 fx.js 里（`weather.density` 是卡顿减量，见上面 ①）
+  /**
+   * ② 粒子：物理、外观、发射节奏、渲染都在 fx.js 里（`weather.density` 是卡顿减量，见上面 ①）。
+   * ★ 先把她这一帧的**变换快照**喂进去（第 ③ 项）：粒子才知道"她身上"是哪一块。
+   */
+  pushActor();
   fx.frame(dt, ctl.time, cfg.kind || 'off', weather.density);
   /**
    * ③ **环境音**（`web\ambience.js`）：连续的底噪由 `setWeather` 那边切换，

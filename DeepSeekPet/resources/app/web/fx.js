@@ -27,6 +27,24 @@
  *      削 cap 会在卡顿时把上限打到 35%，那一下就"雪突然没了"。
  *
  * ⚠️ 想调手感：发射量/分层在 `PROFILE`，形状在 `SPRITE`，配色在 `refreshPal`，画法在 `drawQ`。
+ *
+ * ★ **2026-10-11 晚：粒子开始"知道她在哪"**（用户点名的第 ③ 项，方案见
+ * `本轮改动-方案与进度.md` 第三节）。做法刻意做小：
+ *   · 页面每帧把她的**变换快照**喂进来（`fx.actor()`，就是 pet-core `render()` 写进 `pet.xf`
+ *     的那几个数）→ fx 自己算出"她被当成多大的盒子"：**两个圆，与 pet-core 的 `hitPet` 同源**
+ *     （能点到的范围 = 天气能碰到的范围，自检钉住这条一致性）；
+ *   · 然后分天气给反应：**雨**打到她身上溅一圈、**樱/落叶**擦着她滑走（并**升到近层**，
+ *     否则在她身后根本看不见）、她**走动时带起一阵风**把前面的粒子吹歪。
+ *   · 成本：每颗一次判定（最多 240 颗 × ~12 次浮点 ≈ **0.03ms/帧**）+ 绘制增量 <0.05ms。
+ *     **不新增遍历、不新建对象、不新增一次全屏 clearRect。**
+ *
+ * ⚠️ **这一套的三条"不许"**（自检盯着，回退时也照这个查）：
+ *   ① 不许在粒子循环里建对象（快照对象只有一个、命中点复用 `HIT`）；
+ *   ② 不许加第二个粒子循环（判定并进 `step()` 那个既有循环）；
+ *   ③ 新字段**必须在 `make()` 里清** —— 粒子是从池子里 reuse 的（见上面第 ① 条）。
+ *
+ * ⚠️ **没有她的时候（`actor(null)` / 自检 / 老宿主）这套整体关闭**，粒子行为与上一版逐字相同：
+ * 自检 `07b-fx-particles` 就是这么跑的，它那 12 条一条都不许变。
  */
 
 /* =====================================================================================
@@ -447,7 +465,9 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
   const pool = [];
   let poolN = 0;
   const S = [];                        // 每帧的统计（自检读它）
-  const meta = { fills: 0, strokes: 0, images: 0, maxLen: 0, minSpin: 1, maxSpin: 1, splash: 0, byKind: {} };
+  const meta = { fills: 0, strokes: 0, images: 0, maxLen: 0, minSpin: 1, maxSpin: 1, splash: 0, byKind: {},
+    /** 跟她的互动：这一帧新命中几颗 / 她身上的溅落数 / 调试盒子描边数（见 `draw()` 里那段说明）。 */
+    hits: 0, onBody: 0, box: 0 };
   /** 每帧一张的绘制对象（雨/雪花/音符/溅落用同一张，字段互相覆盖）。 */
   function take() {
     if (poolN < pool.length) return pool[poolN++];
@@ -619,6 +639,11 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
   function assignCanvas(p) {
     if (!hasNear) return false;
     if (p.kind === 'note') return true;
+    /**
+     * ★ **擦过她的花瓣/落叶留在近层**（2026-10-11 晚加）：它们是被"她"挡住的，
+     * 留在远层的话那一下擦身**什么都看不见**（她的身体把远层挡住了）—— 互动就白做了。
+     */
+    if (p.nearFix) return true;
     return p.layer >= p.layerN - 1;
   }
 
@@ -662,6 +687,14 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
       drift: 1,
       spot: null,
       branches: null,
+      /**
+       * ★ **跟她的互动用的三个字段**（2026-10-11 晚加）。
+       * ⚠️ **必须写在这个字面量里**：粒子是从 `free` 池子里 reuse 的，在这里给默认值 =
+       * 每一世都从"没碰过她"开始（上一世是擦过她的花瓣、这一世是雪的话，不清就带着旧状态跑）。
+       */
+      hit: 0,                          // 0 = 这一生还没碰过她；1 = 碰过了（每颗只算一次）
+      nearFix: 0,                      // 1 = 强制画在近层（擦过她的花瓣/落叶要留在她身前）
+      px: 0, py: 0,                    // 上一帧的位置（求入射点用）
     };
     if (kind === 'snow') {                             // 六角星：每颗的臂长/粗细/小枝都不同
       it.arms = 3 + Math.floor(Math.random() * 2);
@@ -686,6 +719,8 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
     it.dx = 0;                                                  // 相对锚点的横向偏移
     it.ax = it.x;                                               // ★ 锚点：漂移在它附近游走
     it.bx = it.x; it.by = it.y;
+    /** 出生这一帧的"上一帧位置" = 它自己（零长度线段 → 入射点退化成当前位置，不会算出 NaN）。 */
+    it.px = it.x; it.py = it.y;
     it.hzA = it.hz * 2 * Math.PI;
     /**
      * ⚠️ `branches` 必须**在这里清掉**：粒子对象是从 `free` 里 reuse 的，
@@ -727,6 +762,140 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
     spawn('note', { x: x + rnd(-10, 10), y, vx: rnd(-14, 14), vy: -rnd(30, 52) });
   }
 
+  /* =====================================================================================
+   * 她：天气与她的互动（2026-10-11 晚，用户点名的第 ③ 项）
+   * ===================================================================================== */
+  /**
+   * ★ **她此刻在画布上的变换快照**。页面每帧在 `frame()` 之前灌一次（`fx.actor(…)`）：
+   * `null` = 没有她（自检 / 老宿主 / 天气关着）→ **这一整套整体关闭**，粒子行为与上一版逐字相同。
+   *
+   * 为什么喂的是"变换"而不是"她在哪"：她会被拎起来转、会歪头、走路会侧倾、被压会拉伸 ——
+   * 只有**同一套变换**才说得出"她身上"是画布上的哪一块。字段就是 pet-core `render()` 写进
+   * `pet.xf` 的那几个（`AX/AY/ax/ay/kx/ky/rot`，见 pet-core L1190-1196）：**不是另发明的坐标**，
+   * 所以不会跟她的画法漂移。
+   */
+  const A = { on: false, AX: 0, AY: 0, ax: 128, ay: 256, kx: 0, ky: 0, rot: 0, S: .42, moving: false };
+  /**
+   * 从 `A` **预算**出来的东西（每帧一次，**不在粒子循环里算**）：两个判定圆 + 三角函数。
+   * 圆取的是 **pet-core `hitPet` 的两个圆**（本地 `128,128 r=108` 与 `128,232 r=62`）——
+   * 于是"能不能点到她"和"天气能不能碰到她"是**同一个盒子**，不会两处各说各话。
+   * `kx/ky` 不等时（她被压扁/拉伸）严格说是椭圆，这里取平均半径 —— 差 ≤2%，故意选便宜的。
+   */
+  const R = { AX: 0, AY: 0, ax: 128, ay: 256, kx: 0, ky: 0, cos: 1, sin: 0, c1x: 0, c1y: 0, r1: 0, c2x: 0, c2y: 0, r2: 0 };
+  /** 命中点（**复用**，不在热路径里造对象）。 */
+  const HIT = { x: 0, y: 0 };
+  /** 她的横向速度（px/s）与"上一帧她在哪"：从 `AX` 的差分算，**不要求页面再报一个速度**。 */
+  let actorVx = 0, lastAX = null;
+  /** `actor()` 灌进来的快照还没同步进 `R`（改一次算一次）。 */
+  let actorDirty = true;
+  /** `?diag=1&fxbox=1`：把她的判定盒子画出来（默认关，正式运行零开销）。 */
+  let boxOn = false;
+  /** 这一帧命中了几颗（由 `step()` 累计、`draw()` 抄进 `meta`）。 */
+  let frameHits = 0;
+  /** 她身上的溅落（与地上那套**分开**存：互不挤占上限，地上的那条路径完全没动）。 */
+  const bsplash = [];
+  const BODY_SPLASH_MAX = 8;
+
+  /**
+   * 本地（她的画稿单位）→ 舞台坐标：**与 pet-core 的 `toStage` 同一套公式**
+   * （`translate(AX,AY) rotate(rot) scale(kx,ky) translate(-ax,-ay)`）。
+   * ⚠️ `kx` 在她**朝左时是负的** —— 自检拿同一组本地点跟 `ctl.toStage` 逐点对账（≤0.01px），
+   * 符号写反正是这条抓。
+   */
+  function mapX(lx, ly) { const dx = (lx - R.ax) * R.kx, dy = (ly - R.ay) * R.ky; return R.AX + dx * R.cos - dy * R.sin; }
+  function mapY(lx, ly) { const dx = (lx - R.ax) * R.kx, dy = (ly - R.ay) * R.ky; return R.AY + dx * R.sin + dy * R.cos; }
+  /** 舞台坐标 → 本地（"雪贴在她身上"要用：贴纸存**本地**坐标，所以她动它跟着动）。 */
+  function unmapX(x, y) { const u = x - R.AX, v = y - R.AY; return R.ax + (u * R.cos + v * R.sin) / (R.kx || 1e-6); }
+  function unmapY(x, y) { const u = x - R.AX, v = y - R.AY; return R.ay + (v * R.cos - u * R.sin) / (R.ky || 1e-6); }
+  /** 把 `A` 同步进 `R`（只在 `A` 变过时算；`cos/sin` 每帧最多两次）。 */
+  function syncActor() {
+    if (!actorDirty) return;
+    actorDirty = false;
+    R.AX = A.AX; R.AY = A.AY; R.ax = A.ax; R.ay = A.ay; R.kx = A.kx; R.ky = A.ky;
+    const r = A.rot * Math.PI / 180;
+    R.cos = Math.cos(r); R.sin = Math.sin(r);
+    const k = (Math.abs(A.kx) + Math.abs(A.ky)) / 2;
+    R.c1x = mapX(128, 128); R.c1y = mapY(128, 128); R.r1 = 108 * k;
+    R.c2x = mapX(128, 232); R.c2y = mapY(128, 232); R.r2 = 62 * k;
+  }
+  function inCircle(x, y, cx, cy, r) { const dx = x - cx, dy = y - cy; return dx * dx + dy * dy <= r * r; }
+  /**
+   * 这一颗这一帧"碰到她"了吗？碰到就把**入射点**写进 `HIT` 并返回 true。
+   *
+   * 为什么入射点要另算：雨一帧能走 **33px**（2000px/s ÷ 60），拿"当前位置"当溅落点的话，
+   * 雨会溅在她**肚子中间**。所以判定用当前位置（最便宜），入射点用"上一帧位置→这一帧位置"
+   * 这条线段与圆求交 —— 只在**真的命中**那一刻算，每秒几次，成本可以忽略。
+   */
+  function hitActor(p) {
+    const which = inCircle(p.x, p.y, R.c1x, R.c1y, R.r1) ? 1 : (inCircle(p.x, p.y, R.c2x, R.c2y, R.r2) ? 2 : 0);
+    if (!which) return false;
+    const cx = which === 1 ? R.c1x : R.c2x, cy = which === 1 ? R.c1y : R.c2y, r = which === 1 ? R.r1 : R.r2;
+    HIT.x = p.x; HIT.y = p.y;
+    const ex = p.x - p.px, ey = p.y - p.py, L = ex * ex + ey * ey;
+    if (L > 1e-6) {
+      const ox = p.px - cx, oy = p.py - cy;
+      const b = 2 * (ox * ex + oy * ey), c = ox * ox + oy * oy - r * r;
+      const disc = b * b - 4 * L * c;
+      if (disc >= 0) {
+        const t = (-b - Math.sqrt(disc)) / (2 * L);
+        if (t >= 0 && t <= 1) { HIT.x = p.px + ex * t; HIT.y = p.py + ey * t; }
+      }
+    }
+    return true;
+  }
+  /**
+   * **她走动带起来的一阵风**（px/s）：只吹她**前方**、只在她真的走/跑时、有上限。
+   * 要的是"她走过去，前面的雪被带了一下"，不是"她是个吹风机"。
+   *
+   * 安全边界：这个值进的是**既有那一条 `p.vx` 积分**（见 `step()`），而横向位移 `p.dx` 本来
+   * 就有界（`dcap`）+ 回中（`DRIFT_TAU`）—— 所以不会把第 1.35 节那个"单边堆积（龙卷风）"
+   * 搞回来。这条的回归工具是 `dev-weather\check-drift.cjs`。
+   */
+  const HER_WIND_R = 160, HER_WIND_MAX = 70, HER_WIND_MIN_V = 40;
+  function herWind(p) {
+    const v = actorVx, sp = v < 0 ? -v : v;
+    if (sp < HER_WIND_MIN_V) return 0;
+    const dx = p.x - R.AX;
+    if (dx * v <= 0) return 0;                     // 只吹前方：身后的粒子被"吸"过去很怪
+    const d = dx < 0 ? -dx : dx;
+    if (d > HER_WIND_R) return 0;
+    const dy = p.y - R.c1y;                        // 她的身体中心（不是一个点）
+    if (dy > 200 || dy < -200) return 0;
+    return clamp(sp * .22, 0, HER_WIND_MAX) * (1 - d / HER_WIND_R);
+  }
+  /** 打在她身上的一次溅落（复用同一套 `splash` 形状，只是位置与形状按"身体"来）。 */
+  function splashOnBody(x, y, size) {
+    const s = bsplash.length >= BODY_SPLASH_MAX ? bsplash.shift() : { x: 0, y: 0, age: 0, life: 0, size: 0 };
+    s.x = x; s.y = y; s.age = 0; s.life = rnd(.16, .34);
+    s.size = clamp(size, .7, 1.6);
+    bsplash.push(s);
+  }
+  /**
+   * ★ **跟她的身体有反应的天气**（其余天气碰到她"什么都不做"，行为与上一版逐字相同）。
+   * 分天气的意思：雨是"打到就没了 + 溅一圈"；樱/落叶是"擦一下、被推歪、留在她身前接着飘"。
+   * ⚠️ **雪故意不在这里** —— "落在她身上积住 + 抖掉"是第 ③b 项，单独做、单独验。
+   */
+  const REACT = { rain: 1, blossom: 1, leaf: 1 };
+  /**
+   * 命中她那一下要做的事（**每颗一生只算一次**：`p.hit` 一置 1 就不再判）。
+   * ⚠️ `dead(p, i)` 之后**不能再碰 p**（它把队列尾巴换到 i 又 pop 了）—— 调用方必须 `continue`。
+   */
+  function react(p, i) {
+    p.hit = 1;
+    frameHits += 1;
+    if (p.kind === 'rain') {
+      // 远层那点水花本来就被她的身体挡住（白花量），只有近/中层才溅
+      if (p.layer >= 1) splashOnBody(HIT.x, HIT.y, p.size);
+      dead(p, i);
+      return;
+    }
+    // 樱花瓣 / 落叶：贴一下再滑走 —— 减一半下落速度 + 顺她身体侧面推一把 + 留在她身前
+    p.vT *= .55;
+    p.vx += (HIT.x >= R.AX ? 1 : -1) * rnd(16, 40);
+    p.spinSp *= 1.35;
+    p.nearFix = 1;
+  }
+
   /* ---------- 每帧：物理 ---------- */
   function dead(p, i) {
     P[i] = P[P.length - 1];
@@ -737,6 +906,19 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
   function step(dt, t) {
     last = t;
     const { W, H } = view();
+    frameHits = 0;
+    /**
+     * ★ **她这一帧的盒子与风速**（每帧一次，不在粒子循环里）：`A.on` 为假时整段不算，
+     * 连一次三角函数都没有 —— 这就是"没有她时行为与上一版逐字相同"的实现方式。
+     */
+    const hitOn = A.on;
+    if (hitOn) {
+      syncActor();
+      // 她的横向速度：从 `AX` 的差分平滑（不要求页面再报一个速度 —— 少一处能写错的地方）
+      if (lastAX === null) actorVx = 0;
+      else actorVx = actorVx * .75 + ((A.AX - lastAX) / dt) * .25;
+      lastAX = A.AX;
+    } else lastAX = null;
     for (let i = P.length - 1; i >= 0; i -= 1) {
       const p = P[i];
       p.age += dt;
@@ -759,7 +941,13 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
       p.vy += (p.vT * stall - p.vy) * k;
       // 风场：同一个位置+时刻的粒子被同一阵风推（`vx` 是"风速"，它本身不发散：指数趋近 gust）
       const gust = p.wind ? windAt(seed, p.ax + p.dx, p.by, t) * p.wind : 0;
-      p.vx += (gust - p.vx * 0.9) * dt * 1.6;
+      /**
+       * ★ **她走动带起来的那一阵风**（2026-10-11 晚加）：并进**同一条**积分式里，
+       * 不额外遍历、不新增状态 —— 于是"有界 + 回中"这两条约束（上面那段）自动继续管着它。
+       * `herWind()` 在她没走/不在附近时直接返回 0，热路径上就是一次判断。
+       */
+      const hw = hitOn && A.moving && p.wind ? herWind(p) : 0;
+      p.vx += (gust + hw - p.vx * 0.9) * dt * 1.6;
       /**
        * ★ **侧滑由翻滚角驱动**（叶子/花瓣）：侧立时切风、滑得最快；正面朝风时几乎停住。
        * 资料里这句是"叶子 vs 纸屑"的分水岭 —— 所以**不能再给 x 加独立正弦**。
@@ -789,6 +977,20 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
       } else if (p.spin) {
         p.rot += p.spin * dt * 57.3;
       }
+      /**
+       * ★ **碰到她了吗**（2026-10-11 晚加）。位置放在这里是有讲究的：上面那一行刚算完
+       * `p.x`/`p.y` —— 也就是**这一帧画出来的位置**，判定与画面对得上；
+       * 而 `p.px/p.py` 还是上一帧的位置，正好用来求入射点。
+       *
+       * 三条约束：① 只对 `REACT` 里那几种天气判（雪这一轮不参与，见 `REACT`）；
+       * ② 每颗**只算一次**（`p.hit`，擦过她之后不会被反复推）；
+       * ③ `A.on` 为假时这个 `if` 直接短路 —— 没有她时**一帧都不多算**。
+       */
+      if (hitOn && p.hit === 0 && REACT[p.kind] === 1 && hitActor(p)) {
+        react(p, i);
+        continue;                       // ⚠️ react 可能已经 dead()（雨），之后不许再碰 p
+      }
+      p.px = p.x; p.py = p.y;           // 留给下一帧求入射点
       // 雨：落到"窗口底"就记一次溅落（"落地"是最容易看出真假的一处）
       if (p.kind === 'rain' && p.by >= H - 4) {
         if (p.layer >= 1) {                            // 只有近/中层才溅落（远层看不出来，白花量）
@@ -804,6 +1006,10 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
     for (let i = splash.length - 1; i >= 0; i -= 1) {
       splash[i].age += dt;
       if (splash[i].age > splash[i].life) splash.splice(i, 1);
+    }
+    for (let i = bsplash.length - 1; i >= 0; i -= 1) {
+      bsplash[i].age += dt;
+      if (bsplash[i].age > bsplash[i].life) bsplash.splice(i, 1);
     }
   }
   /** 现在这些粒子铺在 x 上的 [最小, 最大, 中位]（诊断用：用户报过"只有左半边有粒子"）。 */
@@ -932,7 +1138,49 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
       d.w = 1.4 - 1.1 * k; d.col = pal.rain;
       d.spr = null; d.sx = 1; d.branches = null;
       d.near = hasNear;                       // 溅落总是"打在她面前的地上"，永远在近层
+      /**
+       * ⚠️ `run` **必须每一条都显式给**：`D` 里的对象也从池子里 reuse（见文件头第 ① 条），
+       * 上一条如果是"打在她身上的溅落"，它留下的水痕长度会让地上的水花多拖一条线。
+       * （`meta.onBody` 不再读这个字段了 —— 直接数 `bsplash`，见 `draw()` 里那段。）
+       */
+      d.run = 0;
       D.push(d);
+    }
+    /**
+     * ★ **打在她身上的溅落**（2026-10-11 晚加）：复用同一套 `shape`，位置换成**入射点**。
+     * 必须画在**近层**：远层在她身后，水花落在她身上才看得见。形状比地上的圆一点
+     * （不是贴着一个平面），并拖一条**细水流**下来（`d.run`）。
+     */
+    for (const s of bsplash) {
+      const k = s.age / s.life;
+      const r0 = s.size * 1.6, rMax = s.size * 5.5 + 5;
+      const r = r0 + (rMax - r0) * k;
+      const d = take();
+      d.shape = 'splash'; d.kind = 'rain'; d.op = .8 * (1 - k) * (1 - k);
+      d.x = s.x; d.y = s.y;
+      d.rx = r * 1.05; d.ry = r * .55;
+      d.run = (1 - k) * (7 + s.size * 5);
+      d.w = 1.3 - 1.0 * k; d.col = pal.rain;
+      d.spr = null; d.sx = 1; d.branches = null;
+      d.near = true;
+      D.push(d);
+    }
+    /**
+     * ★ **`?diag=1&fxbox=1`：把她的判定盒子画出来**（两个圆，与 `hitPet` 同源）。
+     * "盒子有没有对上她"不该靠猜 —— 这是 1×1 画布那次事故之后最该有的东西。
+     * 只有诊断开关打开时才进绘制清单，**正式运行一格开销都没有**（`boxOn` 默认 false）。
+     */
+    if (boxOn && A.on) {
+      const box = [[R.c1x, R.c1y, R.r1], [R.c2x, R.c2y, R.r2]];
+      for (const [bx, by, br] of box) {
+        const d = take();
+        d.shape = 'box'; d.kind = 'box'; d.op = .9;
+        d.x = bx; d.y = by; d.r = br;
+        d.col = '#4FE3C1'; d.w = 1.5;
+        d.spr = null; d.sx = 1; d.branches = null; d.run = 0;
+        d.near = true;
+        D.push(d);
+      }
     }
     /** ★ 分流：每颗按 `assignCanvas()` 决定去近层还是远层（溅落已在上面直接标了近层）。 */
     for (const d of D) if (d.near === undefined) d.near = assignCanvas(d);
@@ -968,6 +1216,22 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
         g.setTransform(dpr, 0, 0, dpr, 0, 0);
         g.globalAlpha = d.op; g.strokeStyle = d.col; g.lineWidth = d.w;
         g.beginPath(); g.ellipse(d.x, d.y, Math.max(.5, d.rx), Math.max(.2, d.ry), 0, 0, 6.2832); g.stroke(); calls.stroke += 1;
+        /**
+         * **细水流**（只有"打在她身上"那种溅落才有 `run > 0`）：溅完顺着她往下淌一点。
+         * 复用同一条绘制项、不额外占池子里的对象 —— 地上那种溅落 `run` 是 0，一笔都不多画。
+         */
+        if (d.run > .5) {
+          g.globalAlpha = d.op * .5;
+          g.beginPath(); g.moveTo(d.x, d.y + d.ry * .5); g.lineTo(d.x, d.y + d.ry * .5 + d.run);
+          g.stroke(); calls.stroke += 1;
+        }
+      } else if (d.shape === 'box') {
+        /** `?diag=1&fxbox=1` 的盒子描边（诊断用；正式运行进不了这份清单）。 */
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        g.globalAlpha = d.op; g.strokeStyle = d.col; g.lineWidth = d.w;
+        g.beginPath(); g.arc(d.x, d.y, Math.max(.5, d.r), 0, 6.2832); g.stroke();
+        g.beginPath(); g.moveTo(d.x - 3, d.y); g.lineTo(d.x + 3, d.y); g.moveTo(d.x, d.y - 3); g.lineTo(d.x, d.y + 3);
+        g.stroke(); calls.stroke += 1;
       } else if (d.shape === 'note') {
         g.setTransform(dpr, 0, 0, dpr, d.x * dpr, d.y * dpr);
         g.globalAlpha = d.op; g.fillStyle = d.col;
@@ -1033,6 +1297,17 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
     S.length = 0;
     meta.fills = 0; meta.strokes = 0; meta.images = 0;
     meta.maxLen = 0; meta.minSpin = 1; meta.maxSpin = 1; meta.splash = 0;
+    /**
+     * ★ **跟她的互动那几个数**（2026-10-11 晚加；自检的 `07d-fx-actor` 读它们）：
+     * `hits` = 这一帧新命中几颗（由 `step()` 累计，**不在这里重置**，抄过来就行）；
+     * `onBody` = 这一帧"打在她身上"的溅落数（地上的那种不算）；`box` = 调试盒子描边数。
+     *
+     * ⚠️ `onBody` **直接数 `bsplash`，不靠绘制项上的标记**：`D` 里的对象是**池子复用**的，
+     * 用一个 `d.onBody` 标记就会串味 —— 这一条是被真事故抓出来的（验收页 `v-actor.html` 的
+     * ④：先溅了一次在她身上，下一帧那颗粒子的绘制项复用了同一个对象，于是"没有她"的那一轮
+     * 也报出 `onBody=1`）。
+     */
+    meta.onBody = bsplash.length; meta.box = 0; meta.hits = frameHits;
     meta.callStroke = calls.stroke; meta.callFill = calls.fill; meta.callImage = calls.image;
     meta.byKind = {};
     for (const d of D) {
@@ -1046,8 +1321,9 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
       if (o.len > meta.maxLen) meta.maxLen = o.len;
       if (d.sx !== undefined) { if (d.sx < meta.minSpin) meta.minSpin = d.sx; if (d.sx > meta.maxSpin) meta.maxSpin = d.sx; }
       if (d.shape === 'splash') meta.splash += 1;
+      if (d.shape === 'box') meta.box += 1;
       meta.byKind[d.kind] = (meta.byKind[d.kind] || 0) + 1;
-      if (d.shape === 'rain' || d.shape === 'snow' || d.shape === 'splash') meta.strokes += 1; else meta.fills += 1;
+      if (d.shape === 'rain' || d.shape === 'snow' || d.shape === 'splash' || d.shape === 'box') meta.strokes += 1; else meta.fills += 1;
       if (d.spr) meta.images += 1;
       S.push(o);
     }
@@ -1112,6 +1388,42 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
      */
     stats: () => ({ n: D.length, list: S.slice(), meta: { ...meta, byKind: { ...meta.byKind } } }),
     xs: xsOf,
+    /**
+     * ★★ **她此刻的变换快照**（2026-10-11 晚加；页面每帧在 `frame()` 之前喂一次）。
+     *
+     * 字段与 pet-core `render()` 写进 `pet.xf` 的那几个一一对应：
+     * `AX/AY` = 她脚下的锚点在舞台上的位置、`ax/ay` = 锚点在画稿单位里的位置（平时 128/256，
+     * 拎起来时是**抓点**）、`kx/ky` = 缩放（`kx` 朝左时是负的）、`rot` = 倾角（度）、
+     * `S` = 体型倍率、`moving` = 她此刻在走/跑（**只有它会让"她带起来的风"生效**）。
+     *
+     * ⚠️ 传 `null`（或从不调）→ **这一整套整体关闭**：粒子行为与上一版逐字相同（自检 07b 就是这样跑的）。
+     * ⚠️ 每次调用只做字段拷贝，**不保存调用方的对象**，所以调用方每帧传一个字面量也不会留下垃圾。
+     */
+    actor(a) {
+      if (!a) { A.on = false; lastAX = null; actorVx = 0; actorDirty = true; return; }
+      A.on = true;
+      A.AX = +a.AX || 0; A.AY = +a.AY || 0;
+      A.ax = a.ax == null ? 128 : +a.ax; A.ay = a.ay == null ? 256 : +a.ay;
+      A.kx = +a.kx || 0; A.ky = +a.ky || 0; A.rot = +a.rot || 0; A.S = +a.S || 0;
+      A.moving = !!a.moving;
+      actorDirty = true;
+    },
+    /** 诊断/自检：她的判定盒子（舞台坐标两个圆）。`on:false` = 现在没有她。 */
+    actorBox() {
+      syncActor();
+      return { on: A.on, c1: { x: R.c1x, y: R.c1y, r: R.r1 }, c2: { x: R.c2x, y: R.c2y, r: R.r2 }, vx: actorVx };
+    },
+    /** 诊断/自检：这个舞台坐标的点算不算"在她身上"（**与粒子完全同一套判定**）。 */
+    actorHit(x, y) {
+      syncActor();
+      return A.on && (inCircle(x, y, R.c1x, R.c1y, R.r1) || inCircle(x, y, R.c2x, R.c2y, R.r2));
+    },
+    /** 诊断/自检：本地（画稿单位）→ 舞台坐标。用来跟 pet-core 的 `toStage` 逐点对账。 */
+    actorStage(lx, ly) { syncActor(); return { x: mapX(lx, ly), y: mapY(lx, ly) }; },
+    /** 诊断/自检：舞台坐标 → 本地（"雪贴在她身上"那套的底座）。 */
+    actorLocal(x, y) { syncActor(); return { x: unmapX(x, y), y: unmapY(x, y) }; },
+    /** `?diag=1&fxbox=1` 时把她那两个判定圆画出来（默认关）。 */
+    debugBox(on) { boxOn = on !== false; },
     /** 这一层（近/远）现在有几颗在画（诊断用：两张画布分流有没有生效，一眼看得出）。 */
     layerCounts() {
       let far = 0, near = 0;
@@ -1119,7 +1431,8 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
       return { far, near, hasNear, total: P.length };
     },
     clear() {
-      P.length = 0; splash.length = 0; D.length = 0; poolN = 0;
+      P.length = 0; splash.length = 0; bsplash.length = 0; D.length = 0; poolN = 0;
+      frameHits = 0;
       const g = ensureCanvas();
       /** ⚠️ **两张画布都要清**：只清远层会让近层停着上一秒的花瓣（切天气时看得最清楚）。 */
       if (g) { try { g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw * dpr, ch * dpr); } catch (e) { /* ignore */ } }

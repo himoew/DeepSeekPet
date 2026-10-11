@@ -1,0 +1,227 @@
+<!doctype html>
+<!--
+  ============================================================================
+  桌宠页面 · 天气与她的互动验收（临时工具，不进桌宠安装包）
+  ============================================================================
+
+  用途：**在真正的 `pet.html` 里**验第 ③ 项 ③a（雨打在她身上溅一圈 / 樱花落叶擦身 / 走动带风）。
+  为什么非用它不可：自检那边是"在 Node 里真跑"，它证明不了**产品页里的她**（真 SVG、真变换、
+  真帧循环）也把"她的盒子"喂进去了 —— 而这一项最容易静默失效的地方正是**喂错/没喂**：
+  粒子照旧在飘，看起来一切正常，只是永远碰不到她。
+
+  所以这一页做的是**从外面看**：
+    ① 真的在驱动产品自己那条路（`petFx().drive()` = `pushActor(true)` + `fx.frame()`）；
+    ② 她的盒子**与 `#pet` 的 svg 变换对得上**（解析 `translate/rotate/scale` 自己算一遍）；
+    ③ 往她头顶正上方放一滴雨 → 命中数 + `onBody` + **近层画布上她身上那块真的有像素**，
+       而**远层那块没有**（证明它被画在她**身前**，不是身后被挡掉）；
+    ④ `fxbox=1` 那套盒子描边画的就是两个判定圆；
+    ⑤ 不喂她（老的 `step()`）→ **一次身上溅落都没有**（这一套整体关闭）。
+
+  ★ 打开：`node dev-weather\serve.cjs` → http://127.0.0.1:8899/v-actor.html
+  ⚠️ 只读页面 + 驱动它自己的帧循环；不改产品代码、不写文件。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>桌宠页面 · 天气与她的互动验收</title>
+<style>
+  body{margin:0;padding:14px 16px;background:#12181f;color:#dfe8f2;
+    font:13px/1.7 "Microsoft YaHei","Noto Sans SC",system-ui,sans-serif}
+  h1{font-size:16px;margin:0 0 6px}
+  h1 small{color:#7f8ea3;font-weight:400;font-size:12px;margin-left:8px}
+  p.note{color:#7f8ea3;margin:4px 0 10px}
+  table{border-collapse:collapse;margin:8px 0;font-variant-numeric:tabular-nums}
+  th,td{border:1px solid #2b3947;padding:4px 9px;text-align:left}
+  th{background:#151d26;color:#9fb4cc}
+  td.ok{color:#7ee0a8;font-weight:600}
+  td.bad{color:#ff8a8a;font-weight:700}
+  #stageBox{position:relative;width:min(900px,96vw);height:400px;overflow:hidden;
+    border:1px solid #2b3947;border-radius:10px;background:#20303c;margin-top:6px}
+  #frame{width:100%;height:100%;border:0;display:block;background:#20303c}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+  button{font:inherit;padding:5px 11px;border-radius:8px;cursor:pointer;
+    border:1px solid #2b3947;background:#1b242e;color:#dfe8f2}
+  button:hover{border-color:#3f6a8c}
+  code{background:#1b242e;border:1px solid #2b3947;border-radius:4px;padding:0 4px}
+  #log{white-space:pre-wrap;color:#9fb4cc;font-size:12px;margin-top:6px}
+</style>
+</head>
+<body>
+<h1>桌宠页面 · 天气与她的互动验收 <small>iframe 里是真正的 <code>/pet</code></small></h1>
+<p class="note">
+  这一页会<b>往她头顶正上方放一滴雨</b>（不是等雨自己飘过来），然后数"她身上那块"在近层画布上
+  有没有像素 —— 顺带把她的判定盒子画出来（<code>fxbox</code>）：盒子有没有对上她，不该靠猜。
+</p>
+<div class="row">
+  <button id="rerun">重新自检</button>
+  <span id="prog" style="color:#7f8ea3"></span>
+</div>
+<div id="out"></div>
+<div id="log"></div>
+<div id="stageBox"><iframe id="frame" src="/pet?diag=1"></iframe></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+window.addEventListener('error', (e) => { $('log').textContent += `\n脚本错误：${e.message} @${e.lineno}`; });
+window.addEventListener('unhandledrejection', (e) => { $('log').textContent += `\n未捕获：${(e.reason && e.reason.message) || e.reason}`; });
+
+const frame = $('frame');
+let doc = null, win = null, far = null, near = null;
+const results = [];
+const ok = (name, pass, detail) => results.push({ name, pass: !!pass, detail: detail == null ? '' : String(detail) });
+
+function collect() {
+  doc = frame.contentDocument; win = frame.contentWindow;
+  if (!doc || !win) return false;
+  far = doc.getElementById('fxCanvas');
+  near = doc.getElementById('fxCanvasNear');
+  return !!(far && near) && typeof win.petFx === 'function';
+}
+
+/** 数一块矩形里（CSS 坐标）的不透明像素。 */
+function inkIn(canvas, x0, y0, x1, y1) {
+  const d = (win.devicePixelRatio || 1);
+  const g = canvas.getContext('2d');
+  const w = Math.max(1, Math.round((x1 - x0) * d)), h = Math.max(1, Math.round((y1 - y0) * d));
+  const data = g.getImageData(Math.round(x0 * d), Math.round(y0 * d), w, h).data;
+  let n = 0;
+  for (let i = 3; i < data.length; i += 4) if (data[i] > 10) n += 1;
+  return n;
+}
+
+/** 解析 `#pet` 的 `translate(AX AY) rotate(R) scale(KX KY) translate(-ax -ay)`（`toStage` 的原始出处）。 */
+function petTransform() {
+  const g = doc.getElementById('pet');
+  const s = g && g.getAttribute('transform');
+  if (!s) return null;
+  const num = (re) => { const m = re.exec(s); return m ? m.map(Number).slice(1) : null; };
+  const t = num(/translate\(([-\d.]+) ([-\d.]+)\)/);
+  const r = num(/rotate\(([-\d.]+)\)/);
+  const k = num(/scale\(([-\d.]+) ([-\d.]+)\)/);
+  const b = num(/translate\(([-\d.]+) ([-\d.]+)\)\s*$/);
+  if (!t || !k) return null;
+  /** ⚠️ 最后那段是 `translate(-ax -ay)` —— 里面是**负的锚点**，取出来要再取负，
+   *  否则盒子会整体偏掉（第一版就踩了：偏 237px，看着像"她根本没动过"）。 */
+  return { AX: t[0], AY: t[1], rot: r ? r[0] : 0, kx: k[0], ky: k[1], ax: b ? -b[0] : 128, ay: b ? -b[1] : 256 };
+}
+/** 用解析出来的变换手算"本地 → 舞台"（与 pet-core 的 `toStage` 同一个公式）。 */
+function toStage(tf, lx, ly) {
+  const r = tf.rot * Math.PI / 180;
+  const dx = (lx - tf.ax) * tf.kx, dy = (ly - tf.ay) * tf.ky;
+  return { x: tf.AX + dx * Math.cos(r) - dy * Math.sin(r), y: tf.AY + dx * Math.sin(r) + dy * Math.cos(r) };
+}
+
+function run() {
+  results.length = 0;
+  const api = win.petFx();
+
+  /* ① 产品自己那条路真的在喂她 */
+  const warm = api.drive('rain', .3);
+  ok('① 驱动真的走了"喂她"那条路（`drive()` = pushActor + fx.frame）',
+    !!warm.actor && warm.actor.on === true,
+    `actor.on=${warm.actor && warm.actor.on} 身体 ${warm.actor ? warm.actor.c1.x.toFixed(0) + ',' + warm.actor.c1.y.toFixed(0) : 'n/a'}`);
+  ok('① 她的盒子尺寸对得上体型（身体 r≈108×0.42=45px、下身 r≈26px，且下身圆心更低）',
+    !!warm.actor && Math.abs(warm.actor.c1.r - 45.4) < 1.5 && Math.abs(warm.actor.c2.r - 26) < 1.5
+      && warm.actor.c2.y > warm.actor.c1.y,
+    warm.actor ? `身体 r=${warm.actor.c1.r.toFixed(1)} / 下身 r=${warm.actor.c2.r.toFixed(1)}` : 'n/a');
+
+  /* ② 盒子与 `#pet` 的 svg 变换对得上（页面外面用同一套公式自己算一遍） */
+  const tf = petTransform();
+  let dmax = -1, at = '';
+  if (tf) {
+    const box = api.actor();
+    const pairs = [[128, 128, box.c1], [128, 232, box.c2]];
+    dmax = 0;
+    for (const [lx, ly, want] of pairs) {
+      const s = toStage(tf, lx, ly);
+      const d = Math.hypot(want.x - s.x, want.y - s.y);
+      if (d > dmax) { dmax = d; at = `本地(${lx},${ly})`; }
+    }
+  }
+  ok('② 她的盒子与 `#pet` 的 svg 变换逐点一致（从页面外面手算，≤1px）',
+    !!tf && dmax >= 0 && dmax < 1,
+    tf ? `最差 ${dmax.toFixed(3)}px @ ${at} · svg translate(${tf.AX.toFixed(0)} ${tf.AY.toFixed(0)}) scale(${tf.kx.toFixed(3)} ${tf.ky.toFixed(3)}) rot=${tf.rot.toFixed(1)}` : '拿不到 #pet 的 transform');
+
+  /* ②b 盒子描边（`fxbox`）：单独验，免得它的像素混进下面"她身上"的计数 */
+  api.box(true);
+  const boxed = api.drive('off', 1 / 30);
+  api.box(false);
+  ok('②b `fxbox` 打开时画的就是那两个判定圆（这一帧 box 形状数 = 2）',
+    boxed.boxDrawn === 2, `box 形状数=${boxed.boxDrawn}`);
+
+  /* ③ 往她头顶正上方放一滴雨：命中 + 身上溅落 + **近层她身上那块真有像素**（远层没有） */
+  api.clear();
+  const box = api.actor();
+  const crown = { x: box.c1.x, y: box.c1.y - box.c1.r };
+  const b0 = { x0: box.c1.x - box.c1.r, y0: box.c1.y - box.c1.r, x1: box.c1.x + box.c1.r, y1: box.c1.y + box.c1.r };
+  const farBefore = inkIn(far, b0.x0, b0.y0, b0.x1, b0.y1), nearBefore = inkIn(near, b0.x0, b0.y0, b0.x1, b0.y1);
+  const placed = api.at('rain', crown.x, crown.y - 70, { vy: 2000, vT: 2000, sway: 0, hz: 0, hzA: 0, phase: 0, wind: 0, slip: 0, layer: 1, layerN: 3 });
+  let hits = 0, onBody = 0, nearMax = 0, farMax = 0;
+  for (let i = 0; i < 14; i += 1) {                     // 每次 1/30 秒，共约 0.47 秒
+    const r = api.drive('off', 1 / 30);                 // 'off' = 不再发射，"只有那一滴"
+    hits = Math.max(hits, r.hits); onBody = Math.max(onBody, r.onBody);
+    nearMax = Math.max(nearMax, inkIn(near, b0.x0, b0.y0, b0.x1, b0.y1));
+    farMax = Math.max(farMax, inkIn(far, b0.x0, b0.y0, b0.x1, b0.y1));
+  }
+  ok('③ 雨**打在她身上**了（命中数 ≥1 且身上溅落 ≥1）',
+    placed && hits >= 1 && onBody >= 1, `hits=${hits} onBody=${onBody} 粒子剩 ${api.counts().total}`);
+  ok('③ 她身上那块在**近层画布**上真的有像素（所以看得见）',
+    nearMax > nearBefore + 5, `近层 ${nearBefore} → ${nearMax}（她身上那块 ${Math.round(b0.x1 - b0.x0)}×${Math.round(b0.y1 - b0.y0)}）`);
+  ok('③ 同一块在**远层画布**上没多出东西（她本来就靠远层挡住身后的雨雪）',
+    farMax <= farBefore + 5, `远层 ${farBefore} → ${farMax}`);
+
+  /* ④ 不喂她（老的那条路）：这一套整体关闭 */
+  api.detach();
+  api.clear();
+  api.at('rain', crown.x, crown.y - 70, { vy: 2000, vT: 2000, sway: 0, hz: 0, hzA: 0, phase: 0, wind: 0, slip: 0, layer: 1, layerN: 3 });
+  let offHits = 0, offBody = 0, offGround = 0;
+  for (let i = 0; i < 14; i += 1) {
+    api.step('off', 1 / 30);
+    const m = api.stats().meta;
+    offHits = Math.max(offHits, m.hits); offBody = Math.max(offBody, m.onBody); offGround = Math.max(offGround, m.splash);
+  }
+  ok('④ 不喂她时**一次命中都没有**、雨照旧溅在地上 —— 互动整体关闭，粒子行为同上一版',
+    offHits === 0 && offBody === 0 && offGround >= 1, `hits=${offHits} onBody=${offBody} 地上 ${offGround}`);
+
+  /* ⑤ 收拾干净 */
+  api.box(false);
+  api.clear();
+  ok('⑤ `clear()` 之后两张画布都空了',
+    inkIn(far, 0, 0, win.innerWidth, win.innerHeight) === 0 && inkIn(near, 0, 0, win.innerWidth, win.innerHeight) === 0,
+    `far=${inkIn(far, 0, 0, win.innerWidth, win.innerHeight)} near=${inkIn(near, 0, 0, win.innerWidth, win.innerHeight)}`);
+
+  globalThis.__vactor = { results, bad: results.filter((r) => !r.pass).length };
+  paint();
+}
+function paint() {
+  let html = '<table><tr><th>检查项</th><th>结论</th><th>实测</th></tr>';
+  for (const r of results) {
+    html += `<tr><td>${r.name}</td><td class="${r.pass ? 'ok' : 'bad'}">${r.pass ? 'PASS' : 'FAIL'}</td><td>${r.detail}</td></tr>`;
+  }
+  html += '</table>';
+  const bad = results.filter((r) => !r.pass).length;
+  html += bad === 0
+    ? '<p class="note" style="color:#7ee0a8"><b>全部通过</b> —— 产品页里她确实"在场"，雨打在她身上、画在她身前。</p>'
+    : `<p class="note" style="color:#ff8a8a"><b>${bad} 项 FAIL</b> —— 看「实测」那一列。</p>`;
+  $('out').innerHTML = html;
+}
+
+$('rerun').addEventListener('click', () => { results.length = 0; try { run(); } catch (e) { $('log').textContent += `\n自检抛错：${e && e.stack}`; } });
+frame.addEventListener('load', () => {
+  $('log').textContent = 'iframe 已加载，等 2 秒让她的帧循环和形象就绪…';
+  $('prog').textContent = '等一下…';
+  setTimeout(() => {
+    try {
+      if (!collect()) { $('out').innerHTML = '<p style="color:#ff8a8a">拿不到 iframe 里的画布（或 petFx 没暴露 —— 检查 iframe 的 URL 有没有 <code>?diag=1</code>）</p>'; return; }
+      run();
+      $('prog').textContent = `自检完成 · ${new Date().toLocaleTimeString()}`;
+      $('log').textContent += '\n数据取自真实 /pet 页面；驱动走的是产品自己的 pushActor() + fx.frame()。';
+    } catch (e) {
+      $('log').textContent += `\n自检抛错：${e && e.stack}`;
+      $('prog').textContent = '自检抛错（见下面日志）';
+    }
+  }, 2000);
+});
+</script>
+</body>
+</html>

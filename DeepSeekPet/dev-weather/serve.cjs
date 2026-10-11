@@ -72,6 +72,7 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`天气验收页：http://127.0.0.1:${PORT}/`);
   console.log(`  · 音效验收：http://127.0.0.1:${PORT}/sound.html`);
   console.log(`  · 桌宠页面自检：http://127.0.0.1:${PORT}/v-pet.html`);
+  console.log(`  · 天气↔她的互动：http://127.0.0.1:${PORT}/v-actor.html`);
   console.log(`  · 读的是产品里的：${path.join(web, 'fx.js')}`);
   console.log('  · Ctrl+C 退出；它不改任何文件。');
 });

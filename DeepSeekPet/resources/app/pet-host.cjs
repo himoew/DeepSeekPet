@@ -334,6 +334,12 @@ function runPetHost({ url, parentPid = 0, tray: withTray = true, openSettings = 
       if (process.env.DSP_DIAG === '1') q.push('diag=1');
       if (process.env.DSP_DEBUG === '1') q.push('debug=1');
       /**
+       * `DSP_FXBOX=1`：把**天气判定盒子**画出来（两个圆，见 `web\fx.js` 的 `debugBox`）。
+       * 给人工核对用 —— "盒子有没有对上她"（她走着、歪着头、被拎起来转的时候）不该靠猜。
+       * 它自己会带 `?diag=1`（不带的话 `petFx` 那个探针不存在）。
+       */
+      if (process.env.DSP_FXBOX === '1') { if (!q.includes('diag=1')) q.push('diag=1'); q.push('fxbox=1'); }
+      /**
        * ★ **她站在哪条线上（窗口内坐标）**（2026-10-10 用户实测报"桌宠掉到屏幕最底下"）。
        *
        * 背景：窗口现在是**铺满整屏**（含任务栏那块，天气粒子要铺满，见 `cover()`），
