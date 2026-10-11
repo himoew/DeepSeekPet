@@ -40,7 +40,20 @@ module.exports = {
        * 形状参数被传成了 `'n'`，路径里全是 `NaN`，`fill()` 什么都不画）。
        * 只数调用次数抓不住它，所以这里按调用的包围盒往像素缓冲里写 alpha（渐变就当实色），
        * 之后 `sprites()` 用 `getImageData` 数不透明像素 —— "贴图里有没有肉"就成了可测的数。
+       *
+       * ★★ **2026-10-11 提速：只给"小画布"真的分配像素缓冲**（判定标准一字未改）。
+       *
+       * 为什么：贴图（花瓣/叶子，边长 5~40px）必须逐像素数 —— `sprites()` 的
+       * "贴图里有没有肉 ≥15%" 全靠它，这是抓"全 NaN 路径"那次事故的精确防线，不能动；
+       * 但**主画布是 1280×760 ≈ 97 万像素**，每帧 `clearRect` 一个个清、贴图一张张逐像素混合，
+       * 四段天气共 9000 帧 —— 实测这一段整个区域 **47.5 秒**，其中光"清主画布"就 ~22 秒。
+       * 而**没有任何一条断言读主画布的像素**（`sprites()` 读的是贴图画布；主画布只被用来判 truthy）。
+       * 所以：**面积超过 `PIXEL_MAX` 的画布只记账、不写像素** ——
+       * 调用次数照样数（`callStroke/callImage` 那些断言照旧），像素断言也照旧（都在小画布上）。
+       * 拿不准"大画布像素"以后要不要断言时**先量一遍**：现在 47.5s，改完见区域末尾的
+       * `[耗时]` 行（目标 <5s）。
        */
+      const PIXEL_MAX = 256 * 256;          // 小贴图（≤40px，1600 像素）远在这条线以内
       let ctxStrokes = 0;
       function FakeCtx(cv) {
         this.cv = cv;
@@ -57,7 +70,13 @@ module.exports = {
             for (let xx = Math.max(0, Math.floor(x)); xx < Math.min(this.cv.width, Math.ceil(x + w)); xx += 1) d[(yy * this.cv.width + xx) * 4 + 3] = 0;
           }
         },
-        _buf() { const c = this.cv; if (!c._buf || c._buf.length !== c.width * c.height * 4) c._buf = new Uint8ClampedArray(c.width * c.height * 4); return c._buf; },
+        /** `null` = 这块画布太大，只记账不写像素（见 `PIXEL_MAX` 上面那段）。 */
+        _buf() {
+          const c = this.cv;
+          if (c.width * c.height > PIXEL_MAX) return null;
+          if (!c._buf || c._buf.length !== c.width * c.height * 4) c._buf = new Uint8ClampedArray(c.width * c.height * 4);
+          return c._buf;
+        },
         _tf(x, y) { const [a, b, c2, d, e, f] = this.t; return [a * x + c2 * y + e, b * x + d * y + f]; },
         setTransform(a, b, c2, d, e, f) { this.t = [a, b, c2, d, e, f]; },
         // ⚠️ 变换统一**左乘**（`t = t · m`）—— 和 `rotate` 用同一套约定，否则 `translate` 之后
@@ -92,8 +111,9 @@ module.exports = {
           return [x0, y0, x1, y1];
         },
         _paint(box, alpha, col) {
-          if (!box) return;
-          const d = this._buf(), W = this.cv.width, H = this.cv.height;
+          const d = this._buf();
+          if (!box || !d) return;                       // 大画布：只记账
+          const W = this.cv.width, H = this.cv.height;
           const [r, g, b] = (col || '#888888').match(/\d+/g)?.map(Number) || [136, 136, 136];
           for (let yy = Math.max(0, Math.floor(box[1])); yy <= Math.min(H - 1, Math.ceil(box[3])); yy += 1) {
             for (let xx = Math.max(0, Math.floor(box[0])); xx <= Math.min(W - 1, Math.ceil(box[2])); xx += 1) {
@@ -111,7 +131,9 @@ module.exports = {
         fillText() {},
         drawImage(img, dx, dy) {
           if (!img || !img._buf) return;
-          const d = this._buf(), W = this.cv.width, H = this.cv.height;
+          const d = this._buf();
+          if (!d) return;                               // 大画布：只记账（贴图本身仍然逐像素烘）
+          const W = this.cv.width, H = this.cv.height;
           for (let y = 0; y < img.height; y += 1) {
             const ty = Math.round(dy + y); if (ty < 0 || ty >= H) continue;
             for (let x = 0; x < img.width; x += 1) {
@@ -128,6 +150,7 @@ module.exports = {
         },
         getImageData(x, y, w, h) {
           const d = this._buf(), out = new Uint8ClampedArray(w * h * 4);
+          if (!d) return { data: out, width: w, height: h };   // 大画布没有像素（没人读它，见 PIXEL_MAX）
           for (let yy = 0; yy < h; yy += 1) for (let xx = 0; xx < w; xx += 1) {
             const si = ((y + yy) * this.cv.width + (x + xx)) * 4, di = (yy * w + xx) * 4;
             if (si >= 0 && si + 3 < d.length) for (let k = 0; k < 4; k += 1) out[di + k] = d[si + k];
