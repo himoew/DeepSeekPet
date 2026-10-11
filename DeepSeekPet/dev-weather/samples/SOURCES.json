@@ -1,0 +1,92 @@
+[
+  {
+    "kind": "rain",
+    "page": "https://opengameart.org/content/rain-loopable",
+    "title": "Rain (loopable) | OpenGameArt.org",
+    "author": "?",
+    "license": "CC0",
+    "file": "https://opengameart.org/sites/default/files/Rain%20OGG.zip",
+    "local": "raw\\rain-1-Rain_OGG.zip",
+    "bytes": 2736596
+  },
+  {
+    "kind": "rain",
+    "page": "https://opengameart.org/content/rain-ambient-not-loopable-2-versions-available",
+    "title": "Rain (Ambient, Not Loopable) 2 Versions Available. | OpenGameArt.org",
+    "author": "?",
+    "license": "CC0",
+    "file": "https://opengameart.org/sites/default/files/Ove%20Melaa%20-%20Rainy%20%28NOT%20loopable%29%20Long%20Version.ogg",
+    "local": "raw\\rain-2-Ove_Melaa_-_Rainy_NOT_loopable_Long_Version.ogg",
+    "bytes": 5470927
+  },
+  {
+    "kind": "rain",
+    "page": "https://opengameart.org/content/rain-gutter-loop",
+    "title": "Rain in the Gutter Loop | OpenGameArt.org",
+    "author": "?",
+    "license": "CC0",
+    "file": "https://opengameart.org/sites/default/files/rain-gutter-loop_0.mp3",
+    "local": "raw\\rain-3-rain-gutter-loop_0.mp3",
+    "bytes": 1482418
+  },
+  {
+    "kind": "snow",
+    "page": "https://opengameart.org/content/winter-wind",
+    "title": "Winter Wind | OpenGameArt.org",
+    "author": "?",
+    "license": "CC0",
+    "file": "https://opengameart.org/sites/default/files/winter-wind_0.mp3",
+    "local": "raw\\snow-1a-winter-wind_0.mp3",
+    "bytes": 1967042
+  },
+  {
+    "kind": "snow",
+    "page": "https://opengameart.org/content/winter-wind",
+    "title": "Winter Wind | OpenGameArt.org",
+    "author": "?",
+    "license": "CC0",
+    "file": "https://opengameart.org/sites/default/files/winter-wind-short.mp3",
+    "local": "raw\\snow-1b-winter-wind-short.mp3",
+    "bytes": 611600
+  },
+  {
+    "kind": "snow",
+    "page": "https://opengameart.org/content/wind-loop",
+    "title": "Wind Loop | OpenGameArt.org",
+    "author": "?",
+    "license": "CC-BY 3.0",
+    "file": "https://opengameart.org/sites/default/files/wind-01_0.ogg",
+    "local": "raw\\snow-2-wind-01_0.ogg",
+    "bytes": 570178
+  },
+  {
+    "kind": "snow",
+    "page": "https://opengameart.org/content/strong-wind-blowing",
+    "title": "Strong Wind Blowing | OpenGameArt.org",
+    "author": "?",
+    "license": "CC-BY 3.0/CC-BY 4.0",
+    "file": "https://opengameart.org/sites/default/files/strong%20wind%20blowing_0.mp3",
+    "local": "raw\\snow-3-strong_wind_blowing_0.mp3",
+    "bytes": 1446731
+  },
+  {
+    "kind": "leaf",
+    "page": "https://opengameart.org/content/wind-and-tree",
+    "title": "Wind and tree | OpenGameArt.org",
+    "author": "?",
+    "license": "CC-BY 3.0",
+    "file": "https://opengameart.org/sites/default/files/Wind%20and%20tree.ogg",
+    "local": "raw\\leaf-3-Wind_and_tree.ogg",
+    "bytes": 976491
+  },
+  {
+    "kind": "blossom",
+    "page": "https://opengameart.org/content/choco-birds-forest",
+    "title": "choco birds forest | OpenGameArt.org",
+    "author": "?",
+    "license": "CC0",
+    "file": "https://opengameart.org/sites/default/files/chocobirds_forest_2023_320_kbps.ogg",
+    "local": "raw\\blossom-2-chocobirds_forest_2023_320_kbps.ogg",
+    "bytes": 2195621
+  }
+]

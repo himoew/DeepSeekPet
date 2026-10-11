@@ -34,6 +34,10 @@ _smoke-*.log
 _commit-msg.txt
 _*.txt
 
+# 2026-10-11 复核模块化自检时留下的证据（原始日志 + 比对脚本/结果，几 MB）
+# 结论都写进了 `自检模块化-复核报告.md`，这里只是现场原始件，不进库
+_复核证据/
+
 # 你的配置（settings.json 里是 API Key）与下载来的运行时压缩包
 DeepSeekPet/config/
 config/
