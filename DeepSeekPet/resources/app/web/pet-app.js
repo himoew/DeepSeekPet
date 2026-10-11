@@ -2445,10 +2445,23 @@ const weather = {
    * 主要手段是 `web\fx.js` 换成了 canvas 渲染。
    */
   density: 1,
+  /**
+   * ★ **下一次"雪积够了抖一下"最早能在什么时候**（③b）。积满 → 她抖一下 → 雪全掉，
+   * 再积满要十来秒，所以这里也留一段冷却，免得她站在雪里一直抖（看着像抽搐）。
+   */
+  shakeAt: 0,
 };
 const SLOW_MS = 26;
 /** 卡顿时减到几成（0.4 = 粒子少一半多，视觉上还看得出是雪/雨，但不糊成一团）。 */
 const SLOW_DENSITY = .4;
+/**
+ * ★ **"雪积够了她抖一下"的两个数**（③b，2026-10-11 晚）：积到几片才抖、两次之间至少隔多久。
+ * 上限是 `fx.js` 的 `CLING_MAX`（6 片），所以 **5 = "快积满的时候"**。
+ * 冷却给 25 秒：积满要十来秒（~0.8 片/秒落到她身上）、抖掉之后要重新积 ——
+ * 正常大概 35~40 秒才抖一次，站在雪里也不会一直抖（那看着像抽搐）。
+ */
+const SNOW_SHAKE_AT = 5;
+const SNOW_SHAKE_COOLDOWN = 25;
 const weatherEl = $('#weatherTint');
 /** 现在这条天气的配置（`off` 时 `kind` 是 undefined）。 */
 const weatherNow = () => WEATHER[weather.mode] || WEATHER.off;
@@ -2474,14 +2487,20 @@ const fx = createFx({ ctl, canvas: $('#fxCanvas'), canvasNear: $('#fxCanvasNear'
  * ⚠️ 复用同一个对象、只改字段（跟粒子池一个道理）；`weather=off` 或她还没画过第一帧时传 `null`
  * —— 粒子那套互动会**整体关闭**，行为与没有这一项时逐字相同。
  */
-const actorSnap = { AX: 0, AY: 0, ax: 128, ay: 256, kx: 0, ky: 0, rot: 0, S: .42, moving: false };
+const actorSnap = { AX: 0, AY: 0, ax: 128, ay: 256, kx: 0, ky: 0, rot: 0, S: .42, moving: false, shake: false };
 /**
  * ⚠️ `force` 只给**验收页**用（`?diag=1` 那套）：临时页面里没有 World，天气是页面外面
  * 直接推给 `fx.frame()` 的，`weatherNow().kind` 一直是 `off` —— 不 force 的话她会永远"不在场"，
  * 互动就验不到。产品自己的调用点（`stepWeather`）**永远不传它**。
  */
 function pushActor(force = false) {
-  const xf = (force || weatherNow().kind) ? ctl.pet.xf : null;
+  /**
+   * ★ **她"在不在场"的判据不只是"天气开着"**（③b 加的）：切到别的天气/关掉之后，
+   * 天上还有粒子在落、她身上还积着雪 —— 那些时候她**仍然要在场**，不然粒子会从她身上穿过去、
+   * 身上的雪会僵在原地。所以：天气开着 · 还有粒子 · 身上还有积雪 —— 三条占一条就喂。
+   */
+  const alive = !!weatherNow().kind || fx.count > 0 || fx.clinging > 0;
+  const xf = (force || alive) ? ctl.pet.xf : null;
   if (!xf) { fx.actor(null); return; }
   actorSnap.AX = xf.AX; actorSnap.AY = xf.AY;
   actorSnap.ax = xf.ax; actorSnap.ay = xf.ay;
@@ -2517,7 +2536,7 @@ function fxDiagLine() {
     const ab = fx.actorBox();
     const boxLine = ab.on
       ? ` 她盒[身体 ${Math.round(ab.c1.x)},${Math.round(ab.c1.y)} r${Math.round(ab.c1.r)}`
-        + ` / 下身 r${Math.round(ab.c2.r)}] 命中${st.meta.hits}`
+        + ` / 下身 r${Math.round(ab.c2.r)}] 命中${st.meta.hits}雪${st.meta.cling}`
       : ' 她盒[无]';
     return ` fx=${fx.count}画${st.n}(远${lc.far}/近${lc.near})`
       + ` 层[px${sz.canvas ? sz.canvas.join('x') : '?'}/${(sz.css || []).join('x')} near:${near}]`
@@ -2544,7 +2563,8 @@ if (POINTER_DIAG) {
       for (let i = 0; i < Math.round(secs * 30); i += 1) { t += dt; fx.frame(dt, t, kind, 1); }
       return fx.count;
     },
-    clear: () => fx.clear(),
+    /** `clear(true)` = 连她身上的积雪一起**硬清**；默认 `clear()` 让积雪走淡出（③b，见 fx.js）。 */
+    clear: (hard) => fx.clear(hard === true),
     counts: () => fx.layerCounts(),
     stats: () => {
       const s = fx.stats();
@@ -2553,7 +2573,7 @@ if (POINTER_DIAG) {
         meta: {
           strokes: s.meta.callStroke, images: s.meta.callImage,
           // ★ 跟她的互动那几个数（自检/验收页读它们，见 fx.js 的 meta 说明）
-          hits: s.meta.hits, onBody: s.meta.onBody, splash: s.meta.splash, box: s.meta.box,
+          hits: s.meta.hits, onBody: s.meta.onBody, splash: s.meta.splash, box: s.meta.box, cling: s.meta.cling,
         },
       };
     },
@@ -2565,15 +2585,21 @@ if (POINTER_DIAG) {
      * （不必等雨自己飘到她身上），走的仍然是产品自己的 `fx.spawn`。
      * `drive(kind, 秒)` = **带她的天气驱动**：每帧走产品自己那条路（`pushActor(true)` + `fx.frame()`），
      * 所以"她的盒子有没有真的喂进粒子系统"是从页面外面验的（`step()` 那套不喂她，是给画布验收用的）。
+     * `clear(hard)` / `act(a)` / `fade(秒)` 是 ③b 加的：`clear(true)` 连积雪一起硬清、
+     * `act('walk')` 让她真走两步（验"她一动雪就掉"）、`fade(2)` 验"切天气缓缓淡出"。
      */
     actor: () => fx.actorBox(),
     box: (on) => fx.debugBox(on !== false),
     /** 让粒子系统**忘掉她**（验收页 ④ 要验"不喂她就一次命中都没有"，产品自己不用）。 */
     detach: () => fx.actor(null),
     at: (kind, x, y, over) => !!fx.spawn(kind, { x, y, ...(over || {}) }),
+    cling: () => fx.clinging,
+    fade: (secs) => { fx.fadeClings(secs); return fx.clinging; },
+    /** 让她做一个动作（验收页用它让她**真的走两步**，见 ③b 的"她一动雪就掉"）。 */
+    act: (a) => ctl.act(a),
     drive(kind, secs = 1) {
       const dt = 1 / 60;
-      let t = ctl.time, hits = 0, onBody = 0, boxDrawn = 0;
+      let t = ctl.time, hits = 0, onBody = 0, boxDrawn = 0, cling = 0;
       for (let i = 0; i < Math.round(secs * 60); i += 1) {
         t += dt;
         pushActor(true);
@@ -2582,9 +2608,13 @@ if (POINTER_DIAG) {
         if (m.hits > hits) hits = m.hits;
         if (m.onBody > onBody) onBody = m.onBody;
         if (m.box > boxDrawn) boxDrawn = m.box;
+        if (m.cling > cling) cling = m.cling;
       }
       const st = fx.stats();
-      return { n: fx.count, hits, onBody, boxDrawn, splash: st.meta.splash, actor: fx.actorBox(), counts: fx.layerCounts() };
+      return {
+        n: fx.count, hits, onBody, boxDrawn, cling, splash: st.meta.splash,
+        sticking: fx.clinging, actor: fx.actorBox(), counts: fx.layerCounts(),
+      };
     },
   });
 }
@@ -2600,6 +2630,17 @@ function setWeather(mode, { fromServer = false } = {}) {
   prefs.weather = mode;
   prefs.weatherKnown = true;
   if (mode === 'off') fx.clear();
+  /**
+   * ★★ **切天气时，她身上的积雪要"缓缓淡掉"**（③b，用户原话："当切换天气时，身上的积雪应该
+   * 缓缓消失，而不是保留或者瞬间消失"）。
+   *
+   * 所以这里**每个**天气切换（包括切到 `off`）都叫一次：把每片积雪的寿命压到"从现在起 2 秒"，
+   * 它们就走 `fx.js` 里那条**已有的淡出包络**慢慢没掉 ——
+   * 不是留着（看着像 bug）、也不是瞬间没（太硬）。
+   * ⚠️ 切到 `off` 时上面那句 `fx.clear()` 也走同一条路（`clear()` 默认不硬清积雪，见 fx.js）。
+   */
+  fx.fadeClings(2);
+  weather.shakeAt = 0;                       // 换了天气就别马上抖（让她先把新天气看一下）
   /**
    * 切完 **0.7~2.4 秒**给她一个反应（用户要"5 秒内"）。**不立刻做**：
    * 立刻做会跟"点按钮"这一下撞在一起，看着像按钮动画而不是她的反应。
@@ -2671,11 +2712,29 @@ function stepWeather(dt) {
   }
   const cfg = weatherNow();
   /**
+   * ★★ **雪积够了她抖一下**（③b，2026-10-11 晚，用户拍板"要，但只在雪积够 + 没在说话/没被拎着时"）。
+   *
+   * 四个条件缺一不可：① 现在是雪；② 她身上快积满（`SNOW_SHAKE_AT`，上限 6 片）；
+   * ③ **她没在说话**（`item`，免得跟气泡/台词撞）而且**没被拎着、不在空中、没在蹲**（`ctl.busy()`）；
+   * ④ 冷却到了。
+   *
+   * 做的时候：`actorSnap.shake = true` 只放**这一帧**（`fx.js` 见到就把身上的积雪
+   * **抖成一粒粒雪掉下去**，不是凭空消失），动作走 `ctl.act('shake')`（★ 收字符串，不是数组）。
+   */
+  if (cfg.kind === 'snow' && fx.clinging >= SNOW_SHAKE_AT
+    && ctl.time >= weather.shakeAt && !item && !ctl.busy()) {
+    weather.shakeAt = ctl.time + SNOW_SHAKE_COOLDOWN;
+    actorSnap.shake = true;
+    ctl.act('shake');
+    try { report(`[天气] 她身上的雪积到 ${fx.clinging} 片 → 抖了一下（雪掉下来了）`); } catch { /* 报告失败就算了 */ }
+  }
+  /**
    * ② 粒子：物理、外观、发射节奏、渲染都在 fx.js 里（`weather.density` 是卡顿减量，见上面 ①）。
    * ★ 先把她这一帧的**变换快照**喂进去（第 ③ 项）：粒子才知道"她身上"是哪一块。
    */
   pushActor();
   fx.frame(dt, ctl.time, cfg.kind || 'off', weather.density);
+  actorSnap.shake = false;                 // 只放这一帧（见上）
   /**
    * ③ **环境音**（`web\ambience.js`）：连续的底噪由 `setWeather` 那边切换，
    * 这里每帧只做"到点该响就响"的点缀（雨滴打在窗户上、一片叶子擦过、鸟叫、雨里的远雷）。
@@ -2691,7 +2750,15 @@ function stepWeather(dt) {
     if (r && !item) {
       try {
         ctl.setExpr(r.expr);
-        if (r.act) ctl.act([r.act]);
+        /**
+         * ★ **这里原来是 `ctl.act([r.act])` —— 数组，动作从来没做过**（2026-10-11 晚发现）。
+         * `pet-core` 的 `act(a)` 是 `switch (a) { case 'shake': … }`（**字符串比较**），
+         * 传数组进去直接落 `default: return false`：**不抛错、不报错，动作就是不做** ——
+         * 于是"下雪了她抖一下 / 下雨了点个头"这半句一直没生效（表情、音效、气泡倒是都在）。
+         * 同一个坑本文件 335 行附近已经记过一次（`ball.jump`），这是第二次。
+         * 现在自检 `02h-crossref` 有一条静态守卫盯着 `.act([` 这种写法。
+         */
+        if (r.act) ctl.act(r.act);
         sfx[r.sfx]?.();
         weatherBubble(r.line);
       } catch (err) { try { report(`[天气] 反应抛错：${err && err.message}`); } catch { /* ignore */ } }

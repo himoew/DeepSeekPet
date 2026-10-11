@@ -56,5 +56,22 @@ module.exports = {
     ok('诊断模块真的装了 error / unhandledrejection 监听',
       /addEventListener\('error'/.test(fs.readFileSync(path.join(app, 'web', 'diag.js'), 'utf8'))
       && /addEventListener\('unhandledrejection'/.test(fs.readFileSync(path.join(app, 'web', 'diag.js'), 'utf8')));
+    /**
+     * ★★ **`ctl.act()` 不许传数组**（2026-10-11 晚加，为一次**静默失效**）。
+     *
+     * `pet-core` 的 `act(a)` 是 `switch (a) { case 'jump': … }` —— **字符串比较**；
+     * 传数组进去直接落 `default: return false`：**不抛错、不报错、动作就是不做**。
+     * 这个坑踩过两次：第一次是 `ball.jump`（`pet-app` 335 行附近留了警告注释），
+     * 第二次是**天气反应**里的 `ctl.act([r.act])` —— 直到第 ③b 项才发现：
+     * "下雪了她抖一下 / 下雨了点个头"这半句**从来没生效**（表情/音效/气泡都在，所以看不出来）。
+     *
+     * 查之前先剥注释（`game.js` 的头部注释里就写着 `ctl.act(['jump'])` 这种例子，
+     * 那是说明文字、不该让守卫变红 —— 这跟上面 `microK` 那条是同一个道理）。
+     */
+    const noComment = (f) => codeOnly(fs.readFileSync(path.join(app, 'web', f), 'utf8'));
+    const callers = ['pet-app.js', 'ball.js', 'game.js'];
+    const passedArray = callers.filter((f) => /\.act\(\s*\[/.test(noComment(f)));
+    ok(`页面侧没有把数组传给 ctl.act()（数组会静默落 default、动作什么都不做）`
+      + `${passedArray.length ? '：' + passedArray.join(' / ') : ''}`, passedArray.length === 0);
   },
 };

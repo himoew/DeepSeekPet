@@ -1,8 +1,9 @@
 /**
- * 自检区域：天气 ↔ 她的互动（第 ③ 项 ③a：雨溅落 / 樱叶擦身 / 走动带风 / 判定盒子）
+ * 自检区域：天气 ↔ 她的互动（③a：雨溅落 / 樱叶擦身 / 走动带风 / 判定盒子；
+ * ③b：雪落在她身上**积住** / 她一动或抖一下就掉 / 切天气**缓缓淡出** / 性能）
  *
- * **为什么这么测**：这一项的实质是**几何**（"她身上"到底是画布上的哪一块）+ **三条分支**
- * （雨打到就死并溅一圈、樱/落叶被推歪且升到近层、她在走时给前方粒子加一条风）。
+ * **为什么这么测**：这一项的实质是**几何**（"她身上"到底是画布上的哪一块）+ **几条分支**
+ * （雨打到就死并溅一圈、樱/落叶被推歪且升到近层、雪积住并跟着她动、她在走时给前方粒子加一条风）。
  * 查字符串一条也证明不了，所以两头都用**真的**：`web\pet-core.js` 在 Node 里真建起来
  * （拿它自己的 `toStage` / `hitPet` 当基准），`web\fx.js` 真跑（真发射、真推物理、真算命中）。
  *
@@ -12,16 +13,18 @@
  *   ② **雨**：打在她身上 → 那一颗死掉 + 在**入射点**（她轮廓上，不是肚子中间）溅一圈；
  *   ③ **樱/落叶**：擦一下**不死**、被推歪、下落变慢、并**升到近层**（否则在她身后看不见）；
  *   ④ **走动带风**：她在走 → 前方粒子被带一下；**身后**的不受影响；
- *   ⑤ **没有她时一次命中都没有**（回归：这一套整体关闭，`07b` 那 12 条一字不变）；
+ *   ⑤ **雪（③b）**：落在她身上**积住**（存本地坐标 → 她动雪跟着动）、**有上限**、
+ *      她一走动/一抖就**掉成一粒粒雪落下去**；**切天气时缓缓淡出**（不是留着、也不是瞬间没）；
+ *   ⑥ **没有她时**：一次命中都没有、也不会"积在空气里"（这一套整体关闭，`07b` 那 12 条一字不变）；
  *      音符（从她嘴边冒出来的）**不算命中她**；
- *   ⑥ **性能**：满屏粒子下"物理"每帧多出来的时间（实测数字直接打进 ok 的名字里）。
+ *   ⑦ **性能**：满屏粒子下"物理"每帧多出来的时间（实测数字直接打进 ok 的名字里）。
  *
  * 不需要真连接、不需要像素（假画布只记账不写像素，见 `07b` 的 `PIXEL_MAX`），跑起来 1 秒级。
  * 单跑：`node test\run-one.cjs 07d-fx-actor.cjs`
  */
 module.exports = {
-  name: '天气与她的互动（盒子/雨溅落/擦身/走动带风/性能）',
-  tags: ['天气', '粒子', '互动', '她'],
+  name: '天气与她的互动（盒子/雨/擦身/积雪/走动带风/性能）',
+  tags: ['天气', '粒子', '互动', '她', '雪'],
   async run(ctx) {
     const { app, ok } = ctx;
     const path = require('node:path');
@@ -181,7 +184,7 @@ module.exports = {
       /* ---------- ③ 雨：打到她 → 死 + 在**入射点**溅一圈 ---------- */
       {
         setXf({});
-        fx.clear(); fx.actor(null); fx.actor(snapOf());
+        fx.clear(true); fx.actor(null); fx.actor(snapOf());
         const c1 = fx.actorBox().c1;
         dropRain(fx);
         const hits = push(fx, 6, 50);
@@ -198,7 +201,7 @@ module.exports = {
       /* ---------- ④ 回归：没有她 → 一次命中都没有，雨照旧溅在地上 ---------- */
       {
         setXf({});
-        fx.clear(); fx.actor(null);
+        fx.clear(true); fx.actor(null);
         dropRain(fx);
         const hits = push(fx, 8, 50);
         const st = fx.stats();
@@ -210,7 +213,7 @@ module.exports = {
       /* ---------- ⑤ 音符不算"碰到她"（它就是从她嘴边生出来的） ---------- */
       {
         setXf({});
-        fx.clear(); fx.actor(null); fx.actor(snapOf());
+        fx.clear(true); fx.actor(null); fx.actor(snapOf());
         const c1 = fx.actorBox().c1;
         fx.spawn('note', { x: c1.x, y: c1.y, vy: -40 });
         const hits = push(fx, 5, 60);
@@ -233,7 +236,7 @@ module.exports = {
           flower: false,
         });
         const runPetal = (withHer) => {
-          fx.clear();
+          fx.clear(true);
           fx.actor(null);                 // 清掉"上一帧她在哪"（否则第一帧速度会飙）
           setXf({});
           if (withHer) fx.actor(snapOf());
@@ -266,12 +269,18 @@ module.exports = {
          * —— 所以两次跑**只差"她在不在走"**这一件事，比较才站得住。
          */
         const runWalk = (walking, offset) => {
-          fx.clear(); fx.actor(null); setXf({});
+          fx.clear(true); fx.actor(null); setXf({});
           let petX = 640;
           const place = () => { setXf({ AX: petX }); fx.actor(snapOf({ moving: walking })); };
           place();
           const c1 = fx.actorBox().c1;
-          spawnSnow(c1.x + offset, c1.y);
+          /**
+           * ⚠️ 放**她身体中心上方 100px**，不是旁边：③b 之后雪也会判定命中，
+           * 放在旁边的话她一走（250px/s）就会撞上它、那颗粒子当场消失（断言会拿到 NaN）。
+           * 上方 100px 既在"她走动带风"的范围内（`herWind` 看 dx，±200 的 dy 都算），
+           * 又永远进不了她身体那个圆（最近也有 100px > r=45）。
+           */
+          spawnSnow(c1.x + offset, c1.y - 100);
           let t = 120;
           for (let i = 0; i < 60; i += 1) {
             if (walking) { petX += 250 / 60; place(); }        // 她 250px/s 往右走
@@ -293,7 +302,7 @@ module.exports = {
       /* ---------- ⑧ 诊断盒子（`?diag=1&fxbox=1`）默认关、开了就画在圆心上 ---------- */
       {
         setXf({}); fx.actor(null); fx.actor(snapOf());
-        fx.clear();
+        fx.clear(true);
         let t = 200;
         fx.frame(1 / 60, t, 'off');
         ok('★天气互动：盒子描边**默认关着**（正式运行里它进不了绘制清单）', fx.stats().meta.box === 0);
@@ -311,10 +320,130 @@ module.exports = {
         fx.debugBox(false);
       }
 
-      /* ---------- ⑨ 性能：满屏粒子下"物理"每帧多花多少 ---------- */
+      /* ---------- ⑨ 雪：落在她身上**积住**（本地坐标 → 她动雪跟着动） ---------- */
+      const dropSnow = (f, x, y) => f.spawn('snow', {
+        x, y, vy: 120, vT: 120, sway: 0, hz: 0, hzA: 0, phase: 0, wind: 0, slip: 0, stall: 0,
+        spin: 0, spinSp: 0, rollSp: 0, layer: 1, layerN: 3, life: 40,
+      });
+      /** 从她头顶正上方 `above` 像素处放一片雪；返回放了几片。 */
+      const snowOnHer = (f, n, xOff = 0, above = 40) => {
+        const c1 = f.actorBox().c1;
+        let k = 0;
+        for (let i = 0; i < n; i += 1) {
+          const off = xOff + (n > 1 ? (i % 11 - 5) * 4 : 0);
+          if (dropSnow(f, c1.x + off, c1.y - c1.r - above)) k += 1;
+        }
+        return k;
+      };
+      {
+        setXf({});
+        fx.clear(true); fx.actor(null); fx.actor(snapOf());
+        const c1 = fx.actorBox().c1;
+        snowOnHer(fx, 1);
+        const hits = push(fx, 26, 700);
+        const st = fx.stats();
+        const q = st.list.find((k) => k.shape === 'cling');
+        ok(`★天气互动（雪）：落在她身上会**积住**（命中 ${hits} 次、身上 ${st.meta.cling} 片、粒子剩 ${fx.count} 颗）`
+          + ` —— 上限 ${fx.clingMax} 片、寿命 6~10 秒`,
+        hits >= 1 && st.meta.cling === 1 && fx.count === 0);
+        ok(`★天气互动（雪）：积的是**头顶那一带**（画在 ${q ? `${q.x},${q.y}` : 'n/a'}，她的头顶在`
+          + ` ${c1.x.toFixed(0)},${(c1.y - c1.r).toFixed(0)}）—— 不然她脚上顶着一片雪，看着像 bug`,
+        !!q && Math.abs(q.x - c1.x) < 12 && Math.abs(q.y - (c1.y - c1.r)) < 12);
+
+        /* 她**慢慢挪** 120px：积雪要跟着她走（歪头/侧倾/走动的一小步都算这一类） */
+        const x0 = q ? q.x : NaN;
+        let petX = c1.x, t = 800;
+        for (let i = 0; i < 60; i += 1) {
+          petX += 2;                                  // 2px/帧 = 120px/s（低于"被抖掉"的 250）
+          setXf({ AX: petX });
+          fx.actor(snapOf());
+          t += 1 / 60;
+          fx.frame(1 / 60, t, 'off');
+        }
+        const q2 = fx.stats().list.find((k) => k.shape === 'cling');
+        ok(`★天气互动（雪）：她动的时候积雪**跟着她动**（她 +120px，雪 ${x0.toFixed(1)} → ${q2 ? q2.x.toFixed(1) : 'n/a'}）`
+          + ' —— 这是"贴在她身上"和"悬在半空"的唯一区别（存的是本地坐标）',
+        !!q2 && Math.abs((q2.x - x0) - 120) < 6 && fx.clinging === 1);
+
+        /* 上限：一口气 30 片 */
+        fx.clear(true);
+        setXf({ AX: 640 });
+        fx.actor(snapOf());
+        snowOnHer(fx, 30, 0, 60);
+        push(fx, 40, 900);
+        ok(`★天气互动（雪）：积的数量**有上限**（30 片打上去 → 身上 ${fx.clinging} 片 = 上限 ${fx.clingMax}）`
+          + ' —— 上限是"看着不脏"的那条线（想一键关掉就把它设 0）',
+        fx.clinging === fx.clingMax && fx.clingMax > 0);
+
+        /* 她一动就抖掉（不是消失，是**变回一颗粒子落下去**） */
+        fx.actor(snapOf({ moving: true }));
+        push(fx, 3, 1000);
+        ok(`★天气互动（雪）：她一**走动**，身上的雪就抖掉，而且变回正在下落的雪粒子`
+          + `（身上 ${fx.clinging} 片、天上 ${fx.count} 颗）`,
+        fx.clinging === 0 && fx.count >= 3);
+
+        /* 她"抖一下"（页面在雪积够时让她做的那个动作）也是同一条路 */
+        fx.clear(true);
+        fx.actor(snapOf());
+        snowOnHer(fx, 4, 0, 40);
+        push(fx, 30, 1100);
+        const before = fx.clinging;
+        fx.actor(snapOf({ shake: true }));
+        push(fx, 2, 1200);
+        fx.actor(snapOf());
+        ok(`★天气互动（雪）：她**抖一下**（页面积够时让她做的动作）→ 雪当场全掉`
+          + `（抖之前 ${before} 片 → 之后 ${fx.clinging} 片、天上 ${fx.count} 颗）`,
+        before >= 1 && fx.clinging === 0 && fx.count >= before);
+      }
+
+      /* ---------- ⑩ 切天气：她身上的积雪**缓缓淡出**（用户点名的那条） ---------- */
+      {
+        setXf({});
+        fx.clear(true); fx.actor(null); fx.actor(snapOf());
+        snowOnHer(fx, 3, 0, 40);
+        push(fx, 30, 1300);
+        const n0 = fx.clinging;
+        fx.fadeClings(2);                            // ★ 页面在 setWeather() 里就是这么调的
+        push(fx, 1, 1400);
+        const n1 = fx.clinging;                      // 第一帧：还在（不是瞬间没）
+        push(fx, 55, 1500);
+        const n2 = fx.clinging;                      // +0.9 秒：还在淡
+        const op = (fx.stats().list.find((k) => k.shape === 'cling') || {}).op;
+        push(fx, 90, 1700);
+        const n3 = fx.clinging;                      // +2.5 秒：没了
+        ok(`★天气互动（雪）：切天气时积雪**缓缓淡出**（${n0} 片 → 1 帧后 ${n1} → 1 秒后 ${n2}（不透明度 ${op}）`
+          + ` → 2.5 秒后 ${n3}）—— 用户要的"不能留着、也不能瞬间没"`,
+        n0 === 3 && n1 === 3 && n2 >= 1 && n3 === 0);
+
+        /* `clear()` 默认也走淡出；`clear(true)` 才是硬清（自检/验收页要"画布立刻空"时用） */
+        fx.clear(true);
+        fx.actor(snapOf());
+        snowOnHer(fx, 2, 0, 40);
+        push(fx, 30, 2000);
+        const soft = (fx.clear(), fx.clinging);
+        fx.clear(true);
+        const hard = fx.clinging;
+        ok(`★天气互动（雪）：\`clear()\`（切天气走的那条路）**不硬清积雪**，\`clear(true)\` 才是硬清`
+          + `（软清后还剩 ${soft} 片、硬清后 ${hard} 片）`,
+        soft >= 1 && hard === 0);
+      }
+
+      /* ---------- ⑪ 回归：没有她时雪不会"积"在空气里 ---------- */
+      {
+        setXf({});
+        fx.clear(true); fx.actor(null);
+        const c1at = ctl.toStage(128, 128);
+        dropSnow(fx, c1at.x, c1at.y - 40);
+        push(fx, 26, 2100);
+        ok(`★天气互动（雪）：**没有她时不会积**（身上 ${fx.clinging} 片，那一片照旧往下落：天上 ${fx.count} 颗）`
+          + ' —— 这一套整体关闭时行为同上一版',
+        fx.clinging === 0 && fx.count >= 1);
+      }
+
+      /* ---------- ⑫ 性能：满屏粒子下"物理"每帧多花多少 ---------- */
       {
         const bench = (withHer) => {
-          fx.clear(); fx.actor(null); setXf({});
+          fx.clear(true); fx.actor(null); setXf({});
           if (withHer) fx.actor(snapOf());
           let t = 300;
           for (let i = 0; i < 120; i += 1) { t += 1 / 60; fx.frame(1 / 60, t, 'rain', 3); }   // 先灌到天花板

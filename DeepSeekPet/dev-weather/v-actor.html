@@ -15,7 +15,10 @@
     ③ 往她头顶正上方放一滴雨 → 命中数 + `onBody` + **近层画布上她身上那块真的有像素**，
        而**远层那块没有**（证明它被画在她**身前**，不是身后被挡掉）；
     ④ `fxbox=1` 那套盒子描边画的就是两个判定圆；
-    ⑤ 不喂她（老的 `step()`）→ **一次身上溅落都没有**（这一套整体关闭）。
+    ⑤ 不喂她（老的 `step()`）→ **一次身上溅落都没有**（这一套整体关闭）；
+    ⑥ **雪（③b）**：落在她身上**积住**（近层画布她身上那块真的多了像素）、
+       让她**真走两步**（`petFx().act('walk')`）→ 积雪**掉光**；
+    ⑦ `clear(true)` 之后两张画布都空。
 
   ★ 打开：`node dev-weather\serve.cjs` → http://127.0.0.1:8899/v-actor.html
   ⚠️ 只读页面 + 驱动它自己的帧循环；不改产品代码、不写文件。
@@ -150,7 +153,7 @@ function run() {
     boxed.boxDrawn === 2, `box 形状数=${boxed.boxDrawn}`);
 
   /* ③ 往她头顶正上方放一滴雨：命中 + 身上溅落 + **近层她身上那块真有像素**（远层没有） */
-  api.clear();
+  api.clear(true);
   const box = api.actor();
   const crown = { x: box.c1.x, y: box.c1.y - box.c1.r };
   const b0 = { x0: box.c1.x - box.c1.r, y0: box.c1.y - box.c1.r, x1: box.c1.x + box.c1.r, y1: box.c1.y + box.c1.r };
@@ -172,7 +175,7 @@ function run() {
 
   /* ④ 不喂她（老的那条路）：这一套整体关闭 */
   api.detach();
-  api.clear();
+  api.clear(true);
   api.at('rain', crown.x, crown.y - 70, { vy: 2000, vT: 2000, sway: 0, hz: 0, hzA: 0, phase: 0, wind: 0, slip: 0, layer: 1, layerN: 3 });
   let offHits = 0, offBody = 0, offGround = 0;
   for (let i = 0; i < 14; i += 1) {
@@ -183,10 +186,40 @@ function run() {
   ok('④ 不喂她时**一次命中都没有**、雨照旧溅在地上 —— 互动整体关闭，粒子行为同上一版',
     offHits === 0 && offBody === 0 && offGround >= 1, `hits=${offHits} onBody=${offBody} 地上 ${offGround}`);
 
-  /* ⑤ 收拾干净 */
+  /* ⑤ 雪（③b）：落在她身上**积住** → 在近层画布她身上那块有像素；**她一走就抖掉** */
+  {
+    api.detach();
+    api.clear(true);
+    api.drive('off', 1 / 30);                            // 一帧：把 actor 挂回去 + 拿到盒子
+    const box2 = api.actor();
+    const snowAt = { x: box2.c1.x, y: box2.c1.y - box2.c1.r - 50 };
+    const r2 = { x0: box2.c1.x - box2.c1.r, y0: box2.c1.y - box2.c1.r, x1: box2.c1.x + box2.c1.r, y1: box2.c1.y + box2.c1.r };
+    const nBefore = inkIn(near, r2.x0, r2.y0, r2.x1, r2.y1);
+    api.at('snow', snowAt.x, snowAt.y, { vy: 140, vT: 140, sway: 0, hz: 0, hzA: 0, phase: 0, wind: 0, slip: 0, stall: 0, spin: 0, spinSp: 0, rollSp: 0, layer: 1, layerN: 3, life: 40 });
+    let clingMax = 0, nearSnow = 0;
+    for (let i = 0; i < 40; i += 1) {
+      const d = api.drive('off', 1 / 30);
+      clingMax = Math.max(clingMax, d.cling);
+      nearSnow = Math.max(nearSnow, inkIn(near, r2.x0, r2.y0, r2.x1, r2.y1));
+    }
+    ok('⑤ 雪落在她身上会**积住**（`cling` ≥1，而且近层画布她身上那块真的多了像素）',
+      clingMax >= 1 && nearSnow > nBefore + 3,
+      `身上 ${api.cling()} 片（峰值 ${clingMax}）· 近层 ${nBefore} → ${nearSnow}`);
+    /** 让她**真的走两步**（`act('walk')` 走的是产品自己的动作系统）→ 积雪应当掉光。 */
+    const walked = api.act('walk');
+    let gone = false, drops = 0;
+    for (let i = 0; i < 60; i += 1) {
+      api.drive('off', 1 / 30);                          // 每帧走产品自己的 pushActor + fx.frame
+      if (api.cling() === 0) { gone = true; drops = api.stats().n; break; }
+    }
+    ok('⑤ 她一**走动**，身上的雪就抖掉（而且掉成一粒粒雪，不是凭空消失）',
+      walked !== false && gone, `act('walk')=${walked} 抖掉后身上 ${api.cling()} 片`);
+  }
+
+  /* ⑥ 收拾干净 */
   api.box(false);
-  api.clear();
-  ok('⑤ `clear()` 之后两张画布都空了',
+  api.clear(true);
+  ok('⑥ `clear(true)` 之后两张画布都空了',
     inkIn(far, 0, 0, win.innerWidth, win.innerHeight) === 0 && inkIn(near, 0, 0, win.innerWidth, win.innerHeight) === 0,
     `far=${inkIn(far, 0, 0, win.innerWidth, win.innerHeight)} near=${inkIn(near, 0, 0, win.innerWidth, win.innerHeight)}`);
 
