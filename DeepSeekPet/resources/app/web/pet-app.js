@@ -14,7 +14,18 @@ import { createGame } from './game.js';
 import { applyTheme, createPet, createSfx, clamp, f, mini, normalizeSkin, skinCss, EXPRESSIONS, HEAD_TOP, ICONS } from './pet-core.js';
 // 天气粒子/音符的物理与外观（2026-10-10 新增，见那个文件开头的说明）
 import { createFx } from './fx.js';
-import { createAmbience } from './ambience.js';
+/**
+ * 天气环境音 —— **真实录音循环版**（2026-10-11 深夜换代）。
+ *
+ * ★ 老的那份是**纯合成**（`ambience.js`，游走/包络/滤波器一堆），用户报的"越到后面越大"
+ *   根因就在里面：慢游走缓冲只填了 2 秒、剩下 28 秒是静音还挂着 loop，再叠一只 0.02Hz 高通
+ *   → 20 秒里电平单调爬 +11.4dB；而且运行时 `driftRms` 算成了 **NaN**，
+ *   Chromium 里给 AudioParam 赋 NaN 直接抛 TypeError —— 桌宠里那套环境音**根本起不来**。
+ *   现在换成"播一段切好的真实循环"（`ambience-loops.js`），这一类坑整类消失。
+ *   素材：`resources\app\web\audio\*.ogg`（出处与授权逐条写在同目录的 `index.json`）。
+ *   ⚠️ 老文件**留着不删**（同一个 git 提交里），要回退就换回这一行的 import。
+ */
+import { createAmbience } from './ambience-loops.js';
 
 const $ = (s) => document.querySelector(s);
 const host = window.petHost || null;
@@ -78,19 +89,17 @@ const sfx = createSfx();
  */
 const ambience = createAmbience({ report: (m) => report(m) });
 /**
- * ★★ **天气音效总开关（代码里的，不是给用户的）** —— 2026-10-11 晚上临时关掉。
+ * ★★ **天气音效总开关（代码里的，不是给用户的）** —— 2026-10-11 深夜**打开**。
  *
- * 用户实测："两种版本的音效都糊成一团，主次不分"（雨声应该最突出、其他是次要的环境声）。
- * 这一版**不接线**：不建 AudioContext、不排雨滴/鸟叫/远雷，桌宠里**天气只有画面、完全没声**。
+ * 换代之后没有"糊成一团 / 越到后面越大"的问题了：每一档就是**一段真实录音的无缝循环**
+ * （雨=连雨、雪=风、落叶=风穿过树叶、樱花=林间鸟鸣），电平四档对齐到同一个 -26dBFS，
+ * 接缝在数学上连续（实测跳变只有内部自然抖动的 0.2%~7%）。**没有合成、没有包络、没有游走。**
  *
- * ⚠️ **这是临时状态，不是设计**。保留的东西：
- *   · `web\ambience.js` 整个文件原样保留（下一轮改它就行）；
- *   · 右键菜单那格「天气声」（`ACTIONS.weatherSound`）和 `settings.json` 的 `weatherSound` 开关
- *     **照旧存在、照旧能存**，只是这轮它开不开都不会响。
- * 等"一个天气一个主角音"的方案定下来，把 `false` 改回 `true` 就接上了 ——
- * 下面三处（`unlock()` / `setEnabled()` / `follow()`）都已经按这个开关守好了。
+ * 保留的开关（照旧有效）：
+ *   · 右键菜单那格「天气声」（`ACTIONS.weatherSound`）+ `settings.json` 的 `weatherSound`；
+ *   · 下面的 `false` 一改就整块静音（`unlock()` / `setEnabled()` / `follow()` 三处都守着）。
  */
-const WEATHER_AUDIO_ON = false;
+const WEATHER_AUDIO_ON = true;
 /**
  * 球拍模式（见下面 `stage` 的 pointerdown）：`flags.gameMode` 由 `syncGameFlag()` 回填，
  * `swat` 是鼠标最近一次的位置与时间（用来算"甩动速度"）。

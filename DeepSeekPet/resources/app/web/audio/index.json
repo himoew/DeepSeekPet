@@ -36,6 +36,18 @@
       "rms": -26,
       "peak": -4.7,
       "seam": 0.049
+    },
+    {
+      "kind": "leaf",
+      "file": "leaf.ogg",
+      "gainDb": 0,
+      "label": "落叶④（B站 BV1j341117jz「白噪音 风声·树叶摇曳」66 分钟 · 自动挑最平稳又最不哨音的一段）",
+      "license": "B站视频 · 自用",
+      "sourceId": "leaf-bili",
+      "secs": 20,
+      "rms": -26,
+      "peak": -5.6,
+      "seam": 0.222
     }
   ]
 }

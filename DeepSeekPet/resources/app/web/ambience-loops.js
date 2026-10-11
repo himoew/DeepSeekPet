@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 天气的环境音 · **真实录音循环版**（2026-10-11 深夜换代）
  *
  * ★ **这一版不再合成任何声音**：每一档就是一段**真实录音切出来的无缝循环**
@@ -32,6 +32,13 @@ const MASTER_GAIN = 1;
 const FADE_IN = .8, FADE_OUT = .6;
 /** 清单：`{ items: [{ kind, file, gainDb, label, license }] }`（`apply-choice.mjs` 生成）。 */
 const MANIFEST = 'audio/index.json';
+/**
+ * ⚠️ **必须按"模块自己的 URL"解析**（`new URL(…, import.meta.url)`），不能写相对路径：
+ *   `fetch('audio/x.ogg')` 是相对**文档**地址解析的，桌宠页面在 `/pet`，于是会去要
+ *   `/audio/x.ogg` —— 而 `server.cjs` 只发 `/web/*`（`web\` 是唯一允许读的目录），必然 404。
+ *   按模块 URL 解析就是 `/web/audio/x.ogg`，正好落在白名单里。
+ */
+const asset = (p) => new URL(p, import.meta.url).href;
 
 export function createAmbience({ report } = {}) {
   let ctx = null, master = null;
@@ -71,7 +78,7 @@ export function createAmbience({ report } = {}) {
     if (tracks) return tracks;
     if (!loading) {
       loading = (async () => {
-        const res = await fetch(MANIFEST, { cache: 'no-store' });
+        const res = await fetch(asset(MANIFEST), { cache: 'no-store' });
         if (!res.ok) throw new Error('清单读不到：' + res.status);
         const j = await res.json();
         tracks = new Map((j.items || []).map((i) => [i.kind, i]));
@@ -91,7 +98,7 @@ export function createAmbience({ report } = {}) {
     const t = await manifest();
     const item = t && t.get(kind);
     if (!item) throw new Error('没有这一档：' + kind);
-    const res = await fetch('audio/' + item.file, { cache: 'no-store' });
+    const res = await fetch(asset('audio/' + item.file), { cache: 'no-store' });
     if (!res.ok) throw new Error('音频读不到：' + item.file + ' ' + res.status);
     const buf = await ctx.decodeAudioData(await res.arrayBuffer());
     cache.set(kind, { buf, gainDb: item.gainDb || 0, item });

@@ -2576,7 +2576,7 @@ function stubModel() {
         createGain() { rec.gains += 1; return node({ gain: param(1) }); }
         createBiquadFilter() { rec.filters += 1; return node({ frequency: param(1000), Q: param(1), type: 'lowpass' }); }
         createOscillator() { const o = node({ frequency: param(440), type: 'sine' }); rec.created.push(o); return o; }
-        createBufferSource() { rec.sources += 1; return node({ buffer: null, loop: false }); }
+        createBufferSource() { rec.sources += 1; return node({ buffer: null, loop: false, playbackRate: param(1) }); }
         createBuffer(ch, len) { return { getChannelData: () => new Float32Array(len) }; }
         createDynamicsCompressor() { return node({}); }
       }

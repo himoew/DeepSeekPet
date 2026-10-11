@@ -1,0 +1,14 @@
+{
+  "merge": true,
+  "targetDb": -26,
+  "fade": 2.5,
+  "out": "dev-weather/samples/loops",
+  "items": [
+    {
+      "id": "leaf-bili", "kind": "leaf",
+      "label": "落叶④（B站 BV1j341117jz「白噪音 风声·树叶摇曳」66 分钟 · 自动挑最平稳又最不哨音的一段）",
+      "src": "dev-weather/samples/raw/leafH-bili.m4a",
+      "license": "B站视频 · 自用", "len": 20
+    }
+  ]
+}
