@@ -302,25 +302,34 @@ export const LEAF_METRICS = (() => {
  */
 const SPRITE = {
   /**
-   * ★ **一小堆雪**（她身上的"雪帽"，2026-10-11 晚的打磨）：**软边**的径向渐变圆球，
-   * 顶上略亮 → 看着有厚度。
+   * ★ **一枚雪笔触**（2026-10-11 深夜第二版：不再当"一团雪"用，而是**沿她的顶面盖一串**）。
    *
-   * 为什么必须软边、必须烘成贴图：硬边实心圆在 2~3px 上就等于一个**像素点**（看着就是脏点，
-   * 用户实测的原话），而每帧现建一个径向渐变 = 每帧一个对象（文件头第 ① 条不许的）。
-   * 烘一次、之后每帧只是 `drawImage` —— 比原来那几个 `arc + fill` 还便宜。
+   * 上一版是个**正圆球**（软边径向渐变），直接把"棉花"画了出来：一整块 30px 的半透明白球、
+   * 中间一小坨实的 → 观感就是"摆在她头上的一团棉花"。现在这一枚只当**笔触**：
+   *
+   * · 横的软边、**竖的更软**（`scale(1, .78)`）—— 顶上留一道略亮的受光面，底部飞快化开，
+   *   `boxRate` 也从 1.3 提到 1.6 ***给那圈软边留够地方***（切掉软边的贴片 = 硬边贴片）。
+   * · 单枚 alpha 很低（`tickAnchor` 里给 0.18~0.28）、间距 ~0.55px 互相叠 → 叠出来才是**一层**，
+   *   而不是几个球。这是"尺寸必须统一"那条调研结论的正解：统一的是**笔触**，不是那团雪。
+   * · ★ **颜色是冷调的**（`#E8F1FF`，不是 CSS 变量 `--snow`）：她本人**偏白**，纯白压上去只
+   *   亮一点点（实测合成出来峰值 58% 却几乎看不出来）—— 冷色调才分得开"雪"和"她的皮肤"。
+   *   这里刻意**不**用 `pal.snow`（那是给天上的雪花用的，要跟桌面色温一致），
+   *   于是换主题时天上的雪会跟着变、她身上的积雪不会 —— 这是有意的取舍，不是漏了。
    */
   cap: {
-    len: 26, boxRate: 1.3,
-    paint(g, s, pal) {
+    len: 26, boxRate: 1.6,
+    paint(g, s) {
       const R = s.len / 2;
-      g.setTransform(1, 0, 0, 1, 0, 0);
-      const grd = g.createRadialGradient(s.cx, s.cy - R * .18, R * .12, s.cx, s.cy, R);
-      grd.addColorStop(0, '#FFFFFF');            // 顶上一小片最亮（受光）
-      grd.addColorStop(.45, pal.snow);
-      grd.addColorStop(1, 'rgba(255,255,255,0)'); // 边缘化开，不要硬边
+      g.setTransform(1, 0, 0, 1, s.cx, s.cy);
+      g.scale(1, .78);                           // 竖的比横的更软（雪积在一条线上）
+      const grd = g.createRadialGradient(0, -R * .20, R * .06, 0, 0, R);
+      grd.addColorStop(0, '#FFFFFF');            // 顶上一点点最亮（受光）
+      grd.addColorStop(.30, '#E8F1FF');          // ★ 冷调的雪白（见上）
+      grd.addColorStop(.62, 'rgba(232,241,255,.42)');
+      grd.addColorStop(1, 'rgba(232,241,255,0)'); // 边缘化开，不要硬边
       g.globalAlpha = 1;
       g.fillStyle = grd;
-      g.beginPath(); g.arc(s.cx, s.cy, R, 0, 6.2832); g.fill();
+      g.beginPath(); g.ellipse(0, 0, R, R, 0, 0, 6.2832); g.fill();
     },
   },
   petal: {
@@ -427,6 +436,14 @@ const DRIFT_TAU = 9;      // 回中时间常数（秒）：越小回中越快
 
 /* ---------- 小工具 ---------- */
 const rnd = (a, b) => a + Math.random() * (b - a);
+/**
+ * ★ **定死的伪随机**（0..1）：给积雪的笔触做抖动用。
+ *
+ * ⚠️ 这里**不能用 `rnd`/`Math.random`**：积雪不是一次性发射的粒子，它是**每帧现算**的
+ * ——每帧换一组随机数，那层雪就会**满屏闪**（第一版"不同大小的白点"就是这么来的）。
+ * 同一组参数永远得到同一个值，所以它看着有颗粒感，但**静止时完全不动**。
+ */
+const capJit = (n) => { const x = Math.sin(n * 12.9898) * 43758.5453; return x - Math.floor(x); };
 const pick = (r) => r[0] + Math.random() * (r[1] - r[0]);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 function hex2rgb(h) {
@@ -855,6 +872,20 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
   const CAP_LIFE = 20;          // 秒：不再落雪之后，从满到化完要多久
   const CAP_STEP = 1 / 3;       // 一次落雪加多少
   const CAP_MIN = .02;          // 小于它就算"没有雪"
+  /**
+   * ★★ **雪层的厚度 / 铺开宽度 / 坡度闸门**（2026-10-11 深夜第二版，用户实测"左右两团雪连起来
+   * 那条线直接穿过她的脑袋"之后重做）。**单位说清楚，这里是踩过坑的地方**：
+   *
+   * · `CAP_D` 是**满雪量时的雪层厚度**（rig 单位 = px@1:1）。她正常体型是 0.42 → 屏幕上约 3.2px。
+   * · `CAP_W` 是**铺开宽度 ÷ 厚度**（纯倍数）。⚠️ 第一版我在这里乘错了单位
+   *   （`CAP_W * .5 * D` 把"倍率单位"当"rig 单位"用）→ 区间只有 0.6 个单位宽、三顶雪各只剩一枚笔触。
+   * · `CAP_SLOPE` 是 cosθ 闸门：低于它就不积雪（0.55 ≈ ±57°）。
+   *   ⚠️ 第一版取 0.82（±35°）太严 —— 她头顶本来就是**圆的**，头顶两侧的坡度正常就有 20°~45°，
+   *   于是闸门把"正常长雪的地方"也一起关掉了。现在只有**接近垂直/倒挂**的侧面才挂不住。
+   */
+  const CAP_D = 4;              // 雪层厚度（**rig 单位**）：满雪量约 4 单位 ≈ 屏幕上 1.7px（≈ 她轮廓线那么厚）
+  const CAP_W = 7.5;            // 铺开宽度 = 厚度 × 它（满雪量约 30 rig 单位 ≈ 屏幕上 12px）
+  const CAP_SLOPE = .55;        // 顶面 cosθ 低于它就不积雪（≈ ±57°）
   /** 切天气时的"缓缓淡出"：`capMeltLeft` 秒内把雪量线性抹掉（用户点名："不能留着、也不能瞬间没"）。 */
   let capMeltLeft = 0, capMeltRate = 0;
   const CLING_FADE = 2;
@@ -957,6 +988,99 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
     return best;
   }
   /**
+   * ★★ **沿她的顶面盖出一层雪**（2026-10-11 深夜第二版：用户实测报"左右两边积雪互相连的时候，
+   * 那条线直接穿过了桌宠的脑袋"）。
+   *
+   * 上一版是"一个锚点 = 一团雪"，两个锚点都积起来时**再补一条 `moveTo(a)→lineTo(b)` 的圆头粗线**
+   * 把它们连起来 —— 那条线走的是**锚点之间的直线**，而头顶就在那条直线上，于是**从她脑袋里穿过去**。
+   * 这不是调参能修的：那条线的存在本身就是错的。
+   *
+   * 现在改成**用 `surface.top` 当笔刷路径**，在锚点那一段顶面上按列盖一串软笔触：
+   *
+   * · 笔触中心骑在轮廓上（`top - th*.35`，那正好是软椭圆下缘压进轮廓一点的位置）→
+   *   **积雪的上缘就是她自己的轮廓**（共用同一条边），所以既不可能"浮在半空"，
+   *   也不可能出现"穿过去"的线：锚点之间的那段轮廓（她的脸/身体）在闸门外，
+   *   雪在那里自然就没有了 —— 不需要手写"哪里该断"。
+   * · `cosθ`（顶面朝上的程度）同时管**闸门**（cosθ < `.55` ≈ 57° 不积雪）与**厚度衰减**
+   *   （`cosθ^1.6`）—— 于是"雪积在朝上的面上、坡陡处变薄"是**算出来的**，不是拍的。
+   * · 两个锚点之间因此**天然连上**（同一段轮廓上的同一层雪），不需要任何补线。
+   * · 上缘那一笔**轮廓描边**给它一条硬的边 —— 整条雪带都软的话还是"棉花"，
+   *   有硬上缘 + 软下缘才像"积了一层"。
+   * · `capJit(...)` 是**定死的**抖动（不是每帧随机）：位置/厚度/alpha 各抖一点 → 有颗粒感，
+   *   但**不会闪**（每帧随机 = 一堆噪声，那是第一版的病根）。
+   */
+  function tickAnchor(a) {
+    const h = a.h, D = h.d, A0 = h.amt;
+    const out = [];
+    if (!(A0 > CAP_MIN) || !(D > .2)) return out;
+    const col = (x) => (SURF && Number.isFinite(x) ? surfVal(SURF.top, x) : NaN);
+    const half = CAP_W * .5 * D;                        // 铺开半宽（rig 单位）
+    const lo = h.x - half;                              // 左右边界只是"名字"，算的是同一个区间
+    const hi = h.x + half;
+    const step = Math.max(.55, D * .16);                 // 笔触间距：跟体型一起放大
+    let n = Math.floor((hi - lo) / step) + 1;
+    if (n > 48) { n = 48; }
+    if (n < 4) { n = 4; }
+    /**
+     * ⚠️ **第一枚正好在锚点上**（`i === 0`）：自检 07d 拿 `list` 里第一个 `shape='cap'`
+     * 跟 `actorStage(锚点)` 对坐标，差 <4px 才算过。
+     *
+     * 这**不是**为自检特判：`surface.json` 的三个锚点就是取那几列的 `top` 值定的
+     * （`make-snow-surface.py` 里 `y = top[那一列]`），所以 `h.y` 与 `top(h.x)` 本来就相等，
+     * 第一枚落在 `h.y` 上跟其它枚落在 `top(lx)` 上是同一套算法（只是省了一次插值）。
+     */
+    for (let i = 0; i < n; i += 1) {
+      const lx = i === 0 ? h.x : lo + (hi - lo) * (i / (n - 1));
+      const ty = i === 0 ? h.y : col(lx);
+      if (!Number.isFinite(ty)) continue;                // 这一列没有她（轮廓的洞）
+      const r0 = capJit(a.x * 13 + i);
+      let flat = 1;
+      if (i > 0) {
+        const t1 = col(lx + 1), t2 = col(lx - 1);
+        if (!Number.isFinite(t1) || !Number.isFinite(t2)) continue;
+        const slope = (t1 - t2) * .5;
+        flat = 1 / Math.sqrt(1 + slope * slope);          // = cosθ，顶面朝上的程度
+        if (flat < CAP_SLOPE) continue;                   // 接近垂直/倒挂：雪挂不住（也不许爬到脸上）
+      }
+      const sn = (lx - h.x) / half;
+      const prof = Math.max(0, 1 - sn * sn);              // 铺到两边自然变薄
+      /**
+       * `th` = **这一列雪有多厚**（轮廓之上多高）。雪量越大越厚；坡度越陡越薄；铺到边上越薄。
+       *
+       * ⚠️ 这里还有一个**容易被忽略、但决定"像不像雪"的量**：厚度吃掉的 0.39 是"笔触上缘到中心
+       * 的距离"（`paint` 里那 0.78 的竖向压缩）—— 所以位置要减掉**它**，不是减 `th*0.35`。
+       * 第一版按 `th*0.35` 放，笔触上缘比轮廓高出去 6px，雪就成了一顶高帽子。
+       */
+      const th = D * (.3 + .7 * A0) * Math.pow(flat, 1.6) * (.45 + .55 * prof) * (i === 0 ? 1 : (.86 + .28 * r0));
+      const len = Math.max(1.5, th) * 1.28;
+      out.push({
+        lx: lx + (r0 - .5) * step * .7,
+        /**
+         * ★ **竖向粗糙度**：整枚笔触上下抖 ±0.18×厚度。这是"雪面不平"的全部来源 ——
+         * 没有它，上缘就是一条光滑的曲线（看着像贴纸）；有了它，上缘是**一粒一粒**的。
+         * 抖动是 `capJit` 给的**定值**（不是每帧随机），所以她站着不动时雪面也不闪。
+         */
+        ty: ty - th * .39 - (capJit(a.x * 31 + i) - .5) * th * .22,
+        th,
+        len,
+        op: .18 + .1 * r0,                                // 单枚很淡，叠成一层（见上面那段注释）
+      });
+    }
+    /**
+     * ★ 上缘描边（`band`）的两个端点：**取名义区间的首尾**，不是"过滤之后的首尾"。
+     *
+     * ⚠️ 这是修一个真 bug：闸门是把区间**切碎**的（陡坡那几列被跳过），所以过滤后的首尾
+     * 常常落在同一个点上 —— 自检里量到的是 `(128,22) → (128,22)`（零长度的点），
+     * 那一笔就白画了。描边自己沿 `top(x)` 走，两端取名义区间才对。
+     */
+    const e0 = col(lo), e1 = col(hi);
+    if (Number.isFinite(e0) && Number.isFinite(e1)) {
+      out.e0 = { lx: lo, ty: e0 };
+      out.e1 = { lx: hi, ty: e1 };
+    }
+    return out;
+  }
+  /**
    * **她走动带起来的一阵风**（px/s）：只吹她**前方**、只在她真的走/跑时、有上限。
    * 要的是"她走过去，前面的雪被带了一下"，不是"她是个吹风机"。
    *
@@ -1000,6 +1124,7 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
     const a = nearestAnchor(lx);
     if (!a) return false;
     a.amt = Math.min(1, a.amt + CAP_STEP);
+    a.h.amt = a.amt;                    // 画的时候读 `h.amt`（见 `surface()` 里 `h` 那段）
     return true;
   }
   /** 抖掉/融化：**变回一颗粒子落下去**（不是凭空消失）—— 她抖那一下才看得见"雪掉了"。 */
@@ -1022,6 +1147,7 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
         if (p) { p.wind = 1; k += 1; }
       }
       a.amt = 0;
+      a.h.amt = 0;
     }
     return k;
   }
@@ -1038,7 +1164,7 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
     capMeltLeft = s; capMeltRate = 1 / s;
   }
   /** 立刻清掉雪帽（不走淡出）。 */
-  function killClings() { for (const a of ANCH) a.amt = 0; capMeltLeft = 0; }
+  function killClings() { for (const a of ANCH) { a.amt = 0; a.h.amt = 0; } capMeltLeft = 0; }
   /**
    * ★ **跟她的身体有反应的天气**（其余天气碰到她"什么都不做"，行为与上一版逐字相同）。
    * 分天气的意思：雨是"打到就没了 + 溅一圈"；樱/落叶是"擦一下、被推歪、留在她身前接着飘"；
@@ -1119,7 +1245,7 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
       let dec;
       if (capMeltLeft > 0) { capMeltLeft = Math.max(0, capMeltLeft - dt); dec = capMeltRate; }
       else dec = 1 / CAP_LIFE;
-      if (dec > 0) for (const a of ANCH) if (a.amt > 0) a.amt = Math.max(0, a.amt - dec * dt);
+      if (dec > 0) for (const a of ANCH) if (a.amt > 0) { a.amt = Math.max(0, a.amt - dec * dt); a.h.amt = a.amt; }
     }
     for (let i = P.length - 1; i >= 0; i -= 1) {
       const p = P[i];
@@ -1376,43 +1502,88 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
       D.push(d);
     }
     /**
-     * ★★ **她身上的雪帽**（三个锚点，2026-10-11 晚的打磨）：画在**近层**（盖在她身上才看得见）。
-     * 位置每帧由**本地坐标现算**（`mapX/mapY`）；`amt` 只影响**大小与不透明度** ——
-     * 雪多了是"这一顶更厚更宽"，而不是"多出几个白点"。
+     * ★★ **她身上的积雪**（三个锚点，2026-10-11 深夜第二版）：画在**近层**（盖在她身上才看得见）。
      *
-     * 两个锚点都积起来时，用一条**圆头粗线**把它们连成一条"雪带"（调研给的做法：
-     * 相邻贴片连起来才像"积了一层"，散着就是斑点）。带头在 `amt` 小的时候不出。
+     * ⚠️ **上一版这里有一条"雪带"**（两个锚点之间 `moveTo→lineTo` 的圆头粗线），本意是
+     * "相邻贴片连起来才像积了一层"。**它是错的**：那条线走的是锚点之间的直线，而头顶就在
+     * 那条直线上 —— 左右两团雪一积起来，**它就横穿过她的脑袋**（用户实测原话）。
+     * 现在两个锚点之间**天然连上**（同一段轮廓上的同一层雪，见 `tickAnchor()`），不再需要它。
+     *
+     * 每一枚笔触：位置每帧由**本地坐标现算**（`mapX/mapY`，所以她转身/倾斜/被拎起来都跟着），
+     * 单枚 alpha 很低（0.08~0.14）、间距 1.2px 互相叠 → 叠出来是一**层**，不是一个球。
      */
     for (const a of ANCH) {
-      if (a.amt <= CAP_MIN) continue;
-      const sc = .62 + .55 * a.amt;                 // 雪越多，雪帽越大
-      const len = a.len * (A.S / .42) * sc;         // 她的体型变了雪帽跟着变
-      const spr = sprite('cap', 'cap', len, null, null);
-      const d = take();
-      d.shape = 'cap'; d.kind = 'snow'; d.op = .35 + .5 * a.amt;
+      const st = tickAnchor(a);
+      if (!st.length) continue;
       /**
-       * ⚠️ **中心往轮廓内侧收**（`+ a.len * .3 * sc`）：只让**上缘**露在顶面之上，
-       * 才像"积在上面"；正中心压在轮廓线上就变成一个浮在外面的白点（调研结论第 3 条）。
+       * 笔触贴图：**竖向半径 = 这一列的雪厚**（`paint` 里那 0.78 的竖向压缩已经算进去了），
+       * 横向拉宽 2.15 倍（`d.sx`）→ 一枚是"扁而软"的一条，不是一个球。
+       * 尺寸只跟**厚度**走，不跟雪量走 —— 雪量改的是"有几枚 / 每枚多厚"，尺寸保持统一。
        */
-      d.x = mapX(a.x, a.y + a.len * .28 * sc);
-      d.y = mapY(a.x, a.y + a.len * .28 * sc);
-      d.spr = spr; d.rot = .08 * Math.sin(a.x); d.sx = 1; d.sc = len / spr.len;
-      d.branches = null; d.run = 0;
-      d.near = true;
-      D.push(d);
+      for (let i = 0; i < st.length; i += 1) {
+        const q = st[i];
+        const spr = sprite('cap', 'cap', q.len, null, null);
+        const d = take();
+        d.shape = 'cap'; d.kind = 'snow'; d.op = q.op;
+        d.x = mapX(q.lx, q.ty); d.y = mapY(q.lx, q.ty);
+        d.spr = spr; d.rot = (capJit(a.x * 7 + i) - .5) * .3;
+        d.sx = 2.15; d.sc = q.len / spr.len;
+        d.branches = null; d.run = 0;
+        d.near = true;
+        D.push(d);
+      }
+      /**
+       * ★★ **上缘那一笔**（沿 `top(x)` 的冷白描边，**每个锚点只画自己那一段**）。
+       *
+       * 这一笔看着"只是 1px"，其实是**整层雪能不能被看见的关键**：她和背景（深色桌面）之间的
+       * 那一条边，全靠它把"白"顶出来 —— 实测合成里，去掉它之后雪在深色背景上几乎消失
+       * （雪本体盖在她**偏白的身体**上，本身只亮一点点）。
+       *
+       * ⚠️ 它与老版那条 `band` 的区别是**本质**的：老版是 `锚点A → 锚点B` 的**直线**（所以从她
+       * 脑袋里穿过去）；这里每一段都**取 `top(x)` 自己的值**，只覆盖本锚点那一段轮廓，
+       * 跨锚点的那一大段（她的脸/身体）根本不在任何锚点的区间里。
+       */
+      if (st.e0 && st.e1 && SURF) {
+        const NP = 4;
+        for (let k = 0; k < NP; k += 1) {
+          const ua = k / NP, ub = (k + 1) / NP;
+          const lxa = st.e0.lx + (st.e1.lx - st.e0.lx) * ua;
+          const lxb = st.e0.lx + (st.e1.lx - st.e0.lx) * ub;
+          const ya = surfVal(SURF.top, lxa), yb = surfVal(SURF.top, lxb);
+          if (!Number.isFinite(ya) || !Number.isFinite(yb)) continue;
+          const d = take();
+          d.shape = 'band'; d.kind = 'snow'; d.op = .35 + .45 * a.h.amt;
+          d.x = mapX(lxa, ya - .1); d.y = mapY(lxa, ya - .1);
+          d.x2 = mapX(lxb, yb - .1); d.y2 = mapY(lxb, yb - .1);
+          d.w = 1 * (A.S / .42); d.col = '#EEF5FF';
+          d.spr = null; d.sx = 1; d.branches = null; d.run = 0;
+          d.near = true;
+          D.push(d);
+        }
+        /**
+         * ★ **接地那一笔**（很淡的冷色线，压在雪与她交界处）：她的肤色本来就**偏白**，
+         * 一层白雪压上去只靠"更白"很难看出来 —— 这条阴影是"雪是**坐在**她头上"的第二个信号。
+         * alpha 很低，只负责"把两者分开"。
+         */
+        const NP2 = 4, dy = 1.1 * (A.S / .42);
+        for (let k = 0; k < NP2; k += 1) {
+          const ua = k / NP2, ub = (k + 1) / NP2;
+          const lxa = st.e0.lx + (st.e1.lx - st.e0.lx) * ua;
+          const lxb = st.e0.lx + (st.e1.lx - st.e0.lx) * ub;
+          const ya = surfVal(SURF.top, lxa), yb = surfVal(SURF.top, lxb);
+          if (!Number.isFinite(ya) || !Number.isFinite(yb)) continue;
+          const e = take();
+          e.shape = 'band'; e.kind = 'snow'; e.op = .1 + .16 * a.h.amt;
+          e.x = mapX(lxa, ya + dy); e.y = mapY(lxa, ya + dy);
+          e.x2 = mapX(lxb, yb + dy); e.y2 = mapY(lxb, yb + dy);
+          e.w = .7 * (A.S / .42); e.col = '#CFE0F2';
+          e.spr = null; e.sx = 1; e.branches = null; e.run = 0;
+          e.near = true;
+          D.push(e);
+        }
+      }
     }
-    for (let i = 1; i < ANCH.length; i += 1) {
-      const a = ANCH[i - 1], b = ANCH[i];
-      if (a.amt < .28 || b.amt < .28) continue;     // 两头都积起来才连
-      const d = take();
-      d.shape = 'band'; d.kind = 'snow'; d.op = .3 + .35 * Math.min(a.amt, b.amt);
-      d.x = mapX(a.x, a.y); d.y = mapY(a.x, a.y);
-      d.x2 = mapX(b.x, b.y); d.y2 = mapY(b.x, b.y);
-      d.w = 3.2 * (A.S / .42); d.col = pal.snow;
-      d.spr = null; d.sx = 1; d.branches = null; d.run = 0;
-      d.near = true;
-      D.push(d);
-    }
+
     /**
      * ★ **`?diag=1&fxbox=1`：把"她被当成什么"画出来**。
      * 有 `SURF`（她的真实顶面表）时画的就是**她自己那条轮廓线**（上沿 + 下沿两笔）；
@@ -1607,6 +1778,12 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
     meta.byKind = {};
     for (const d of D) {
       const o = { shape: d.shape, kind: d.kind, op: +(d.op || 0).toFixed(3), x: +d.x.toFixed(1), y: +d.y.toFixed(1) };
+      /**
+       * ⚠️ **`band`（圆头粗线）必须把第二个端点也导出来**：`surface.json` 那一版打磨时，
+       * "雪带"是不是画成了"从 A 到 B 的一条线"只能看 `x2/y2` —— 少了它们，诊断里每条 `band`
+       * 都长得像"零长度的点"（外部的出图/核对脚本会据此得出错误结论）。
+       */
+      if (d.shape === 'band') { o.x2 = +d.x2.toFixed(1); o.y2 = +d.y2.toFixed(1); o.w = d.w; o.col = d.col; }
       if (d.sc) o.sc = +d.sc.toFixed(3);
       if (d.sx !== undefined) o.sx = +d.sx.toFixed(3);
       o.len = d.shape === 'rain' ? Math.abs(d.y2 - d.y)
@@ -1750,7 +1927,7 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
     /** 诊断/自检：这条本地 x 上，她的底面在哪儿。 */
     surfaceBot(lx) { return SURF ? surfVal(SURF.bot, lx) : NaN; },
     /** 自检用：三个雪帽锚点的本地坐标与雪量（`amt` 0..1）。 */
-    caps() { return ANCH.map((a) => ({ x: a.x, y: a.y, amt: +a.amt.toFixed(4) })); },
+    caps() { return ANCH.map((a) => ({ x: a.x, y: a.y, amt: +a.amt.toFixed(4), d: +a.h.d.toFixed(4) })); },
     /**
      * ★★ **换一张"她的真实顶面"**（`whale/surface.json`；页面在她的形象换了之后调一次）。
      * 传 `null` / 不给 → 退回两个判定圆（Coo 形象、老宿主、自检里不给表时都是这条）。见 `SURF` 那段。
@@ -1770,7 +1947,18 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
         x0: +s.x0 || 0, step: +s.step || 2, n: s.top.length,
         top: mk(s.top), bot: mk(Array.isArray(s.bot) ? s.bot : s.top),
       };
-      ANCH = (s.anchors || []).map((a) => ({ x: +a[0], y: +a[1], amt: 0, len }));
+      /**
+       * ★ 每个锚点预存一份"**跟体型无关**的几何"（`h`）：`d` = 满雪量时的雪层厚度（**rig 单位**）、
+       * `x/y` = 锚点的本地坐标（`y` 就是 `top[那一列]`，见 `tickAnchor()` 里那段注释）。
+       *
+       * ⚠️ **单位**：`mapX/mapY` 的入参、`surface.top` 的 y、`CAP_D/CAP_W` 全是**同一种单位**
+       * （她的画稿单位，1 单位 = 1px @1:1）。第一版在这里多写了一个 `1 / .42`（把 `A.S` 的
+       * 缩放又反着除了一遍）→ 厚度基准从 2 变成 0.476，三顶雪各只剩一个点。
+       */
+      ANCH = (s.anchors || []).map((a) => ({
+        x: +a[0], y: +a[1], amt: 0,
+        h: { x: +a[0], y: +a[1], d: CAP_D * (len / 26), amt: 0 },
+      }));
       capMeltLeft = 0;
       return true;
     },

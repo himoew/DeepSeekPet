@@ -2586,6 +2586,14 @@ if (POINTER_DIAG) {
       const s = fx.stats();
       return {
         n: s.n,
+        /**
+         * ★ **这一帧的绘制清单**（`{shape,kind,op,x,y,...}`，坐标是**舞台**坐标）。
+         *
+         * 为什么把它对外开放：验收页要能从**页面外面**核对"她身上那些雪形状画在哪儿"——
+         * 例如"左右两顶雪之间有没有东西横穿她的脑袋"（用户实测报的那个 bug）只能靠这一份清单
+         * 加上 `local()` 换算回她的本地坐标才量得出来。少了它，验收页只能数个数，量不出几何。
+         */
+        list: s.list,
         meta: {
           strokes: s.meta.callStroke, images: s.meta.callImage,
           // ★ 跟她的互动那几个数（自检/验收页读它们，见 fx.js 的 meta 说明）
@@ -2595,6 +2603,12 @@ if (POINTER_DIAG) {
         },
       };
     },
+    /** 舞台坐标 → 她的**本地**（画稿单位）坐标 —— 验收页核对"这一笔到底画在她哪儿"要用。 */
+    local: (x, y) => fx.actorLocal(x, y),
+    /** 她的**本地**（画稿单位）→ 舞台坐标（跟粒子用的是同一套变换，含朝左/倾斜/被拎着）。 */
+    stage: (lx, ly) => ctl.toStage(lx, ly),
+    /** 这条本地 x 上她的顶面在哪儿（`NaN` = 这一列没有她）。雪/雨的落点判定就用它。 */
+    top: (lx) => fx.surfaceTop(lx),
     size: () => fx.size(),
     /**
      * ★ **跟她的互动这一套的只读视图**（2026-10-11 晚加，给 `dev-weather\v-actor.html` 用）。

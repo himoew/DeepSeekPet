@@ -432,12 +432,101 @@ module.exports = {
         const capItem = fx.stats().list.find((q) => q.shape === 'cap');
         const want = fx.actorStage(A0[0].x, A0[0].y);
         ok(`★雪帽：画出来的那张**软边贴图**就贴在她头顶那个锚点上（画在 ${capItem ? `${capItem.x.toFixed(0)},${capItem.y.toFixed(0)}` : 'n/a'}，`
-          + `锚点在 ${want.x.toFixed(0)},${want.y.toFixed(0)}）—— 中心还往轮廓里收了 0.28 半径，只露上缘`,
+          + `锚点在 ${want.x.toFixed(0)},${want.y.toFixed(0)}）—— 第一枚笔触正落在锚点上`,
         !!capItem && Math.abs(capItem.x - want.x) < 4 && Math.abs(capItem.y - want.y) < 6
           && fx.stats().meta.images > 0);
 
+        /* ---------- ⑩b ★ 左右两顶雪之间**没有东西横穿她的脑袋**（用户实测报的那个 bug） ---------- */
+        /**
+         * 用户原话："最刺眼的是雪之间的连线，直接穿过了桌宠的脑袋"。
+         *
+         * 根因（老版）：两顶雪的锚点之间补了一条 `moveTo(a) → lineTo(b)` 的**直线**，
+         * 而头顶就在那条直线上 —— 雪一积够（两边都 > 0.28）它就横穿过去。
+         *
+         * 这一条钉的是**几何本身**（不是"读过代码觉得对"）：三个锚点全打满之后，
+         * ① 跨锚点的那两条带（本地 x 段）里**一枚雪形状都不许有**；
+         * ② 每一条 `band` 都必须是"轮廓上的短段"—— 它的两个端点各自都要几乎落在 `top(x)` 上。
+         */
+        {
+          fx.clear(true); fx.actor(null); fx.actor(snapOf());
+          fx.surface(SURF_JSON);
+          const A3 = fx.caps();
+          /**
+           * ⚠️ 清场**只在最开头一次**，后面 9 片全部 `fresh=false`。第一版写成"每顶的第一片清场"，
+           * 结果是**后一顶把前一顶清掉**（第二顶打满时第一顶归零）—— 实测抓到 `0.00 / 0.00 / 0.96`。
+           */
+          let k0 = 0;
+          for (const a of A3) {
+            for (let k = 0; k < 3; k += 1) { landAt(fx, 'snow', a.x, 8000 + k0, 60, k0 === 0); k0 += 1; }
+          }
+          fx.actor(snapOf());
+          fx.frame(1 / 60, 8100, 'off');
+          ok(`★雪帽：把**三个锚点全部打满**（${fx.caps().map((c) => c.amt.toFixed(2)).join(' / ')}）`,
+            fx.clinging === 3);
+          /**
+           * 边界**不抄常量**：从画出来的那一堆里，按"离哪个锚点最近"分组，量出每顶实际铺到哪儿，
+           * 再往两边各放 25% 余量当"它自己的地盘"。两顶地盘之间的那一段 = **跨锚点带**
+           * —— 老版那条线的两个端点就是锚点本身，所以它必然落在这一段里。
+           */
+          const snowItems = fx.stats().list.filter((q) => q.kind === 'snow')
+            .map((q) => ({ shape: q.shape, l: fx.actorLocal(q.x, q.y) }));
+          const near = (lx) => A3.reduce((b, a) => (Math.abs(lx - a.x) < Math.abs(lx - b.x) ? a : b), A3[0]);
+          const edge = new Map();
+          for (const it of snowItems) {
+            const a = near(it.l.x);
+            const d = Math.abs(it.l.x - a.x);
+            if (d > (edge.get(a.x) || 0)) edge.set(a.x, d);
+          }
+          const hs = A3.map((a) => a.x).sort((p, q) => p - q);
+          const gaps = [];
+          for (let i = 1; i < hs.length; i += 1) {
+            const l = hs[i - 1] + (edge.get(hs[i - 1]) || 0) * 1.25;
+            const r = hs[i] - (edge.get(hs[i]) || 0) * 1.25;
+            if (r > l) gaps.push([l, r]);
+          }
+          let inGap = 0, worst = '';
+          for (const it of snowItems) {
+            for (const [g0, g1] of gaps) {
+              if (it.l.x > g0 && it.l.x < g1) {
+                inGap += 1;
+                worst = `shape=${it.shape} 本地(${it.l.x.toFixed(0)},${it.l.y.toFixed(0)}) top=${fx.surfaceTop(it.l.x).toFixed(0)}`;
+              }
+            }
+          }
+          ok(`★雪帽：三顶全满时，**跨锚点那两段（${gaps.map((g) => `${g[0].toFixed(0)}~${g[1].toFixed(0)}`).join(' / ')}，`
+            + `按每顶实测铺开宽度推出来的）里一枚雪形状都没有**（命中 ${inGap} 个${inGap ? `，例：${worst}` : ''}）`
+            + ' —— 老版那条"雪带"走的是锚点之间的**直线**，而头顶就在那条直线上，所以它从她脑袋里穿过去',
+          gaps.length === 2 && inGap === 0);
+          let bandN = 0, offContour = 0, farAway = '';
+          for (const q of fx.stats().list) {
+            if (q.shape !== 'band') continue;
+            bandN += 1;
+            for (const [bx, by] of [[q.x, q.y], [q.x2, q.y2]]) {
+              const l = fx.actorLocal(bx, by);
+              const t = fx.surfaceTop(l.x);
+              if (!Number.isFinite(t) || Math.abs(l.y - t) > 2.5) {
+                offContour += 1;
+                farAway = `本地(${l.x.toFixed(0)},${l.y.toFixed(0)}) top=${Number.isFinite(t) ? t.toFixed(0) : 'n/a'}`;
+              }
+            }
+          }
+          ok(`★雪帽：每一条 \`band\` 的端点都落在**她自己的轮廓上**（${bandN} 条 / 偏离 ${offContour} 个`
+            + `${offContour ? `，例：${farAway}` : ''}）—— 所以它只能"沿着轮廓走"，走不出跨脑袋的直线`,
+          bandN >= 3 && offContour === 0);
+        }
+
         /* 她**慢慢挪** 120px（不走、不甩）：雪帽要跟着她走 */
-        const cx0 = capItem ? capItem.x : NaN;
+        /**
+         * ⚠️ **这一段必须自己清一次场**：上面那段"跨锚点带"留下的是**三顶都满**的状态，
+         * 而这一条断言的 `cling === 1`（只有一个锚点有雪）是"只打满头顶那一顶"时的性质。
+         * 不清场的话，这里失败的原因会指向"雪帽没跟着她动"，而真因是**测试自己带的残留**。
+         */
+        fx.clear(true); fx.actor(null); fx.actor(snapOf());
+        landAt(fx, 'snow', crownX, 2860, 60);
+        landAt(fx, 'snow', crownX, 2880, 60, false);
+        landAt(fx, 'snow', crownX, 2900, 60, false);
+        const crownItem = fx.stats().list.find((q) => q.shape === 'cap');
+        const cx0 = crownItem ? crownItem.x : NaN;
         let petX = 640, t = 2900;
         for (let i = 0; i < 60; i += 1) {
           petX += 2;                                   // 2px/帧 = 120px/s（低于"抖掉"的 250）

@@ -228,6 +228,66 @@ function run() {
     }
     ok('⑤ 她一**走动**，雪帽就抖掉（而且掉成一粒粒雪，不是凭空消失）',
       walked !== false && gone, `act('walk')=${walked} 抖掉后还有雪的锚点 ${api.cling()} 个 · 画了 ${drops} 个形状`);
+
+    /**
+     * ⑤c ★★ **在页面上量几何：一枚雪形状都不许画进她的身体里。**
+     *
+     * 用户实测报的是"左右两边的积雪互相连的时候，那条线直接穿过了桌宠的脑袋"（老版：两顶雪的锚点
+     * 之间补了一条**直线**）。自检里已经钉了"跨锚点那两段里没有形状"，但那是在 Node 的假画布上；
+     * 这里用**真页面**再量一遍，判据是**绝对的**（不是相对上一次的差）：
+     *
+     *   每一枚雪形状（`cap` 笔触 / `band` 上缘描边与接地阴影）回到她的**本地坐标**后，
+     *   它的中心必须**落在她那条轮廓线 `top(x)` 附近**（容差 2.6 本地单位 ≈ 1.1px；
+     *   实测最靠下的一枚 +1.19 单位，就是贴着轮廓画的那条接地阴影）。
+     *
+     * 这条真能抓到老版：那条线在本地坐标里从 y≈23 **一路斜到 y≈100**（穿过她脸的深处），
+     * 远大于 2.6 —— 而现在每个锚点只画自己那一段，跨锚点的地方根本没有形状。
+     *
+     * ⚠️ **动手之前必须让她站住**：她一旦被 `act('walk')` 叫起来，会**一直走到目标点**才回 idle，
+     * 而产品规定"走路时不积雪"（`fx.js` 的 `busy = A.moving || …`）。第一版没等她站住就往下量 →
+     * 9 片雪全部只冒白雾、一枚都没积（实测 `0 枚雪形状`，而我误以为是几何坏了）。
+     */
+    api.clear(true);
+    /**
+     * ⚠️ **先让她停下来，而且要在放雪的那一刻再确认一次位置**。
+     *
+     * 她走完一段会**立刻决定去下一处**，所以"连续几帧没动"不等于"接下来还会站着"。
+     * 第一版就是因为这个出错：量的时候她还在溜达（产品规定"走路时不积雪"，
+     * `busy = A.moving || …`），9 片雪全部只冒白雾、一枚都没积 —— 而"实测"那一列
+     * 只显示 `0 枚雪形状`，看着像几何坏了。诊断（临时给 `at()` 包一层）证明每一片
+     * 都 `hits=1`、落点换算回本地正是 128 / 72 / 186（也就是判定没问题，是**时机**问题）。
+     */
+    api.act('stand');
+    for (let i = 0; i < 90; i += 1) api.drive('off', 1 / 30);
+    for (const a of api.caps()) {
+      for (let k = 0; k < 3; k += 1) {
+        /**
+         * 放**刚好压在轮廓上**（`a.y + 1` = 轮廓线下方一点），不是"上方 24 单位"：
+         * 锚点的 `y` 就是她头顶最上面那一列（本地 y=23），上方 24 单位 = 屏幕外 10px，
+         * 粒子要落 2.3 秒才碰到她，而那 2.3 秒里已经积起来的雪同时在化（20 秒寿命）。
+         *
+         * ⚠️ 坐标在**放的这一刻**现取（`api.stage` 用的是她当前的变换）：先取后放，
+         * 中间只要她动一帧，雪就落在原地、她已经走开了。
+         */
+        const s = api.stage(a.x, a.y + 1);
+        if (Math.abs(s.y - api.stage(128, 24).y) > 400) continue;      // 她已经不在视口里，跳过
+        api.at('snow', s.x, s.y, { vy: 140, vT: 140, sway: 0, hz: 0, hzA: 0, phase: 0, wind: 0, slip: 0, stall: 0, spin: 0, spinSp: 0, rollSp: 0, layer: 1, layerN: 3, life: 40 });
+        for (let i = 0; i < 12; i += 1) api.drive('off', 1 / 30);
+      }
+    }
+    const snowItems = api.stats().list.filter((q) => q.kind === 'snow');
+    let inBody = 0, worstItem = '', offEdge = 0;
+    const TOL = 2.6;
+    for (const q of snowItems) {
+      const l = api.local(q.x, q.y);
+      const tp = api.top(l.x);
+      if (!Number.isFinite(tp)) { offEdge += 1; continue; }        // 落在"她没有内容"的列上（不该有）
+      const below = l.y - tp;                                       // >0 = 低于轮廓 = 画进她身体里
+      if (below > TOL) { inBody += 1; worstItem = `${q.shape} 本地(${l.x.toFixed(0)},${l.y.toFixed(0)}) 轮廓 y=${tp.toFixed(0)} → 低了 ${below.toFixed(1)}`; }
+    }
+    ok('⑤c ★（真页面量几何）三顶雪**一枚都没有画进她身体里** —— 也就是没有东西横穿她的脑袋',
+      snowItems.length >= 20 && inBody === 0 && offEdge === 0,
+      `${snowItems.length} 枚雪形状 · 扎进身体 ${inBody} 枚${worstItem ? `（${worstItem}）` : ''} · 落在轮廓外 ${offEdge} 枚`);
   }
 
   /* ⑥ 收拾干净 */
