@@ -1,0 +1,27 @@
+{
+  "merge": true,
+  "replaceKinds": ["leaf"],
+  "targetDb": -26,
+  "fade": 2.5,
+  "out": "dev-weather/samples/loops",
+  "items": [
+    {
+      "id": "leaf-1", "kind": "leaf",
+      "label": "落叶①（OGA「Digital Forest」· 林地风声）",
+      "src": "dev-weather/samples/raw/leafF-Digital_Forest.ogg",
+      "license": "CC-BY 3.0", "len": 20
+    },
+    {
+      "id": "leaf-2", "kind": "leaf",
+      "label": "落叶②（OGA「Wind」wind.zip · 纯风 · 素材只有 6.7 秒，所以是个 5.5 秒的短循环）",
+      "src": "dev-weather/samples/raw/leafG-wind.zip",
+      "license": "CC0", "len": 5.5, "fade": 1.2
+    },
+    {
+      "id": "leaf-3", "kind": "leaf",
+      "label": "落叶③（OGA「Windy sound 1」echo-whoosh · 一阵阵的风 · 素材 8 秒，6.5 秒短循环）",
+      "src": "dev-weather/samples/raw/leafB-echo-whoosh_0.5.wav",
+      "license": "CC-BY-SA 3.0 / GPL", "len": 6.5, "fade": 1.5
+    }
+  ]
+}

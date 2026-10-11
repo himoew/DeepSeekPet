@@ -87,6 +87,18 @@
   <h2>试听 · 只有前景（床静音，用来判"主角自己够不够清楚"）</h2>
   <div id="cardsFg"><p class="note">点上面的「开始渲染」之后这里会出现四段"只有主角"的音频。</p></div>
 
+  <h2>海选 · 每档 3 组（雨 / 落叶 / 樱花）</h2>
+  <p class="note">
+    一次渲完 <b>10 段</b>（雨 3 + 落叶 3 + 樱花 3 + “雪 = 参照”1），**挨个点着听**，告诉我每组里哪个好、或者哪一组要往哪个方向改。
+    每组的差别写在名字里；「①」那三组就等于**当前产品版**，可以直接当对照。
+    <br>★ <b>每组都会自动校准到同一个实测电平</b>（渲染 2~4 轮：实测不够就补、峰值超了就退），
+    所以这里听的是**音色差别，不是响度差别**；每段后面那个"电平 xdB"就是它最终用的 `mixGainDb`。
+    <br>★ 判断标准（你昨晚的话）：雨 = **连绵不断 + 夹杂清晰突出的雨点 + 不许有规律节奏**；
+    落叶 = **风声 + 风吹树叶**（没有"擦玻璃"）+ 萧瑟；樱花 = **春天轻风 + 鸟鸣**（不像噪声）。
+  </p>
+  <div id="bar3"><button id="go3">渲染海选（约 40 秒）</button> <button id="save3">存成 wav（dev-weather\wav\）</button> <span id="prog3"></span></div>
+  <div id="cards3"></div>
+
   <div id="err"></div>
 </div>
 
@@ -128,11 +140,52 @@ function makeBuffers(c) {
     b6 = x * 0.115926;
   }
   const mk = (arr) => { const b = c.createBuffer(1, arr.length, c.sampleRate); b.getChannelData(0).set(arr); return b; };
-  const driftArr = new Float32Array(Math.floor(c.sampleRate * 30));
-  driftArr.set(br.subarray(0, driftArr.length));
-  let ds2 = 0;
-  for (let i = 0; i < driftArr.length; i += 1) ds2 += driftArr[i] * driftArr[i];
-  return { white: mk(w), brown: mk(br), pink: mk(pk), drift: mk(driftArr), driftRms: Math.max(1e-6, Math.sqrt(ds2 / driftArr.length)) };
+  /**
+   * ★★ **两条慢游走**（一阶低通在 JS 里算，**不用 biquad**）—— 与运行时 `makeBuffers()` 逐行一致。
+   * ⚠️ 别再退回"用 2 秒的棕噪声填 30 秒缓冲"：那会让 93% 是静音、每 30 秒来一记脉冲，
+   *    再叠一只 0.02Hz 高通就是用户报的"**越到后面越大**"（详见 `ambience.js` 里那段）。
+   */
+  const dl = Math.floor(c.sampleRate * 30);
+  const wl = new Float32Array(dl);
+  for (let i = 0; i < dl; i += 1) wl[i] = Math.random() * 2 - 1;
+  const slow = new Float32Array(dl);
+  const fast = new Float32Array(dl);
+  let l2 = 0;
+  for (let i = 0; i < dl; i += 1) { l2 = (l2 + 0.02 * wl[i]) / 1.02; const v = l2 * 3.5; slow[i] = v; fast[i] = v; }
+  onePole(slow, 0.2, c.sampleRate);
+  onePole(fast, 9, c.sampleRate);
+  const ds = zeroMean(slow);
+  const df = zeroMean(fast);
+  return {
+    white: mk(w), brown: mk(br), pink: mk(pk),
+    driftSlow: mk(slow), driftFast: mk(fast),
+    driftSlowRms: ds.rms, driftSlowPeak: ds.peak, driftFastRms: df.rms, driftFastPeak: df.peak,
+  };
+}
+
+/** 一阶低通（就地）。跟运行时 `onePole()` 同一个式子。 */
+function onePole(x, fc, sr) {
+  const a = Math.exp((-2 * Math.PI * fc) / sr);
+  let y = 0;
+  for (let i = 0; i < x.length; i += 1) { y = (1 - a) * x[i] + a * y; x[i] = y; }
+  return x;
+}
+/**
+ * 减掉均值（就地）并返回 `{ rms, peak }`。跟运行时 `zeroMean()` 同一个式子。
+ * ⚠️ **调制深度一律按 `peak` 归一**（按 rms 归一时高斯尾巴能到 3~4σ，逐秒电平会摆 20dB）。
+ */
+function zeroMean(x) {
+  let m = 0;
+  for (let i = 0; i < x.length; i += 1) m += x[i];
+  m /= x.length;
+  let s = 0, pk = 0;
+  for (let i = 0; i < x.length; i += 1) {
+    x[i] -= m;
+    s += x[i] * x[i];
+    const a = Math.abs(x[i]);
+    if (a > pk) pk = a;
+  }
+  return { rms: Math.max(1e-9, Math.sqrt(s / x.length)), peak: Math.max(1e-9, pk) };
 }
 
 /* =====================================================================================
@@ -141,12 +194,11 @@ function makeBuffers(c) {
  * ⚠️ 这一页的价值全在"跟运行时一致"上。上一版两边都写着 `depth × 3.2` 那种拍脑袋系数，
  *    于是"摆动其实只有 1~3%"这件事一直没人发现。**改运行时就必须同步改这里。**
  */
-function walk(c, buf, lpHz, baseT) {
+function walk(c, buf, which, baseT, rate) {
   const s = c.createBufferSource();
-  s.buffer = buf.drift; s.loop = true;
-  const lp = c.createBiquadFilter();
-  lp.type = 'lowpass'; lp.frequency.value = Math.max(.05, Math.min(60, lpHz)); lp.Q.value = .7;
-  s.connect(lp); s.start(baseT); return lp;
+  s.buffer = buf[which]; s.loop = true;
+  s.playbackRate.value = Math.max(.25, Math.min(4, rate || 1));
+  s.start(baseT); return s;
 }
 function layer(c, buf, lo, dest, baseT) {
   const src = c.createBufferSource();
@@ -170,8 +222,8 @@ function layer(c, buf, lo, dest, baseT) {
       const lpHz = Array.isArray(lo.drift) ? lo.drift[0] : lo.drift;
       const dg = c.createGain();
       const sw = (lo.swing == null ? 12 : lo.swing) / 100;
-      dg.gain.value = ((f.f || 1000) * sw) / buf.driftRms;
-      walk(c, buf, lpHz, baseT).connect(dg); dg.connect(bq.frequency);
+      dg.gain.value = ((f.f || 1000) * sw) / buf.driftFastPeak;
+      walk(c, buf, 'driftFast', baseT, (lpHz || 9) / 9).connect(dg); dg.connect(bq.frequency);
     }
     for (const [rate, depth] of (lo.lfo || [])) {
       const o = c.createOscillator(); o.type = 'sine'; o.frequency.value = rate;
@@ -179,13 +231,12 @@ function layer(c, buf, lo, dest, baseT) {
       o.connect(og); og.connect(bq.frequency); o.start(baseT);
     }
   }
-  /** ★ 音量包络（`flow`）：跟运行时一样，低通到 0.15~0.25Hz 的慢呼吸。 */
+  /** ★ 音量包络（`flow`）：慢游走直接推增益，归一化用**慢游走的峰值**、零均值 —— 跟运行时一致。 */
   if (lo.flow) {
     const eg = c.createGain();
-    eg.gain.value = (lo.flow * 0.15) / buf.driftRms;
-    const hp = c.createBiquadFilter();
-    hp.type = 'highpass'; hp.frequency.value = .02; hp.Q.value = .7;
-    walk(c, buf, (lo.envHz ? lo.envHz[0] : .2), baseT).connect(hp); hp.connect(eg); eg.connect(g.gain);
+    eg.gain.value = (.5 * lo.flow) / buf.driftSlowPeak;
+    const envHz = (lo.envHz ? lo.envHz[0] : .2) || .2;
+    walk(c, buf, 'driftSlow', baseT, envHz / .2).connect(eg); eg.connect(g.gain);
   }
   return g;
 }
@@ -204,58 +255,74 @@ function burst(c, buf, o, dest, baseT) {
   s.connect(bq); bq.connect(g); g.connect(p); p.connect(dest);
   s.start(t0, Math.random() * 1.5); s.stop(t0 + (o.dur || .05) + .05);
 }
-/** 四种前景事件（照抄运行时）—— `dest` 是**前景总线**（不是整档输出）。 */
-function drop(c, buf, dest, at) {
-  const large = Math.random() < .72;
+/**
+ * 前景事件（**逐行对齐运行时**）—— `dest` 是**前景总线**（不是整档输出）。
+ * ⚠️ 改运行时就必须同步改这里，否则"离线听到的"和"桌宠里听到的"不是同一版
+ * （上一轮就是因为两边都写着拍脑袋系数，摆动其实只有 1~3% 这件事一直没人发现）。
+ */
+function drop(c, buf, dest, at, big, bigGain) {
   const pan = Math.random() * 2 - 1;
-  const vol = (large ? .38 : .22) * (.7 + Math.random() * .6);
-  burst(c, buf, { t: 'lowpass', f: 1400 + Math.random() * 900, f1: 320 + Math.random() * 200, q: .7, dur: (large ? .055 : .03) + Math.random() * .05, vol, attack: .0015, pan }, dest, at);
-  if (Math.random() < (large ? .3 : .55)) {
-    burst(c, buf, { t: 'bandpass', f: 2600 + Math.random() * 2400, q: 2.5, dur: .014 + Math.random() * .014, vol: vol * .3, attack: .001, pan }, dest, at + .002 + Math.random() * .01);
+  const k = big ? (bigGain == null ? 1 : bigGain) : 1;      // `cfg.bigGain`：海选时"突出雨点"可以整体再放大一点
+  if (big) {
+    /** ⚠️ `.5` 必须跟运行时一字不差（旧版这里是 `.85`，于是"试听听到的"≠"桌宠里听到的"）。 */
+    const vol = .5 * (.75 + Math.random() * .5) * k;
+    burst(c, buf, { t: 'lowpass', f: 900 + Math.random() * 600, f1: 260 + Math.random() * 160, q: .7, dur: .07 + Math.random() * .07, vol, attack: .0012, pan }, dest, at);
+    burst(c, buf, { t: 'bandpass', f: 2400 + Math.random() * 2600, q: 2, dur: .018 + Math.random() * .018, vol: vol * .22, attack: .001, pan }, dest, at + .001 + Math.random() * .006);
+    return;
+  }
+  const large = Math.random() < .6;
+  const vol = (large ? .20 : .13) * (.7 + Math.random() * .6);
+  burst(c, buf, { t: 'lowpass', f: 1400 + Math.random() * 900, f1: 320 + Math.random() * 200, q: .7, dur: (large ? .045 : .025) + Math.random() * .035, vol, attack: .0012, pan }, dest, at);
+  if (Math.random() < .28) {
+    burst(c, buf, { t: 'bandpass', f: 2600 + Math.random() * 2200, q: 2.5, dur: .012 + Math.random() * .012, vol: vol * .3, attack: .001, pan }, dest, at + .002 + Math.random() * .01);
   }
 }
 function gust(c, buf, dest, at) {
   burst(c, buf, { n: 'brown', t: 'bandpass', f: 240 + Math.random() * 260, q: .7, dur: .8 + Math.random() * 1.0, vol: .16 + Math.random() * .12, attack: .35, pan: Math.random() * 1.2 - .6 }, dest, at);
 }
-function leafRustle(c, buf, dest, at) {
-  const n = 6 + Math.floor(Math.random() * 5);
+/** 风把树叶吹响（`spark: 'sway'`）—— 慢起慢落 + 几处轻抖动，**没有"擦玻璃"的尖头**。 */
+function sway(c, buf, dest, at) {
+  const dur = .8 + Math.random() * .8;
   const dir = Math.random() < .5 ? -1 : 1;
-  const pan0 = -dir * (.3 + Math.random() * .5);
-  const span = .3 + Math.random() * .25;
-  const vol = .16 + Math.random() * .12;
+  const pan0 = -dir * (.25 + Math.random() * .5);
+  const vol = .30 + Math.random() * .16;
+  burst(c, buf, { n: 'pink', t: 'bandpass', f: 700 + Math.random() * 700, f1: 600 + Math.random() * 500, q: .9, dur, vol, attack: .18, pan: pan0 }, dest, at);
+  const n = 5 + Math.floor(Math.random() * 5);
   for (let i = 0; i < n; i += 1) {
     const k = i / n;
-    burst(c, buf, { t: 'bandpass', f: 900 + Math.random() * 3200, f1: 700 + Math.random() * 2200, q: 1.1, dur: .03 + Math.random() * .05, vol: vol * (.5 + Math.random() * .7), attack: .004, pan: pan0 + dir * k * span }, dest, at + k * (.3 + Math.random() * .05));
+    burst(c, buf, { t: 'bandpass', f: 1200 + Math.random() * 2200, q: 1.2, dur: .05 + Math.random() * .06, vol: vol * (.12 + Math.random() * .18), attack: .03, pan: pan0 + dir * k * .6 }, dest, at + .12 + k * dur * .8);
   }
 }
 function bird(c, buf, dest, at, range) {
-  const [lo, hi] = (range && range.f0) || [2300, 3400];
+  const [lo, hi] = (range && range.f0) || [2600, 4600];
   const [s0, s1] = (range && range.sweep) || [.55, .85];
   const base = lo + Math.random() * (hi - lo);
-  const k = 2 + Math.floor(Math.random() * 3);
+  const k = 2 + Math.floor(Math.random() * 2);
   const pan = Math.random() * 1.4 - .7;
   for (let i = 0; i < k; i += 1) {
-    const f0 = base * (.94 + Math.random() * .12);
+    const f0 = base * (.95 + Math.random() * .10);
     const up = i === 0;
-    const dur = (up ? .07 : .09) + Math.random() * .06;
-    const at2 = at + i * (.13 + Math.random() * .08);
-    burst(c, buf, { t: 'bandpass', f: f0, f1: f0 * (up ? 1.18 : (s0 + Math.random() * (s1 - s0))), q: 3.5, dur, vol: .10 + Math.random() * .06, attack: .012, pan }, dest, at2);
-    burst(c, buf, { t: 'bandpass', f: f0 * 1.5, f1: f0 * 1.5 * (up ? 1.1 : .9), q: 2.5, dur, vol: .04, attack: .014, pan }, dest, at2);
+    const dur = (up ? .055 : .07) + Math.random() * .04;
+    const at2 = at + i * (.10 + Math.random() * .07);
+    burst(c, buf, { t: 'bandpass', f: f0, f1: f0 * (up ? 1.22 : (s0 + Math.random() * (s1 - s0))), q: 3.5, dur, vol: .12 + Math.random() * .06, attack: .008, pan }, dest, at2);
+    burst(c, buf, { t: 'bandpass', f: f0 * 1.6, f1: f0 * 1.6 * (up ? 1.12 : .92), q: 3, dur, vol: .05, attack: .01, pan }, dest, at2);
   }
 }
 function thunder(c, buf, dest, at) {
   burst(c, buf, { n: 'brown', t: 'lowpass', f: 240, f1: 70, q: .4, dur: 2.6, vol: .2, attack: .5, pan: Math.random() * 1.6 - .8 }, dest, at);
   burst(c, buf, { n: 'brown', t: 'bandpass', f: 58, q: 2, dur: 2.2, vol: .1, attack: .6, pan: Math.random() * 1.2 - .6 }, dest, at + .1);
 }
-function fire(cfg, c, buf, dest, at) {
+function fire(cfg, c, buf, dest, at, big) {
   switch (cfg.spark) {
-    case 'drop': drop(c, buf, dest, at); return 1;
+    case 'drop': drop(c, buf, dest, at, big, cfg.bigGain); return 1;
     case 'gust': gust(c, buf, dest, at); return 1;
-    case 'leaf': leafRustle(c, buf, dest, at); return 1;
+    case 'sway': sway(c, buf, dest, at); return 1;
     case 'bird': bird(c, buf, dest, at, cfg.bird); return 1;
     default: return 0;
   }
 }
+/** 指数分布间隔（跟运行时 `expRnd` 同一个式子）：雨的"突出雨点"靠它才不成拍。 */
+const expRnd = (mean) => Math.max(mean * .15, -Math.log(1 - Math.random()) * mean);
 
 /**
  * 渲一档。`opts.fgMute` 把**所有前景事件**静音（用来量"前景显著性"）；
@@ -263,7 +330,7 @@ function fire(cfg, c, buf, dest, at) {
  * ⚠️ 淡入包络照抄运行时：master 0.25s、档位 1.2s → 测量必须跳过开头（下面量的是 2.5s 之后）。
  */
 async function renderTrack(name, secs, opts = {}) {
-  const cfg = TRACKS[name];
+  const cfg = opts.trackTable || TRACKS[name];
   const c = new OfflineAudioContext(2, Math.round(SR * secs), SR);
   const buf = makeBuffers(c);
   /**
@@ -275,6 +342,22 @@ async function renderTrack(name, secs, opts = {}) {
   const master = c.createGain();
   master.gain.setValueAtTime(0, 0);
   master.gain.linearRampToValueAtTime(MASTER_GAIN, 0.25);
+  /**
+   * ★★ **总线上挂限幅器 —— 必须跟运行时一模一样**（2026-10-11 深夜加）。
+   *
+   * 为什么：这些声音的波峰因数有 20~28dB。**没有限幅器时，离线渲出来的 wav 一旦峰值超过
+   * 0dBFS 就被硬削顶**，而削顶的听感就是"越来越冲、越来越糊" —— 用户报的"越到尾声越大"
+   * 就是这么来的（那一批海选音轨实测峰值有 **+0.4 / +2.7dB**）。
+   * 运行时从今天起也挂同一个（`-6dB / 20:1 / 3ms`），所以两边**同时**被兜住。
+   */
+  /**
+   * ★★ **不要挂 `DynamicsCompressor`**（2026-10-11 深夜：挂了又撤了，两边都别再挂）。
+   *
+   * 它在 Chromium 里**会自动做增益补偿**：实测同一档挂上之后 **RMS +7~8dB、峰值反而冲到 -0.3dB**，
+   * 而且信号越大压得越狠、补偿越多 —— 用户听到的"所有的声音越到尾声越大"有一半是它干的。
+   * 所以两边都回到"**用设计留余量**"：包络深度收到 ±1.1dB + 每档单独标电平（`__norm()`）。
+   * `opts.noLimiter` 现在没有意义了，留参数只为兼容旧调用。
+   */
   master.connect(c.destination);
   const out = c.createGain();                       // 整档输出（床 + 前景）
   /**
@@ -301,8 +384,16 @@ async function renderTrack(name, secs, opts = {}) {
   for (const lo of (cfg.mid || [])) layer(c, buf, lo, bedBus, baseT);
   let at = baseT + .2, events = 0;
   while (at < secs) {
-    events += fire(cfg, c, buf, fgBus, at);
+    events += fire(cfg, c, buf, fgBus, at, false);
     at += rnd(cfg.every[0], cfg.every[1]);
+  }
+  /** ★ 第二条流：**指数分布**的"突出雨点"（跟运行时 `follow()` 的那条一致）。 */
+  if (cfg.everyExp) {
+    let at2 = baseT + .2 + expRnd(cfg.everyExp);
+    while (at2 < secs) {
+      events += fire(cfg, c, buf, fgBus, at2, true);
+      at2 += expRnd(cfg.everyExp);
+    }
   }
   if (cfg.thunder) {
     let ta = rnd(cfg.thunder[0], cfg.thunder[1]);
@@ -428,6 +519,306 @@ $('solo').addEventListener('click', () => {
   next();
 });
 say('就绪 · 点「开始渲染」');
+
+/**
+ * ★★ **海选用的三组变体**（2026-10-11 深夜加）。
+ *
+ * 用户原话："我不知道你眼里看到的声音是如何的，所以这样说明你其实也不好调，**只能用海选了**，
+ * 比如你每种声音生成三组，我来挨个试听（除了雪）。"
+ *
+ * 所以这一页一次渲 **10 段**：雨 3 组 + 落叶 3 组 + 樱花 3 组 + 雪 1 组（**参照，不许改**）。
+ * 「①」那三组就等于**当前产品版**（`ambience.js` 的 `TRACKS`），可以直接当对照。
+ * 每组的差别写在 `title` 里。
+ *
+ * ⚠️ 这些**只是试听用**，不改产品：产品参数只在 `ambience.js` 的 `TRACKS` 里。
+ *    你选定之后，我把那一组抄回 `TRACKS`。
+ * ⚠️ 每组渲染时都会**闭环校准到同一个实测电平**（见 `renderCalibrated()`），
+ *    所以海选时听的是**音色差别**，不是响度差别。
+ */
+const SETS = [
+  {
+    key: 'rain', label: '雨', hint: '你说：连绵不断 + 夹杂清晰突出的雨点 + 不许有规律节奏；背景调小、颗粒清晰',
+    items: [
+      {
+        id: 'rain-1', title: '雨① 连绵为主（颗粒 28~45/秒，突出雨点 1.5/秒，床很轻）',
+        cfg: {
+          seed: 44, mixGainDb: 17.7,
+          bed: [{ n: 'pink', t: 'bandpass', f: 900, q: .5, g: .035, flow: .5, envHz: [.25], swing: 10, drift: [6] }],
+          mid: [{ n: 'pink', t: 'bandpass', f: 1600, q: .75, g: .085, flow: .6, envHz: [.22], swing: 12, drift: [7] }],
+          spark: 'drop', every: [.022, .036], everyExp: .65, thunder: [24, 60],
+        },
+      },
+      {
+        id: 'rain-2', title: '雨② 突出雨点更明显（颗粒稍退，突出 2.2/秒、更响更长）',
+        cfg: {
+          seed: 44, mixGainDb: 15.5,
+          bed: [{ n: 'pink', t: 'bandpass', f: 900, q: .5, g: .028, flow: .5, envHz: [.25], swing: 10, drift: [6] }],
+          mid: [{ n: 'pink', t: 'bandpass', f: 1400, q: .8, g: .07, flow: .6, envHz: [.22], swing: 12, drift: [7] }],
+          spark: 'drop', every: [.028, .045], everyExp: .45, bigGain: 1.35, thunder: [24, 60],
+        },
+      },
+      {
+        id: 'rain-3', title: '雨③ 颗粒更细更"沙"（床再退，颗粒 40~60/秒，突出 1.2/秒）',
+        cfg: {
+          seed: 44, mixGainDb: 18.5,
+          bed: [{ n: 'pink', t: 'bandpass', f: 1100, q: .6, g: .02, flow: .4, envHz: [.25], swing: 10, drift: [6] }],
+          mid: [{ n: 'pink', t: 'bandpass', f: 2200, q: .8, g: .075, flow: .7, envHz: [.22], swing: 14, drift: [7] }],
+          spark: 'drop', every: [.016, .025], everyExp: .85, bigGain: 1.2, thunder: [24, 60],
+        },
+      },
+    ],
+  },
+  {
+    key: 'leaf', label: '落叶', hint: '你说：去掉擦玻璃，就是风声 + 风吹树叶，要凋落的萧瑟感',
+    items: [
+      {
+        id: 'leaf-1', title: '落叶① 风为主 + 偶有树叶响（风 300/900Hz，吹响 2.4~6.5 秒一次）',
+        cfg: {
+          seed: 33, mixGainDb: 17.7,
+          bed: [{ n: 'brown', t: 'bandpass', f: 300, q: .55, g: .13, flow: .7, envHz: [.18], swing: 14, drift: [9] }],
+          mid: [{ n: 'brown', t: 'bandpass', f: 900, q: .5, g: .06, flow: 1, envHz: [.15], swing: 22, drift: [10], lfo: [[.029, 14]] }],
+          spark: 'sway', every: [2.4, 6.5],
+        },
+      },
+      {
+        id: 'leaf-2', title: '落叶② 树叶更密更碎（风吹响 1.2~3.5 秒一次，中心更高 1.2kHz）',
+        cfg: {
+          seed: 33, mixGainDb: 16.5,
+          bed: [{ n: 'brown', t: 'bandpass', f: 320, q: .55, g: .11, flow: .6, envHz: [.18], swing: 12, drift: [9] }],
+          mid: [{ n: 'brown', t: 'bandpass', f: 1200, q: .6, g: .075, flow: 1, envHz: [.15], swing: 26, drift: [10], lfo: [[.029, 16]] }],
+          spark: 'sway', every: [1.2, 3.5],
+        },
+      },
+      {
+        id: 'leaf-3', title: '落叶③ 更萧瑟（风更低更空 240/700Hz，只偶尔一阵）',
+        cfg: {
+          seed: 33, mixGainDb: 19.5,
+          bed: [{ n: 'brown', t: 'bandpass', f: 240, q: .6, g: .14, flow: .8, envHz: [.16], swing: 18, drift: [8] }],
+          mid: [{ n: 'brown', t: 'bandpass', f: 700, q: .45, g: .045, flow: 1, envHz: [.14], swing: 26, drift: [11], lfo: [[.023, 11]] }],
+          spark: 'sway', every: [3.5, 9],
+        },
+      },
+    ],
+  },
+  {
+    key: 'blossom', label: '樱花', hint: '你说：现在像噪声；要春天轻风 + 鸟鸣，背景小、风缓缓吹',
+    items: [
+      {
+        id: 'blossom-1', title: '樱花① 轻风 + 鸟鸣（风 950Hz Q1.1，鸟 9~26 秒一次）',
+        cfg: {
+          seed: 22, mixGainDb: 25.1,
+          bed: [{ n: 'pink', t: 'bandpass', f: 380, q: .6, g: .045, flow: .5, envHz: [.2], swing: 12, drift: [9] }],
+          mid: [{ n: 'pink', t: 'bandpass', f: 950, q: 1.1, g: .05, flow: 1, envHz: [.16], swing: 18, drift: [10], lfo: [[.037, 22]] }],
+          spark: 'bird', every: [9, 26],
+        },
+      },
+      {
+        id: 'blossom-2', title: '樱花② 鸟更多更亮（鸟 5~15 秒一次，音高 3~5.5kHz，风更轻）',
+        cfg: {
+          seed: 22, mixGainDb: 27,
+          bed: [{ n: 'pink', t: 'bandpass', f: 400, q: .7, g: .035, flow: .5, envHz: [.2], swing: 12, drift: [9] }],
+          mid: [{ n: 'pink', t: 'bandpass', f: 1100, q: 1.3, g: .038, flow: 1, envHz: [.16], swing: 16, drift: [10], lfo: [[.037, 18]] }],
+          spark: 'bird', every: [5, 15], bird: { f0: [3000, 5500], sweep: [.5, .8] },
+        },
+      },
+      {
+        id: 'blossom-3', title: '樱花③ 风为主、鸟很稀（风更低更宽 700Hz Q.9，鸟 18~50 秒一次）',
+        cfg: {
+          seed: 22, mixGainDb: 24,
+          bed: [{ n: 'pink', t: 'bandpass', f: 340, q: .55, g: .05, flow: .6, envHz: [.2], swing: 12, drift: [9] }],
+          mid: [{ n: 'pink', t: 'bandpass', f: 700, q: .9, g: .06, flow: 1, envHz: [.15], swing: 22, drift: [10], lfo: [[.031, 20]] }],
+          spark: 'bird', every: [18, 50],
+        },
+      },
+    ],
+  },
+  {
+    key: 'snow', label: '雪（参照，不改）', hint: '你说这档"舒展有秩序"，所以它在这里只当基准',
+    items: [
+      { id: 'snow-ref', title: '雪（当前产品版 = 基准）', cfg: TRACKS.snow },
+    ],
+  },
+];
+
+/**
+ * ★★ **渲染海选**（按钮与自动化走同一条路）。
+ *
+ * 每一组都过 `renderCalibrated()`：**渲 → 量 → 按差值补电平 → 再渲**（最多 4 轮），
+ * 所以 13 段最后会落在**同一个实测电平**上（目标 `TARGET_RMS_DB`，峰值不超 -4dB）。
+ * 这一步就是上一版卡住的地方（它手推公式，推错三次，最后一段都没渲出来）。
+ *
+ * 返回 `{ [id]: {...} }`，同时把结果留在 `globalThis.__lastSets` 里给自动化用。
+ */
+globalThis.__SETS = SETS;
+async function renderSets(secs = 20, onStep) {
+  const box = $('cards3');
+  const result = {};
+  let html = '';
+  for (const set of SETS) {
+    html += `<div class="card"><h3>${set.label} —— ${set.hint}</h3>`;
+    for (const it of set.items) {
+      onStep?.(`正在渲染 ${it.id} …`);
+      await new Promise((r) => setTimeout(r, 20));
+      const r = await renderCalibrated(it.id, secs, it.cfg);
+      const url = URL.createObjectURL(wavBlob(r.L, r.R));
+      result[it.id] = {
+        label: set.label, title: it.title, mixGainDb: r.cfg.mixGainDb, rounds: r.rounds,
+        rms: +r.m.rmsDb.toFixed(1), peak: +r.m.peakDb.toFixed(1),
+        centroid: Math.round(r.m.centroidHz), events: r.events, url,
+      };
+      const n = it.id.split('-');
+      html += `<div class="row" style="margin:6px 0">
+          <b style="min-width:70px">${n[0]}#${n[1] || '—'}</b>
+          <audio controls src="${url}" data-id="${it.id}"></audio>
+          <a href="${url}" download="try-${it.id}.wav">下载</a>
+          <span style="color:#7f8ea3">${it.title.replace(/^[^ ]+ /, '')} · RMS ${r.m.rmsDb.toFixed(1)} · 峰值 ${r.m.peakDb.toFixed(1)} · 电平 ${r.cfg.mixGainDb}dB · ${r.rounds} 轮</span>
+        </div>`;
+      box.innerHTML = html + '</div>';
+    }
+    html += '</div>';
+    box.innerHTML = html;
+  }
+  globalThis.__lastSets = result;
+  return result;
+}
+$('go3').addEventListener('click', async () => {
+  $('go3').disabled = true;
+  try {
+    await renderSets(Number($('secs').value) || 20, (m) => { $('prog3').textContent = m; });
+    $('prog3').textContent = '10 段都好了（电平已对齐）· 挨个听，告诉我每组选哪个';
+  } catch (e) {
+    err('海选渲染失败：' + ((e && e.stack) || e));
+  } finally {
+    $('go3').disabled = false;
+  }
+});
+/**
+ * ★ 「存成 wav」：把刚渲好的 10 段 POST 给 `serve.cjs`（它只认这一条写入口，写到
+ * `dev-weather\wav\`）。这样不用开着这个页面也能用别的播放器听、也可以直接发给别人。
+ */
+$('save3').addEventListener('click', async () => {
+  const last = globalThis.__lastSets;
+  if (!last) { $('prog3').textContent = '先点「渲染海选」'; return; }
+  $('save3').disabled = true;
+  let n = 0;
+  try {
+    for (const [id, r] of Object.entries(last)) {
+      const blob = await (await fetch(r.url)).blob();
+      const res = await fetch('/save?name=' + encodeURIComponent('try-' + id + '.wav'), { method: 'POST', body: blob });
+      if (!res.ok) throw new Error(id + ' → HTTP ' + res.status);
+      n += 1;
+      $('prog3').textContent = `已存 ${n}/${Object.keys(last).length} …`;
+    }
+    $('prog3').textContent = `10 段都存到 dev-weather\\wav\\ 了`;
+  } catch (e) {
+    err('存 wav 失败：' + ((e && e.message) || e));
+  } finally {
+    $('save3').disabled = false;
+  }
+});
+/**
+ * ★★ **时间线探针**：把一段渲染切成 1 秒的窗口，逐秒量 RMS —— 用来抓
+ * **"越到尾声越大"** 这一类问题（用户 2026-10-11 深夜报的）。
+ *
+ * 这类毛病用"整段一个 RMS"是**看不出来**的（平均掉就没了），必须看**时间线**。
+ * 试几种假设：只留床 / 只留前景 / 完整，分别看趋势。
+ */
+globalThis.__timeline = async (name, secs = 24, opts = {}) => {
+  const r = await renderTrack(name, secs, opts);
+  const per = Math.round(SR);                      // 1 秒一个窗口
+  const win = [];
+  for (let start = 0; start + per <= r.L.length; start += per) {
+    let sum = 0;
+    for (let i = start; i < start + per; i += 1) {
+      const m = (r.L[i] + r.R[i]) * .5;
+      sum += m * m;
+    }
+    win.push(+(20 * Math.log10(Math.max(1e-9, Math.sqrt(sum / per)))).toFixed(1));
+  }
+  const head = win.slice(3, 8).reduce((a, b) => a + b, 0) / Math.max(1, Math.min(5, win.length - 3));   // 跳过淡入
+  const tail = win.slice(-5).reduce((a, b) => a + b, 0) / Math.max(1, Math.min(5, win.length));
+  return JSON.stringify({
+    name, mode: opts.bedMute ? '只前景' : opts.fgMute ? '只床' : '完整',
+    perSecond: win, headAvg: +head.toFixed(1), tailAvg: +tail.toFixed(1), driftDb: +(tail - head).toFixed(1),
+  });
+};
+globalThis.__timelineAll = async (secs = 24) => {
+  const out = {};
+  for (const n of ORDER) {
+    const full = JSON.parse(await globalThis.__timeline(n, secs));
+    const bed = JSON.parse(await globalThis.__timeline(n, secs, { fgMute: true }));
+    const fg = JSON.parse(await globalThis.__timeline(n, secs, { bedMute: true }));
+    out[n] = {
+      '完整 drift': full.driftDb, '只床 drift': bed.driftDb, '只前景 drift': fg.driftDb,
+      '完整逐秒': full.perSecond, '只床逐秒': bed.perSecond,
+    };
+  }
+  return out;
+};
+/**
+ * ★★ **海选的渲染 = "渲染 → 实测 → 按差值再渲"（闭环）**，**不再手推公式**。
+ *
+ * 为什么（2026-10-11 深夜，用户报"越到后面越大"，这一页上一版卡在这里）：
+ *   我在这条电平式子上**连着错了三次** —— 把增益当电平、忘了减负的 `masterDb`、
+ *   又忘了限幅器的自动补偿。而"实测 RMS 离目标差几 dB"是**自洽**的：差几 dB 补几 dB。
+ *   所以干脆闭着环跑，让实测自己收敛；顺带把"峰值超了"也管住（宁可小声，不要削顶）。
+ *
+ * ⚠️ 判据只信这里量出来的 `rms`/`peak`，不信任何推导出来的数。
+ * ⚠️ 目标电平 = `TARGET_RMS_DB`（-26dBFS，跟产品同一条线），**13 组全部对齐到同一个电平**，
+ *    这样用户海选时比的是**音色**，不是响度。
+ */
+const PEAK_CEIL_AUDITION = -4;  // 峰值上限（用 `measure()` 那把 |L|+|R| 的尺子，比每声道保守 ~6dB）
+async function renderCalibrated(name, secs, cfg, targetDb = TARGET_RMS_DB, peakCeil = PEAK_CEIL_AUDITION, rounds = 4) {
+  let c = { ...cfg };
+  let out = null;
+  for (let i = 0; i < rounds; i += 1) {
+    const r = await renderTrack(name, secs, { trackTable: c });
+    const m = measure(r.L, r.R, 2.5);
+    out = { ...r, cfg: c, m, rounds: i + 1 };
+    const step = Math.min(targetDb - m.rmsDb, peakCeil - m.peakDb);
+    if (Math.abs(step) < .5) break;
+    c = { ...c, mixGainDb: +(c.mixGainDb + step).toFixed(1) };
+  }
+  return out;
+}
+/** 挂出去，方便在控制台一条条试（`__norm('rain-x', 20, cfg)`）。 */
+globalThis.__norm = async (name, secs, cfg, targetDb, peakCeil) => {
+  const r = await renderCalibrated(name, secs, cfg, targetDb, peakCeil);
+  return JSON.stringify({
+    rms: +r.m.rmsDb.toFixed(1), peak: +r.m.peakDb.toFixed(1), mixGainDb: r.cfg.mixGainDb,
+    rounds: r.rounds, events: r.events,
+  });
+};
+/**
+ * ★★ **闭环自动标定**：反复"渲一遍 → 量实测 → 按差值调 `mixGainDb`"，最多 4 轮。
+ *
+ * 为什么不再手推公式（2026-10-11 深夜）：这条式子上我**连着错了三次**
+ * （把增益当电平、忘了减负的 masterDb、加了限幅器的自动补偿），
+ * 每次都要重渲一遍才发现。而"实测 RMS 离目标差几 dB"是**自洽**的：差几 dB 就加几 dB。
+ * 所以干脆闭着环跑，让实测自己收敛 —— 顺带把"峰值超了"也一并管住（宁可小声，不要削顶）。
+ *
+ * `TARGET` = -28dBFS（够清楚，又给峰值留余量）；`PEAK_CEIL` = -4dB（留 4dB 给限幅器以外的意外）。
+ */
+const TARGET = -28, PEAK_CEIL = -4;
+globalThis.__calib = async (name, cfg, secs = 12, rounds = 4) => {
+  let c = { ...cfg };
+  let m = null;
+  const trace = [];
+  for (let i = 0; i < rounds; i += 1) {
+    const r = await renderTrack(name, secs, { trackTable: c });
+    m = measure(r.L, r.R, 2.5);
+    trace.push({ mixGainDb: c.mixGainDb, rms: +m.rmsDb.toFixed(1), peak: +m.peakDb.toFixed(1) });
+    /**
+     * ⚠️ **取两者的较小值**（2026-10-11 深夜踩到）：只看 RMS 会把电平往目标推，
+     * 但峰值已经贴顶时**再推就是削顶** —— 那一下会得到 `峰值 +3.6dBFS` 这种不可能的数字。
+     * 所以两个目标（"到 -28dBFS"和"峰值不超 -4dB"）里，**谁更小就听谁的**。
+     */
+    const step = Math.min(TARGET - m.rmsDb, PEAK_CEIL - m.peakDb);
+    if (Math.abs(step) < .5) break;
+    c = { ...c, mixGainDb: +(c.mixGainDb + step).toFixed(1) };
+  }
+  return JSON.stringify({ name, final: c.mixGainDb, rms: +m.rmsDb.toFixed(1), peak: +m.peakDb.toFixed(1), trace });
+};
 
 /**
  * ★ 给自动化验收留的入口：直接渲染 + 测量并返回 JSON（不出声）。

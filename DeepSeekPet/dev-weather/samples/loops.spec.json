@@ -1,0 +1,90 @@
+{
+  "targetDb": -26,
+  "fade": 2.5,
+  "out": "dev-weather/samples/loops",
+  "items": [
+    {
+      "id": "rain-1", "kind": "rain",
+      "label": "真实连雨①（OGA「Rain (loopable)」 · 本身可循环）",
+      "src": "dev-weather/samples/raw/rain-1-Rain_OGG.zip", "single": "^1\\.ogg$",
+      "license": "CC0", "len": 20
+    },
+    {
+      "id": "rain-2", "kind": "rain",
+      "label": "真实连雨②（OGA「Ove Melaa - Rainy」长版 · 纯雨声）",
+      "src": "dev-weather/samples/raw/rain-2-Ove_Melaa_-_Rainy_NOT_loopable_Long_Version.ogg",
+      "license": "CC0", "len": 20
+    },
+    {
+      "id": "rain-3", "kind": "rain",
+      "label": "真实连雨③（OGA「Rain in the Gutter Loop」· 檐口滴水感）",
+      "src": "dev-weather/samples/raw/rain-3-rain-gutter-loop_0.mp3",
+      "license": "CC0", "len": 20
+    },
+    {
+      "id": "snow-1", "kind": "snow",
+      "label": "冬风①（OGA「Winter Wind」· 低、空）",
+      "src": "dev-weather/samples/raw/snow-1a-winter-wind_0.mp3",
+      "license": "CC0", "len": 20
+    },
+    {
+      "id": "snow-2", "kind": "snow",
+      "label": "风②（OGA「Wind Loop」· 本身就是循环素材）",
+      "src": "dev-weather/samples/raw/snow-2-wind-01_0.ogg",
+      "license": "CC-BY 3.0", "len": 20
+    },
+    {
+      "id": "snow-3", "kind": "snow",
+      "label": "风③（OGA「Strong Wind Blowing」· 风更实）",
+      "src": "dev-weather/samples/raw/snow-3-strong_wind_blowing_0.mp3",
+      "license": "CC-BY 3.0/4.0", "len": 20
+    },
+    {
+      "id": "leaf-1", "kind": "leaf",
+      "label": "落叶①（OGA「Leaves」Stefan Grossmann · 2 分 16 秒的连续落叶）",
+      "src": "dev-weather/samples/raw/leaf-2-Leaves_-_Stefan_Grossmann.flac",
+      "license": "CC-BY 4.0", "len": 20
+    },
+    {
+      "id": "leaf-2", "kind": "leaf",
+      "label": "落叶②（OGA「20 Rustles of dry leaves」中 10 段干树叶拼接）",
+      "src": [
+        "dev-weather/samples/raw/rustle/rustle/rustle01.flac",
+        "dev-weather/samples/raw/rustle/rustle/rustle03.flac",
+        "dev-weather/samples/raw/rustle/rustle/rustle04.flac",
+        "dev-weather/samples/raw/rustle/rustle/rustle06.flac",
+        "dev-weather/samples/raw/rustle/rustle/rustle07.flac",
+        "dev-weather/samples/raw/rustle/rustle/rustle09.flac",
+        "dev-weather/samples/raw/rustle/rustle/rustle11.flac",
+        "dev-weather/samples/raw/rustle/rustle/rustle13.flac",
+        "dev-weather/samples/raw/rustle/rustle/rustle16.flac",
+        "dev-weather/samples/raw/rustle/rustle/rustle19.flac"
+      ],
+      "part": 2.4, "license": "CC0", "len": 20
+    },
+    {
+      "id": "leaf-3", "kind": "leaf",
+      "label": "落叶③（OGA「Wind and tree」· 风穿过树）",
+      "src": "dev-weather/samples/raw/leaf-3-Wind_and_tree.ogg",
+      "license": "CC-BY 3.0", "len": 20
+    },
+    {
+      "id": "blossom-1", "kind": "blossom",
+      "label": "樱花①（OGA「Forest Ambience」· 林间 44 秒）",
+      "src": "dev-weather/samples/raw/blossom-1-Forest_Ambience.mp3",
+      "license": "CC0", "len": 20
+    },
+    {
+      "id": "blossom-2", "kind": "blossom",
+      "label": "樱花②（OGA「choco birds forest」· 鸟鸣密）",
+      "src": "dev-weather/samples/raw/blossom-2-chocobirds_forest_2023_320_kbps.ogg",
+      "license": "CC0", "len": 20
+    },
+    {
+      "id": "blossom-3", "kind": "blossom",
+      "label": "樱花③（OGA「Birds and Wind - Ambient」· 鸟 + 轻风）",
+      "src": "dev-weather/samples/raw/blossom-3-Birds_and_Wind_-_Ambient_1.ogg",
+      "license": "CC0", "len": 20
+    }
+  ]
+}

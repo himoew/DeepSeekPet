@@ -1,0 +1,144 @@
+<!doctype html>
+<!--
+  ============================================================================
+  天气环境音 · 真实录音循环试听页（2026-10-11 深夜，**换代**）
+  ============================================================================
+
+  ★ 这一版不再合成声音：每档都是**从现成的真实录音里切出来的一段无缝循环**
+    （见 `make-loop.mjs`：自动挑最平稳的窗口 → 尾部与头部交叉淡化 → 电平对齐 → ogg）。
+
+  ★ 你来判断（还是你原来的那几句话）：
+      雨   = 连绵不断的雨声 + 夹杂清晰突出的雨点，**不许有规律节奏**；背景小、颗粒清晰
+      雪   = 基准（你说"舒展有秩序"）——这次也给你几个，但**原来的那版还没动**
+      落叶 = 风声 + 风吹树叶，**没有"擦玻璃"**，有一点凋落的萧瑟
+      樱花 = 春天轻风 + 鸟鸣，**不像噪声**，风轻轻地吹
+
+  ★ 每档 3 个候选。这页只做一件事：**让你挨个听、并且能听出"循环接缝"**——
+    「循环 60 秒」按钮会连播 10 遍，接缝有毛病的话，连播时最明显。
+
+  ⚠️ 桌宠那边**还没接**（现在是"合成引擎"）。你选定之后我把那套删掉、换成"播这个循环"，
+     一行常量开关的事，不需要再动音色。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>天气环境音 · 真实循环试听</title>
+<style>
+  :root{--line:#2b3947;--bg:#12181f;--panel:#0d1218;--ink:#dfe8f2;--dim:#7f8ea3}
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font:13px/1.7 "Microsoft YaHei","Noto Sans SC",system-ui,sans-serif}
+  #wrap{padding:14px 16px 60px;max-width:1100px}
+  h1{margin:0 0 6px;font-size:17px}
+  h1 small{font-weight:400;color:var(--dim);font-size:12px;margin-left:8px}
+  h2{font-size:14px;margin:22px 0 4px;color:#9fb4cc;border-bottom:1px solid var(--line);padding-bottom:4px}
+  p.note{color:var(--dim);margin:6px 0}
+  code{background:#1b242e;border:1px solid var(--line);border-radius:4px;padding:0 4px}
+  button{font:inherit;padding:5px 10px;border-radius:8px;cursor:pointer;
+    border:1px solid var(--line);background:#1b242e;color:var(--ink)}
+  button:hover:not(:disabled){border-color:#3f6a8c;background:#22303c}
+  button.playing{background:#1f6feb;border-color:#4a8ff7;color:#fff;font-weight:600}
+  button.pick.on{background:#2b7a4b;border-color:#43a06a;color:#fff;font-weight:600}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 10px;margin:6px 0;
+    border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+  .row b.id{min-width:78px}
+  .meta{color:var(--dim);font-size:12px}
+  .bad{color:#ff8a8a}
+  .good{color:#7ee0a8}
+  #picked{margin-top:14px;padding:10px;border:1px solid #3f6a8c;border-radius:10px;background:#131e2a;min-height:38px}
+  #err{color:#ff8a8a;white-space:pre-wrap;margin-top:10px}
+  .bar{display:inline-block;height:8px;background:#1f6feb;border-radius:3px;vertical-align:middle}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>天气环境音 · 真实循环试听 <small>从现成录音切出来的无缝循环（不是合成的）</small></h1>
+  <p class="note">
+    每档 3 个候选，都是真实录音（OpenGameArt，CC0 / CC-BY，出处与授权写在每一条后面）。
+    切法与对齐都是自动的：<b>自动挑最平稳的窗口 → 尾与头交叉淡化 → 四档电平对齐到同一个 RMS</b>。
+    <br>★ 听的时候注意两件事：① <b>是不是你要的那个声音</b>（见每档上面你原来的要求）；
+    ② 点「循环 60 秒」连播 10 遍，<b>接缝有没有"咔哒/呼吸"</b>。
+  </p>
+  <p class="note">★ 选中的点一下「就它」——页面底部会汇总一行，你直接发给我就行。桌宠那边等你确认后再接。</p>
+  <div id="body"><p class="note">正在读 <code>samples/loops/index.json</code> …</p></div>
+  <div id="picked">我选的：<span id="pickedText">（还没选）</span></div>
+  <div id="err"></div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const err = (m) => { $('err').textContent = String(m); };
+const HINT = {
+  rain: '你说：连绵不断的雨声 + 夹杂清晰突出的雨点，不许有规律节奏；背景调小、颗粒清晰',
+  snow: '你说：这档"舒展有秩序"，是基准（真实录音这条路是新的，所以也给你三个候选挑）',
+  leaf: '你说：去掉擦玻璃，就是风声 + 风吹树叶，要凋落的萧瑟感',
+  blossom: '你说：春天轻风 + 鸟鸣，不像噪声；背景小一点，风轻轻地吹、缓缓走过',
+};
+const NAME = { rain: '雨', snow: '雪', leaf: '落叶', blossom: '樱花' };
+const ORDER = ['rain', 'snow', 'leaf', 'blossom'];
+let playing = null, timer = null;
+const chosen = JSON.parse(localStorage.getItem('pet-loop-choice') || '{}');
+
+/** 单曲就连播 60 秒（接缝问题连播最容易听出来）；再点一次停。 */
+function toggle60(id, btn) {
+  const a = new Audio('samples/loops/' + id + '.ogg');
+  a.loop = true;
+  if (playing && playing.id === id) { stop(); return; }
+  stop();
+  playing = { id, a, btn };
+  btn.classList.add('playing');
+  btn.textContent = '停止（正在连播）';
+  a.play().catch((e) => err('播放被拦（先点一下页面再点按钮）：' + e.message));
+  timer = setTimeout(stop, 60000);
+}
+function stop() {
+  if (timer) { clearTimeout(timer); timer = null; }
+  if (playing) {
+    try { playing.a.pause(); } catch (e) { /* ignore */ }
+    playing.btn.classList.remove('playing');
+    playing.btn.textContent = '循环 60 秒';
+    playing = null;
+  }
+}
+function pick(item, btn) {
+  chosen[item.kind] = item.id;
+  localStorage.setItem('pet-loop-choice', JSON.stringify(chosen));
+  renderPicked();
+  for (const b of document.querySelectorAll('button.pick')) b.classList.toggle('on', b.dataset.id === chosen[item.kind]);
+}
+function renderPicked() {
+  const parts = ORDER.filter((k) => chosen[k]).map((k) => NAME[k] + '=' + chosen[k]);
+  $('pickedText').textContent = parts.length ? parts.join('　') : '（还没选）';
+}
+
+fetch('samples/loops/index.json', { cache: 'no-store' }).then((r) => r.json()).then((data) => {
+  const items = data.items || [];
+  let html = '';
+  for (const kind of ORDER) {
+    const list = items.filter((i) => i.kind === kind);
+    html += `<h2>${NAME[kind] || kind} · ${list.length} 个候选</h2><p class="note">${HINT[kind] || ''}</p>`;
+    if (!list.length) { html += '<p class="note">还没有这一档的循环。</p>'; continue; }
+    for (const it of list) {
+      html += `<div class="row">
+        <b class="id">${it.id}</b>
+        <audio controls loop preload="none" src="samples/loops/${it.file}"></audio>
+        <button data-id="${it.id}" data-kind="${it.kind}" class="p60">循环 60 秒</button>
+        <button data-id="${it.id}" data-kind="${it.kind}" class="pick">就它</button>
+        <span class="meta">${it.label}<br>
+          ${it.secs}秒 · RMS ${it.rms} / 峰值 ${it.peak}dBFS · 接缝比 ${it.seam}
+          ${it.license ? ' · ' + it.license : ''}${it.note ? ' · ' + it.note : ''}</span>
+      </div>`;
+    }
+  }
+  $('body').innerHTML = html;
+  for (const b of document.querySelectorAll('button.p60')) b.addEventListener('click', () => toggle60(b.dataset.id, b));
+  for (const b of document.querySelectorAll('button.pick')) {
+    b.addEventListener('click', () => {
+      const all = (data.items || []).find((i) => i.id === b.dataset.id);
+      pick(all || { id: b.dataset.id, kind: b.dataset.kind }, b);
+    });
+  }
+  renderPicked();
+}).catch((e) => err('读 index.json 失败：' + e.message + '（先跑 make-loop.mjs 生成循环）'));
+</script>
+</body>
+</html>

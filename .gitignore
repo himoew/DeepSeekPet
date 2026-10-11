@@ -22,6 +22,12 @@ run-sherpa.cmd
 piper-voices.json
 sherpa-*.log
 
+# 环境音素材：下载回来的原始录音 + 切好的循环（几十 MB，且 make-loop.mjs 随时能重切）
+# ⚠️ 只忽略"素材"，不忽略工具：make-loop.mjs / loops.html / loops.spec.json 是要进库的
+DeepSeekPet/dev-weather/samples/raw/
+DeepSeekPet/dev-weather/samples/loops/
+DeepSeekPet/dev-weather/samples/wav/
+
 # 我自己跑验收留下的东西（日志、提交信息草稿、临时比对表）
 _verify-*.log
 _smoke-*.log

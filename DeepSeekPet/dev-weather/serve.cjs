@@ -15,7 +15,7 @@ const path = require('node:path');
 const here = __dirname;                       // …\DeepSeekPet\dev-weather
 const web = path.join(here, '..', 'resources', 'app', 'web');   // 产品里的 web 目录（读 fx.js）
 const PORT = Number(process.env.PORT) || 8899;
-const TYPES = { '.js': 'text/javascript; charset=utf-8', '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png' };
+const TYPES = { '.js': 'text/javascript; charset=utf-8', '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.json': 'application/json; charset=utf-8', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.flac': 'audio/flac', '.mp3': 'audio/mpeg' };
 
 /**
  * 路由（只有三条，别再加花样）：
@@ -31,7 +31,26 @@ const TYPES = { '.js': 'text/javascript; charset=utf-8', '.html': 'text/html; ch
 const ROUTES = {
   pet: 'resources/app/web/pet.html',        // 跟 app\server.cjs 的 '/pet' 对齐
 };
+/**
+ * ★ **唯一一条写入**（2026-10-11 深夜加）：`POST /save?name=xx.wav` → 写到本目录的 `wav\`。
+ * 给 `sound.html` 的「存成 wav」用：这样海选那 10 段可以落成文件，用别的播放器听/发给别人。
+ * 只允许 `.wav`、只写 `wav\` 这一层，不接受路径分隔符 —— 免得这条路变成任意写。
+ */
+const WAV_DIR = path.join(here, 'wav');
+function saveWav(req, res) {
+  const name = (new URL(req.url, 'http://x').searchParams.get('name') || '').replace(/[^A-Za-z0-9._-]/g, '');
+  if (!/^[A-Za-z0-9._-]+\.wav$/.test(name)) { res.writeHead(400).end('bad name'); return; }
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
+  req.on('end', () => {
+    fs.mkdirSync(WAV_DIR, { recursive: true });
+    fs.writeFileSync(path.join(WAV_DIR, name), Buffer.concat(chunks));
+    console.log('  存了 ' + name + '（' + Buffer.concat(chunks).length + ' 字节）');
+    res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
+  });
+}
 const server = http.createServer((req, res) => {
+  if (req.method === 'POST' && req.url.startsWith('/save')) { saveWav(req, res); return; }
   let raw = decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(/^\/+/, '') || 'index.html';
   /**
    * ⚠️ 产品页里的引用是**绝对路径** `/web/pet.css`、`/web/pet-app.js`（真桌宠那边由

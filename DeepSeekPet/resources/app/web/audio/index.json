@@ -1,0 +1,41 @@
+{
+  "note": "真实录音循环（OpenGameArt，出处与授权见每条）",
+  "items": [
+    {
+      "kind": "rain",
+      "file": "rain.ogg",
+      "gainDb": 0,
+      "label": "真实连雨①（OGA「Rain (loopable)」 · 本身可循环）",
+      "license": "CC0",
+      "sourceId": "rain-1",
+      "secs": 20,
+      "rms": -26,
+      "peak": -8.3,
+      "seam": 0.078
+    },
+    {
+      "kind": "snow",
+      "file": "snow.ogg",
+      "gainDb": 0,
+      "label": "风②（OGA「Wind Loop」· 本身就是循环素材）",
+      "license": "CC-BY 3.0",
+      "sourceId": "snow-2",
+      "secs": 20,
+      "rms": -26,
+      "peak": -12.7,
+      "seam": 0.079
+    },
+    {
+      "kind": "blossom",
+      "file": "blossom.ogg",
+      "gainDb": 0,
+      "label": "樱花①（OGA「Forest Ambience」· 林间 44 秒）",
+      "license": "CC0",
+      "sourceId": "blossom-1",
+      "secs": 20,
+      "rms": -26,
+      "peak": -4.7,
+      "seam": 0.049
+    }
+  ]
+}

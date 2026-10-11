@@ -78,27 +78,39 @@
  */
 const TRACKS = {
   /**
-   * 雨 —— **主角是"雨滴"**。用户原话："雨声在雨天就应该是最突出的声音"。
+   * 雨 —— **主角是"连绵不断的雨声"，里面夹杂清晰突出的雨点**。
    *
-   * 所以这一档刻意把床**压到很窄**（带通 1.2k Q.5），只留一点"雨幕"的底；
-   * 厚度由 700Hz 的窄带中层给；**绝大部分存在感来自每秒 9~15 颗雨滴**：
-   * 每颗 = 低频冲击（水滴打上去的"蓬"）+ 一点小滴的 2.5~5k 碎裂声，
-   * 独立的左右声场、独立的音量 —— 是**节奏**让人听出"这是雨"。
+   * ★★ 用户 2026-10-11 深夜的原话（这是这一档的设计依据，别再按"每秒几滴"理解）：
+   *   "雨天的主角是雨没错，但它**不是一秒钟下几滴雨来展现的**，它是**连绵不断的雨滴声**，
+   *    夹杂着一些**比较突出的清晰的雨点**声 —— 这个突出的声音**是不是非常规律的**
+   *    （总之就是将**背景的声音调小一点**，然后**颗粒清晰一些**，主角的雨滴需要**更清晰明显**，
+   *     但**不能有很规律的节奏感**）。"
+   *
+   * 所以这一档拆成三层，**连绵**和**突出**各管一头：
+   *   ① **连绵层 = `mid` 那条带通噪声**（1.6kHz Q.75）—— 它就是"雨声"的本体，占主要能量；
+   *   ② **颗粒层 = `drop` 事件**：**每秒 28~45 颗**（`every: [.022, .036]`），这是"连绵"的第二半
+   *      与"颗粒感"的来源。密度高到**不成拍**，才不会有节奏感；
+   *   ③ **突出雨点 = `dropBig` 事件**：**不规则**（间隔用**指数分布**抽：`everyExp`），
+   *      每秒约 1.2~2.4 颗，比颗粒层响一大截、衰减更长、更低频 —— 用户说的"清晰的雨点"。
+   *      ⚠️ **必须用指数分布**（`everyExp`）：均匀分布听久了还是会"有拍"，
+   *      指数分布抽出来是**成簇的、有疏有密**，那才是真雨。
+   *   ④ **床**压到最低（`g: .035`）—— 用户明确要求"背景的声音调小一点"。
    */
   rain: {
     mixGainDb: 17.7, seed: 44,
-    bed: [{ n: 'pink', t: 'bandpass', f: 1200, q: .5, g: .10, flow: .5, envHz: [.25], swing: 10, drift: [6] }],
-    mid: [{ n: 'pink', t: 'bandpass', f: 700, q: .5, g: .07, flow: .7, envHz: [.2], swing: 12, drift: [7] }],
+    bed: [{ n: 'pink', t: 'bandpass', f: 900, q: .5, g: .035, flow: .5, envHz: [.25], swing: 10, drift: [6] }],
+    mid: [{ n: 'pink', t: 'bandpass', f: 1600, q: .75, g: .085, flow: .6, envHz: [.22], swing: 12, drift: [7] }],
     spark: 'drop',
-    every: [.065, .11],                 // ≈ 9~15 颗/秒（是**节奏**，不是密度堆积）
+    every: [.022, .036],                // 连绵颗粒：≈ 28~45 颗/秒 → 听着是"雨"，不是"滴答"
+    everyExp: .65,                      // 突出雨点：**指数分布**，平均 1/0.65 ≈ 1.5 颗/秒（不成拍）
     thunder: [24, 60],                  // 远雷：拉长间隔、压低音量
   },
   /**
-   * 雪 —— **主角是"风"**（雪本身没有声音）。用户对风的要求是"别像死水"。
+   * 雪 —— **主角是"风"**（雪本身没有声音）。
    *
-   * 所以风吹得**明显**：中层是一条 520Hz 的窄带噪声，它的**音量包络由 30 秒游走驱动
-   * （`flow: 1`）** —— 一阵一阵地紧、松，周期不重复；截止也跟着晃（`swing 24%`）。
-   * 另外偶尔来一声低频的"阵风"（`spark: 'gust'`），把风的方向感带出来。
+   * ★★ **用户 2026-10-11 的定评："表现最好的是雪天的声音，舒展有秩序，听起来不奇怪"** ——
+   *    所以这一档**保持原样、不再动它**（连 `every`/`g`/`f` 都不许改）。
+   *    用户还补了一句"雪的主角音几乎没有（不过别管它，雪就按这个）"—— 明确接受。
    */
   snow: {
     mixGainDb: 17.7, seed: 11,
@@ -108,29 +120,40 @@ const TRACKS = {
     every: [4.5, 11],
   },
   /**
-   * 落叶 —— **主角是"一片叶子擦过"**。真实落叶没有连续声源，所以主角只能是**动作**：
-   * 0.35~0.6 秒的宽频抓挠（1~5k），**在声场里来回移动**（擦过的方向感），
-   * 每 1.2~3 秒一次。床与中层压到很低，只留"空气"。
+   * 落叶 —— **风声 + 风吹树叶**，要"**凋落的萧瑟感**"。
+   *
+   * ★ 用户原话："把**擦玻璃的声音去掉**吧，其实就是**风声和风吹树叶**的声音，有那种**凋落的萧瑟感**。"
+   *   · 旧的 `leafRustle()` 是"擦玻璃"的元凶：6~10 个 **1~4kHz 的短爆点**串起来，
+   *     宽频 + 快起快落 = 抓挠玻璃。**这一版不用它了**。
+   *   · 现在只有两样东西：① 风（`bed` + `mid` 两条窄带，`flow` 让它们慢慢起伏）；
+   *     ② **风吹树叶**：`spark: 'sway'` —— 0.8~1.6 秒的**慢起慢落**、中心在 700~1500Hz、
+   *     带一点抖动（树叶不是一块布），而且**没有尖锐的起始**（`attack: .18`）。
+   *   · "萧瑟感"来自：中高频（1~3k）**留一点空地**（不像夏天那么满）、偶尔一阵风把叶子吹响。
    */
   leaf: {
     mixGainDb: 17.7, seed: 33,
-    bed: [{ n: 'pink', t: 'bandpass', f: 500, q: .6, g: .05, flow: .7, envHz: [.2], swing: 12, drift: [10] }],
-    mid: [{ n: 'pink', t: 'bandpass', f: 2600, q: .5, g: .035, flow: .8, envHz: [.25], swing: 14, drift: [12] }],
-    spark: 'leaf',
-    every: [1.2, 3.0],
+    bed: [{ n: 'brown', t: 'bandpass', f: 300, q: .55, g: .13, flow: .7, envHz: [.18], swing: 14, drift: [9] }],
+    mid: [{ n: 'brown', t: 'bandpass', f: 900, q: .5, g: .06, flow: 1, envHz: [.15], swing: 22, drift: [10], lfo: [[.029, 14]] }],
+    spark: 'sway',
+    every: [2.4, 6.5],                  // 风把树叶吹响：稀疏、无拍
   },
   /**
-   * 樱花 —— **主角是"很轻的风"**（花瓣沙沙）**加"偶尔的鸟叫"**。这是唯一允许有两个前景的档，
-   * 但两者**时间上几乎不重叠**：风是底子（`flow 1` 慢慢呼吸），鸟叫是**稀客**（22~55 秒一次）。
-   * 鸟叫做成真正的**滑音**（带通扫频的"啾-溜"），比纯正弦自然得多 ——
-   * 而且它落在 2~5k，**避开**雨滴/风声的频段（"挤成一堆"的另一半原因）。
+   * 樱花 —— **春天的轻风 + 鸟鸣**。
+   *
+   * ★ 用户原话："现在的声音**像噪声**，不用跑偏就是**春天的风声和鸟鸣**的叫声，
+   *   **背景声小一点**，**风声轻轻的吹动，缓缓的走过**。"
+   *   · "像噪声"的元凶是 1.1kHz 那条**宽带**中层（Q .5 太宽，就是一条咝）。
+   *     现在收窄到 **Q 1.1 / 950Hz**，并把床压到 `g: .045` —— 只剩"空气在动"；
+   *   · 风：`mid` 的 `flow: 1`（慢呼吸）+ `swing 18`（截止缓缓摆）→ "轻轻吹动、缓缓走过"；
+   *   · **鸟鸣**：`spark: 'bird'` 提高出场率（**9~26 秒**一次，比原来的 22~55 秒勤快），
+   *     并且鸟叫本身也重调（见 `bird()`：更短、更亮、两句一组、带一个上扬）。
    */
   blossom: {
     mixGainDb: 25.1, seed: 22,
-    bed: [{ n: 'pink', t: 'bandpass', f: 420, q: .6, g: .07, flow: .6, envHz: [.2], swing: 12, drift: [9] }],
-    mid: [{ n: 'pink', t: 'bandpass', f: 1100, q: .5, g: .05, flow: 1, envHz: [.17], swing: 20, drift: [10], lfo: [[.037, 22]] }],
+    bed: [{ n: 'pink', t: 'bandpass', f: 380, q: .6, g: .045, flow: .5, envHz: [.2], swing: 12, drift: [9] }],
+    mid: [{ n: 'pink', t: 'bandpass', f: 950, q: 1.1, g: .05, flow: 1, envHz: [.16], swing: 18, drift: [10], lfo: [[.037, 22]] }],
     spark: 'bird',
-    every: [22, 55],
+    every: [9, 26],
     bird: { f0: [2300, 3400], sweep: [.55, .85] },   // 鸟叫的音高范围与下滑比例（见 `bird()`）
   },
 };
@@ -186,6 +209,56 @@ const MASTER_GAIN = 0.15;
 /** 指数斜坡不能到 0（规范禁止），统一用这个"听不见但为正"的 ε。 */
 const EPS = 1e-4;
 
+/* =====================================================================================
+ * ★★ 慢随机游走的两个时间尺度 + 包络深度（2026-10-11 深夜定）
+ * =====================================================================================
+ * ⚠️ 这两个截止频率是**在 JS 里用一阶低通算的**（`onePole()`），不是 biquad ——
+ *    0.2Hz 这种截止在 48k 采样率下用 biquad 会因系数精度不足而**完全不滤波**（实测等于原样通过）。
+ */
+/** 音量包络的时间尺度（Hz）：0.2 ≈ "几秒一次"的呼吸。 */
+const DRIFT_SLOW_HZ = .2;
+/** 截止摆动的时间尺度（Hz）：9 ≈ 0.1 秒级的抖动（"风的颗粒"）。 */
+const DRIFT_FAST_HZ = 9;
+/**
+ * ★ `flow: 1` 对应的**最大**音量呼吸量（线性）。`flow` 是 0~1 的比例，深度就是 `FLOW_MAX × flow`。
+ *
+ * 0.5 → `flow:1` 的增益在 **0.5~1.5 之间**（最极端的一瞬 −6dB/+3.5dB，平时 ±1dB 上下）。
+ *
+ * 旧注释说"±1.1dB"，那是**在坏掉的游走上**量出来的（见 `makeBuffers()` 里那段）：
+ * 名义值是 ±1.1dB，实测逐秒却摆 20dB —— 因为那些游走的分布带 3~4σ 的尾巴。
+ * 现在**按峰值归一**，所以这个数就是**上限**，尾巴再也翻不了天。
+ */
+const FLOW_MAX = .5;
+
+/**
+ * **一阶低通（就地）**，给慢游走用。
+ *
+ * ★ 为什么不在 Web Audio 里挂 biquad 低通：48k 采样率下，`frequency = 0.2` 的 biquad
+ *   系数精度不够（极点贴到 1 上），实测 `lowpass 0.16Hz` 之后 RMS = 0.187、原始 0.201 ——
+ *   **等于什么都没滤**。用双精度 JS 算就没有这个下限。
+ */
+function onePole(x, fc, sr) {
+  const a = Math.exp((-2 * Math.PI * fc) / sr);
+  let y = 0;
+  for (let i = 0; i < x.length; i += 1) { y = (1 - a) * x[i] + a * y; x[i] = y; }
+  return x;
+}
+
+/** **减掉均值（就地）**，返回 `{ rms, peak }`。零均值 = 包络不会把电平一路推偏。 */
+function zeroMean(x) {
+  let m = 0;
+  for (let i = 0; i < x.length; i += 1) m += x[i];
+  m /= x.length;
+  let s = 0, pk = 0;
+  for (let i = 0; i < x.length; i += 1) {
+    x[i] -= m;
+    s += x[i] * x[i];
+    const a = Math.abs(x[i]);
+    if (a > pk) pk = a;
+  }
+  return { rms: Math.max(1e-9, Math.sqrt(s / x.length)), peak: Math.max(1e-9, pk) };
+}
+
 export function createAmbience({ report } = {}) {
   let ctx = null, master = null;
   let on = true, mode = 'off', booted = false, unlocked = false, failed = false;
@@ -196,12 +269,24 @@ export function createAmbience({ report } = {}) {
   let base = null;      // 白噪声（2 秒，循环）
   let pink = null;      // 粉噪声（-3dB/oct）
   let brown = null;     // 棕噪声（-6dB/oct，风声/轰鸣的底子）
-  let drift = null;     // 30 秒的慢随机游走（**包络与截止的唯一驱动源**）
   /**
-   * **游走源自己的 RMS**（`layer()` 里拿它把 `swing`/`flow` 换算成 Hz 与线性增益）。
-   * ⚠️ 少了它就只能像旧代码那样"猜一个 3.2 的系数"，而那正是"摆动过头/几乎不动"的根源。
+   * ★★ **慢随机游走是两条，不是一个**（2026-10-11 深夜第三次返工，这一版才是对的）：
+   *   · `driftSlow`（一阶低通到 ~0.2Hz，**几秒一次**）→ 驱**音量包络**（`flow`）；
+   *   · `driftFast`（一阶低通到 ~9Hz，**~0.1 秒级**）→ 驱**滤波器截止摆动**（`swing`）。
+   * 两条都在 **JS 里算成音频缓冲**（`onePole()`），**不再用 Web Audio 的 biquad 去低通** ——
+   * 原因见 `makeBuffers()` 里那段（0.2Hz 的 biquad 在 48k 下等于原样通过）。
    */
-  let driftRms = 1;
+  let driftSlow = null, driftFast = null;
+  /**
+   * **两条游走各自的 RMS 与峰值**（`layer()` 里拿它把 `swing`/`flow` 换算成 Hz 与线性增益）。
+   * ⚠️ 少了它就只能像旧代码那样"猜一个系数"，而那正是"摆动过头/几乎不动"的根源。
+   * ⚠️⚠️ **深度一律按"峰值"归一**（2026-10-11 深夜最后一次返工）：按 RMS 归一时这些游走是
+   *    **高斯样**的，尾巴能到 3~4σ —— `flow:1` 名义上 ±2dB，实测逐秒却摆 **20dB**（用户听到的
+   *    就是"一会儿很小、一会儿很大"）。按峰值归一之后**表里写多少就是最大偏移多少**。
+   * ⚠️⚠️ 还要**跟实际在用的那条游走对应**（慢的配慢的、快的配快的）：旧代码用"整段 30 秒里
+   *    **含 28 秒静音**的那条"去归一化慢包络，差了 4 倍，是"电平在飘"的帮凶。
+   */
+  let driftSlowRms = 1, driftSlowPeak = 1, driftFastRms = 1, driftFastPeak = 1;
 
   const enabled = () => on && unlocked && !failed;
 
@@ -238,16 +323,46 @@ export function createAmbience({ report } = {}) {
     pink.getChannelData(0).set(pk);
 
     /**
-     * **超慢随机游走**：30 秒的棕噪声，之后被低通到 0.15~0.25Hz。
-     * 它同时驱动两件事：**滤波器截止**（"风声一阵紧一阵松"）与**音量包络**（`flow`）。
-     * 因为它是非周期的，所以不会像正弦 LFO 那样几秒就被听出周期。
+     * ★★ **两条慢随机游走**（30 秒棕噪声，各自一阶低通，JS 里算好）。
+     *
+     * ⚠️⚠️ **这里是"越到后面越大"的真根因**（2026-10-11 深夜查出来的，前两次都改错了地方）：
+     *
+     *   ① 旧代码先把 30 秒的游走缓冲**用 2 秒的棕噪声去填** ——
+     *      `drift.getChannelData(0).set(br.subarray(0, dl))` 里 `br` 只有 2 秒，
+     *      于是那 30 秒的缓冲是 **2 秒噪声 + 28 秒静音**，还挂着 `loop = true`。
+     *   ② 于是"慢包络"其实是被一个**每 30 秒来一次的 2 秒脉冲**推着走；
+     *   ③ 低通到 0.15~0.25Hz 的那只 biquad **在 48k 下精度不够、根本不滤波**
+     *      （实测：低通 0.16Hz 之后 RMS = 0.187，原信号 0.201 —— 等于原样通过），
+     *      所以"慢包络"实际上是**音频速率的噪声调制**（听感是粗粝的噗噗声）；
+     *   ④ 后面那只 **0.02Hz 高通**（τ ≈ 8 秒）再把那个脉冲变成**一条单边斜坡**。
+     *      → 一段 20 秒里电平从 -33.9dBFS **单调爬到 -22.5dBFS（+11.4dB）**，
+     *        这就是用户报的"**越到后面越大**"；也解释了"同一套参数两次量出来差 10dB"。
+     *
+     * 现在：两条游走都在 JS 里用 `onePole()` 低通（**双精度、想要多低就多低**），
+     * 各自**减掉自己的均值**（零均值 → 没有直流 → **不可能一路偏过去**），
+     * 并把各自的 RMS 记下来给 `layer()` 归一化用。
      */
     const dl = Math.floor(ctx.sampleRate * 30);
-    drift = ctx.createBuffer(1, dl, ctx.sampleRate);
-    drift.getChannelData(0).set(br.subarray(0, dl));
-    let ds2 = 0;
-    for (let i = 0; i < dl; i += 1) ds2 += br[i] * br[i];
-    driftRms = Math.max(1e-6, Math.sqrt(ds2 / dl));
+    const wl = new Float32Array(dl);
+    for (let i = 0; i < dl; i += 1) wl[i] = Math.random() * 2 - 1;
+    const slow = new Float32Array(dl);
+    const fast = new Float32Array(dl);
+    let l2 = 0;
+    for (let i = 0; i < dl; i += 1) {
+      l2 = (l2 + 0.02 * wl[i]) / 1.02;
+      const v = l2 * 3.5;
+      slow[i] = v; fast[i] = v;
+    }
+    onePole(slow, DRIFT_SLOW_HZ, ctx.sampleRate);
+    onePole(fast, DRIFT_FAST_HZ, ctx.sampleRate);
+    const ds = zeroMean(slow);
+    const df = zeroMean(fast);
+    driftSlowRms = ds.rms; driftSlowPeak = ds.peak;
+    driftFastRms = df.rms; driftFastPeak = df.peak;
+    driftSlow = ctx.createBuffer(1, dl, ctx.sampleRate);
+    driftSlow.getChannelData(0).set(slow);
+    driftFast = ctx.createBuffer(1, dl, ctx.sampleRate);
+    driftFast.getChannelData(0).set(fast);
   }
 
   function context() {
@@ -259,6 +374,22 @@ export function createAmbience({ report } = {}) {
         ctx = new C();
         master = ctx.createGain();
         master.gain.value = 0;
+        /**
+         * ★★ **总线上**不要**挂限幅器**（2026-10-11 深夜：挂了，又撤了，记在这儿免得再挂）。
+         *
+         * 我当时的想法是"波峰因数 20~28dB，靠退 dB 保命太赌，上限幅器一劳永逸"。
+         * 结果 `createDynamicsCompressor` 在 Chromium 里**会自动做增益补偿**：
+         * 实测同一档，挂上它之后 **RMS 反而 +7~8dB、峰值从 -11dB 冲到 -0.3dB**；
+         * 而且信号越大它压得越狠、补偿越多 —— 用户听到的
+         * **"所有的声音越到尾声越大，只有雪能 hold 住"**，有一半就是它干的。
+         *
+         * 所以这一版回到"**用设计留余量**"：
+         *   · 包络调制深度从 ±2.8dB 收到 **±1.1dB**（`flow * 0.06`）—— 这才是"越到尾声越大"的另一半；
+         *   · 每个天气**单独标电平**（见 `TRACKS` 上面的 `mixGainDb` 与 `dev-weather\sound.html` 的
+         *     `__norm()`，它会在**保证峰值不超上限**的前提下把电平顶到目标）；
+         *   · 要真正"又响又不削"，得自己写软削波（`WaveShaperNode` + tanh）或压缩器带**固定补偿**，
+         *     那是下一步的事 —— **不要直接把 `DynamicsCompressor` 接上来**。
+         */
         master.connect(ctx.destination);
         makeBuffers();
       } catch (e) {
@@ -274,18 +405,23 @@ export function createAmbience({ report } = {}) {
   const noiseBuf = (n) => (n === 'brown' ? brown : n === 'pink' ? pink : base);
 
   /**
-   * ⚠️ **游走源要按用途分别低通**：驱**截止**时低通到 7~12Hz（"帧级"的抖动），
-   * 驱**音量包络**时必须低通到 0.15~0.25Hz（**几秒一次**的呼吸）——
-   * 用同一个低通就会让音量也跟着 10Hz 抖，听起来是"颤音"，不是"风一阵紧一阵松"。
+   * ★ 把**已经算好**的那条慢游走接上去（`which` = `driftSlow` 或 `driftFast`）。
+   *
+   * ⚠️ 这里**没有** biquad：低通已经在 `makeBuffers()` 里用 `onePole()` 算进缓冲了。
+   *    旧版在这里挂了一只 `lowpass`（0.15~0.25Hz）—— 那只 biquad 在 48k 下不工作（见文件里那段），
+   *    所谓"慢包络"其实是音频速率的噪声调制；再叠一只 0.02Hz 高通就变成了"越到后面越大"。
+   *
+   * `startAt` 取随机偏移：每次切天气进入 30 秒游走的不同位置，听感上不会"每次都一样"。
+   * `rate` 是播放速率：表里每层的 `drift: [6]~[12]`（Hz）**仍然有用** —— 它被换算成速率
+   * （`rate = drift/9`），于是各层的抖动快慢不同、**互相不相关**，也不会和别的层锁在一起。
    */
-  function walk(c, lpHz, made, startAt) {
+  function walk(c, which, made, startAt, rate) {
     const s = c.createBufferSource();
-    s.buffer = drift; s.loop = true;
-    const lp = c.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = Math.max(.05, Math.min(60, lpHz)); lp.Q.value = .7;
-    s.connect(lp); s.start(startAt);
-    made.nodes.push(s, lp);
-    return lp;
+    s.buffer = which; s.loop = true;
+    s.playbackRate.value = Math.max(.25, Math.min(4, rate || 1));
+    s.start(startAt);
+    made.nodes.push(s);
+    return s;
   }
 
   /* ---------- 造一层（噪声 → 滤波(可两层) → 增益 → 目标） ---------- */
@@ -316,8 +452,9 @@ export function createAmbience({ report } = {}) {
         const lpHz = Array.isArray(lo.drift) ? lo.drift[0] : lo.drift;
         const dg = c.createGain();
         const sw = (lo.swing == null ? 12 : lo.swing) / 100;
-        dg.gain.value = (baseHz * sw) / driftRms;      // 按"占 f 的百分比"定推进量（Hz 量纲）
-        walk(c, lpHz, made, Math.random() * 20).connect(dg);
+        /** 归一化用**快游走的峰值** → `swing` 就是**最大**截止偏移（占 f 的百分比）。 */
+        dg.gain.value = (baseHz * sw) / driftFastPeak;
+        walk(c, driftFast, made, Math.random() * 25, (lpHz || DRIFT_FAST_HZ) / DRIFT_FAST_HZ).connect(dg);
         dg.connect(bq.frequency);
         made.nodes.push(dg);
       }
@@ -332,35 +469,23 @@ export function createAmbience({ report } = {}) {
       void baseHz;
     }
     /**
-     * ★ **音量包络**（`flow`）：跟截止摆动用的是同一条游走，但低通到 0.15~0.25Hz。
+     * ★ **音量包络**（`flow`）：慢游走（~0.2Hz，几秒一次）直接推这一层的增益。
      * 这是"风/雨幕在呼吸"的来源 —— **只给主角那一层加**（见文件头第②条：
      * 一个天气里只许有一个主角，否则又是"三个东西一起动"）。
      *
-     * ⚠️⚠️ **系数必须是 0.15，不是 0.4**（2026-10-11 晚上返工过一次）：
-     * 游走源自己的 RMS ≈ 0.4，除以 `driftRms` 之后 **`flow: 1` 正好变成 m ≈ 1** ——
-     * 那是**增益在 0~2 之间乱跑**：表现是"同一套参数每次量出来的电平差 10dB 以上"
-     * （我因此在标定时白改了两轮），听感上是"声音一会儿没了、一会儿很响"。
-     * 现在 `flow: 1` → m ≈ 0.37，也就是增益 1±0.37 的慢呼吸（≈ ±2.8dB）—— 听得出在动，但不会跑掉。
+     * ⚠️⚠️ **这条式子返工过三次，前两次都是在"坏掉的游走"上调系数**（治标）：
+     *   · 旧版写 `flow * 0.15 / driftRms`，而那个 `driftRms` 是"掺了 28 秒静音的 30 秒缓冲"的 RMS，
+     *     只有真实游走的 1/4 → 调制深度是设计值的 4 倍，而且是**音频速率**的抖动；
+     *   · 收到 `0.06` 只把"越到后面越大"从 ~28dB 压到 ~11dB —— **病根是那条游走，不是深度**。
+     * 现在深度由 `FLOW_MAX` 定（`flow:1` = 增益 0.5~1.5），归一化用**慢游走的峰值**，且它零均值。
      */
     if (lo.flow) {
-      const lp = walk(c, (lo.envHz ? lo.envHz[0] : .2), made, Math.random() * 20);
-      /**
-       * ★★ **必须再加一个 0.02Hz 高通**（2026-10-11 晚上第三次返工才找到的根因）。
-       *
-       * 游走源是**泄漏积分的棕噪声**，它带**直流偏移**：一段 10 秒窗口里可能整段偏正或偏负，
-       * 于是"平均音量"随取样窗口飘 —— 表现是**电平怎么标都标不准**
-       * （同一套参数连着渲两次：雨 -48.0 / -40.3、雪 -53.1 / -41.6、落叶 -48.3 / -34.1）。
-       * 低通到 0.2Hz 只压高频，**直流照样原封不动传过去**。
-       *
-       * 现在高通把直流滤掉，包络只留"起伏"：增益以 1 为中心呼吸、**RMS 稳定**，
-       * 而"一阵紧一阵松"的听感一点没少 —— 那本来就是**波动**，不是偏移。
-       */
-      const hp = c.createBiquadFilter();
-      hp.type = 'highpass'; hp.frequency.value = .02; hp.Q.value = .7;
       const eg = c.createGain();
-      eg.gain.value = (lo.flow * 0.15) / driftRms;
-      lp.connect(hp); hp.connect(eg); eg.connect(g.gain);
-      made.nodes.push(hp, eg);
+      eg.gain.value = (FLOW_MAX * lo.flow) / driftSlowPeak;
+      const envHz = (lo.envHz ? lo.envHz[0] : DRIFT_SLOW_HZ) || DRIFT_SLOW_HZ;
+      walk(c, driftSlow, made, Math.random() * 25, envHz / DRIFT_SLOW_HZ).connect(eg);
+      eg.connect(g.gain);
+      made.nodes.push(eg);
     }
     return g;
   }
@@ -410,27 +535,81 @@ export function createAmbience({ report } = {}) {
    * ===================================================================================== */
 
   /**
-   * **一颗雨滴**（`spark: 'drop'`）。
+   * **一颗雨滴**（`spark: 'drop'`）。两种尺寸，对应用户说的两层：
    *
-   * 用户对雨的判断标准是"雨声应该最突出"，所以这一版**把雨滴做成主角**：
-   *   · 主体 = **低频冲击**（低通 1.2k 的短噪声，4ms 起音、衰减随颗粒大小 40~110ms）——
-   *     这是真实雨滴打上去的"蓬"，能量压在中低频（Medwin：中/大雨滴主要辐射**冲击声**）；
-   *   · 点缀 = **只有 30% 的雨滴**带一点 2.5~5k 的"碎裂"（小滴的微气泡），
-   *     概率低、音量大不过主体 —— 第一版那种"每秒十几次 1.6~5.2k 带通音"才是"油锅"；
-   *   · **每颗独立**的左右声场、音量、颗粒大小 —— 有变化才像雨，一成不变才像噪声。
+   *   · `big` = false（**连绵颗粒**，每秒 28~45 颗）：短、小、低频冲击
+   *     （低通 1.4~2.3k，25~70ms 衰减）—— 这就是"连绵不断的雨滴声"的颗粒；
+   *   · `big` = true（**突出雨点**，平均 1~2 颗/秒、**指数分布**）：响一截（×2.6）、
+   *     衰减长一倍（90~200ms）、频率更低（低通 900~1500）—— 用户说的"比较突出的、清晰的雨点"。
+   *     它还会带一点 2.4~5k 的碎响（"啪"的那一下），概率高、音量也跟着抬。
+   *
+   * ⚠️ **每颗独立**的左右声场、音量、颗粒 —— 有变化才像雨；一成不变（或者等间隔）才像雨刷。
    */
-  function drop(c, made, at) {
-    const large = Math.random() < .72;
+  function drop(c, made, at, big, bigGain) {
     const pan = Math.random() * 2 - 1;
-    const vol = (large ? .38 : .22) * (.7 + Math.random() * .6);
+    /** `bigGain`（可缺省）：只在海选里用来整体放大"突出雨点"；产品默认 1。 */
+    const k = big ? (bigGain == null ? 1 : bigGain) : 1;
+    if (big) {
+      /**
+       * ⚠️ **突出雨点不能太响**（2026-10-11 深夜实测出来的）：原来 `vol = .85`、衰减 90~200ms，
+       * 整档的**波峰因数被它拉到 28dB**（峰值比 RMS 高 28dB）—— 于是"要它够响"和"不许削顶"
+       * 直接打架，怎么标都只能小声（加 5dB 冲目标，峰值就先到 +3.6dBFS 削顶了）。
+       * 降到 **.5 / 70~140ms** 之后，它**听起来仍然是"突出的清晰雨点"**
+       * （因为颗粒层只有它的 1/3 音量），但整档波峰因数回到 ~22dB，电平才顶得上去。
+       */
+      const vol = .5 * (.75 + Math.random() * .5) * k;
+      burst(c, {
+        t: 'lowpass', f: 900 + Math.random() * 600, f1: 260 + Math.random() * 160,
+        q: .7, dur: .07 + Math.random() * .07, vol, attack: .0012, pan, at,
+      }, made);
+      burst(c, {
+        t: 'bandpass', f: 2400 + Math.random() * 2600, q: 2, dur: .018 + Math.random() * .018,
+        vol: vol * .22, attack: .001, pan, at: at + .001 + Math.random() * .006,
+      }, made);
+      return;
+    }
+    const large = Math.random() < .6;
+    const vol = (large ? .20 : .13) * (.7 + Math.random() * .6);
     burst(c, {
       t: 'lowpass', f: 1400 + Math.random() * 900, f1: 320 + Math.random() * 200,
-      q: .7, dur: (large ? .055 : .03) + Math.random() * .05, vol, attack: .0015, pan, at,
+      q: .7, dur: (large ? .045 : .025) + Math.random() * .035, vol, attack: .0012, pan, at,
     }, made);
-    if (Math.random() < (large ? .3 : .55)) {
+    if (Math.random() < .28) {
       burst(c, {
-        t: 'bandpass', f: 2600 + Math.random() * 2400, q: 2.5,
-        dur: .014 + Math.random() * .014, vol: vol * .3, attack: .001, pan, at: at + .002 + Math.random() * .01,
+        t: 'bandpass', f: 2600 + Math.random() * 2200, q: 2.5,
+        dur: .012 + Math.random() * .012, vol: vol * .3, attack: .001, pan, at: at + .002 + Math.random() * .01,
+      }, made);
+    }
+  }
+
+  /**
+   * **风把树叶吹响**（`spark: 'sway'`）—— 落叶那一档的主角。
+   *
+   * ★ 用户 2026-10-11："把**擦玻璃的声音去掉**，其实就是**风声和风吹树叶**的声音。"
+   *   旧的 `leafRustle()` 是 6~10 个 **1~4kHz 短爆点**（`attack: .004`）串起来 ——
+   *   宽频 + 快起快落 = 抓挠玻璃，**所以它被删掉了**，这里只有"吹动"：
+   *   · 0.8~1.6 秒的**慢起慢落**（`attack: .18`，没有尖头）；
+   *   · 中心落在 **700~1500Hz**（树叶的沙沙在中频，不在 3k 以上那层"玻璃味"）；
+   *   · 里面串 5~9 个**很短、很轻的抖动**（叶片的互相碰），但不改变整体的慢包络 ——
+   *     有抖动的才是"树叶"，光滑的只是"一段噪声"；
+   *   · 声场从一边慢慢移到另一边（风是走过去的）。
+   */
+  function sway(c, made, at) {
+    const dur = .8 + Math.random() * .8;
+    const dir = Math.random() < .5 ? -1 : 1;
+    const pan0 = -dir * (.25 + Math.random() * .5);
+    const vol = .30 + Math.random() * .16;
+    burst(c, {
+      n: 'pink', t: 'bandpass', f: 700 + Math.random() * 700, f1: 600 + Math.random() * 500, q: .9,
+      dur, vol, attack: .18, pan: pan0, at,
+    }, made);
+    const n = 5 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < n; i += 1) {
+      const k = i / n;
+      burst(c, {
+        t: 'bandpass', f: 1200 + Math.random() * 2200, q: 1.2,
+        dur: .05 + Math.random() * .06, vol: vol * (.12 + Math.random() * .18),
+        attack: .03, pan: pan0 + dir * k * .6, at: at + .12 + k * dur * .8,
       }, made);
     }
   }
@@ -438,6 +617,7 @@ export function createAmbience({ report } = {}) {
   /**
    * **一阵风**（`spark: 'gust'`）：0.8~1.8 秒的**慢起慢落**，不是"啪"。
    * 它落在 240~520Hz（跟中层同一个频段，像是中层紧了一下），偶尔把声场推过去。
+   * ⚠️ 雪那一档**靠它**（用户说雪"舒展有秩序"），所以这套参数不要动。
    */
   function gust(c, made, at) {
     burst(c, {
@@ -448,50 +628,40 @@ export function createAmbience({ report } = {}) {
   }
 
   /**
-   * **一片叶子擦过**（`spark: 'leaf'`）：0.35~0.6 秒的**宽频抓挠**，
-   * 由 7~10 个极短的带通爆点串起来（擦过时的"沙沙沙"），
-   * 而且**在声场里从一边移到另一边** —— 这是"动作"而不是"一段噪声"。
+   * ⚠️ **`leafRustle()` 已被删除**（2026-10-11 深夜，用户点名）：
+   * 它是 7~10 个 **1~4kHz、`attack: .004` 的短爆点**串起来 —— 宽频 + 快起快落就是
+   * 用户听到的"**擦玻璃**"。落叶那一档现在用 `sway()`（慢起慢落的风吹树叶）。
+   * 删掉而不是留着不用：留着总会有人（包括我）再把它接回去。
    */
-  function leafRustle(c, made, at) {
-    const n = 6 + Math.floor(Math.random() * 5);
-    const dir = Math.random() < .5 ? -1 : 1;
-    const pan0 = -dir * (.3 + Math.random() * .5);
-    const span = .3 + Math.random() * .25;
-    const vol = .16 + Math.random() * .12;
-    for (let i = 0; i < n; i += 1) {
-      const k = i / n;
-      burst(c, {
-        t: 'bandpass', f: 900 + Math.random() * 3200, f1: 700 + Math.random() * 2200, q: 1.1,
-        dur: .03 + Math.random() * .05, vol: vol * (.5 + Math.random() * .7),
-        attack: .004, pan: pan0 + dir * k * span, at: at + k * (.3 + Math.random() * .05),
-      }, made);
-    }
-  }
 
   /**
-   * **一声鸟叫**（`spark: 'bird'`）：**带通扫频的"啾-溜"**，
-   * 比上一版的正弦滑音自然得多（真实鸟叫是共振腔扫频，不是纯音）。
-   * 2~4 声一串，间隔与音高随机，落在 2~5k —— **避开**雨滴与风声的频段。
+   * **一声鸟叫**（`spark: 'bird'`）：**带通扫频的"啾-溜"**。
+   *
+   * ★ 用户 2026-10-11 对樱花的要求："不用跑偏，就是**春天的风声和鸟鸣**的叫声。"
+   *   所以鸟叫这一版往"更短、更亮、更像鸟"调：
+   *   · 频率抬到 **2.6~4.6kHz**（原来 2.3~3.4k 偏低，像口哨）；
+   *   · 一句的时长**缩短**（上滑 55~80ms、下滑 70~110ms），间隔更紧（0.10~0.17s）；
+   *   · **固定"上扬 + 1~2 声下滑"的三音句**（`up` 只给第一声）—— 鸟的乐句感来自这个形状；
+   *   · 加一条**更亮的第二共振峰**（×1.6，Q 3）让"啾"有芯，别像噪声扫频。
    */
   function bird(c, made, at, range) {
-    const [lo, hi] = (range && range.f0) || [2300, 3400];
+    const [lo, hi] = (range && range.f0) || [2600, 4600];
     const [s0, s1] = (range && range.sweep) || [.55, .85];
     const base = lo + Math.random() * (hi - lo);
-    const k = 2 + Math.floor(Math.random() * 3);
+    const k = 2 + Math.floor(Math.random() * 2);           // 2~3 声一句
     const pan = Math.random() * 1.4 - .7;
     for (let i = 0; i < k; i += 1) {
-      const f0 = base * (.94 + Math.random() * .12);
+      const f0 = base * (.95 + Math.random() * .10);
       const up = i === 0;                                  // 第一声上滑（"啾"），后面下滑（"溜"）
-      const dur = (up ? .07 : .09) + Math.random() * .06;
-      const at2 = at + i * (.13 + Math.random() * .08);
+      const dur = (up ? .055 : .07) + Math.random() * .04;
+      const at2 = at + i * (.10 + Math.random() * .07);
       burst(c, {
-        t: 'bandpass', f: f0, f1: f0 * (up ? 1.18 : (s0 + Math.random() * (s1 - s0))), q: 3.5,
-        dur, vol: .10 + Math.random() * .06, attack: .012, pan, at: at2,
+        t: 'bandpass', f: f0, f1: f0 * (up ? 1.22 : (s0 + Math.random() * (s1 - s0))), q: 3.5,
+        dur, vol: .12 + Math.random() * .06, attack: .008, pan, at: at2,
       }, made);
-      // 更轻的第二共振峰：让"啾"有厚度（纯噪声扫频听着像口哨）
       burst(c, {
-        t: 'bandpass', f: f0 * 1.5, f1: f0 * 1.5 * (up ? 1.1 : .9), q: 2.5,
-        dur, vol: .04, attack: .014, pan, at: at2,
+        t: 'bandpass', f: f0 * 1.6, f1: f0 * 1.6 * (up ? 1.12 : .92), q: 3,
+        dur, vol: .05, attack: .01, pan, at: at2,
       }, made);
     }
   }
@@ -503,17 +673,23 @@ export function createAmbience({ report } = {}) {
   }
 
   /**
-   * ⚠️ **稀疏事件排期**（2026-10-11 改过语义）：`every` 现在是**"两次事件之间"**，
-   * 而且 `follow()` 一帧**最多放一次** —— 上一版在 `every` 很小（雨 0.10~0.26）时，
-   * 一帧里可能连排好几颗，密度一抖就"糊"；现在严格按时间推进。
+   * ⚠️ **稀疏事件排期**（2026-10-11 改过两次语义，这里最终定下来）：
+   *
+   *   · `every` = 两次事件之间的**均匀随机**间隔（秒）；
+   *   · `everyExp` = **指数分布**间隔（平均 `everyExp[0]~[1]` 秒，抖动 ±50%）。
+   *     ★★ **用户点名要的**：雨的"突出雨点"如果间隔均匀，听久了就有**拍子**
+   *     （用户原话："**不能有很规律的节奏感**"）。指数分布抽出来的间隔是
+   *     **成簇的、有疏有密**（泊松过程）—— 那才是真雨。**这是这一版雨的第二个关键。**
+   *   · `follow()` 一帧**最多放一次**（防止卡顿后一帧补一串）；雨另有一条 `everyExp` 的
+   *     "突出雨点"流，跟颗粒流**各排各的**（两条独立的时间线，不会锁相）。
    */
-  function spark(cfg, c, at) {
+  function spark(cfg, c, at, big) {
     const made = live && live.made;
     if (!made) return 0;
     switch (cfg.spark) {
-      case 'drop': { drop(c, made, at); return 1; }
+      case 'drop': { drop(c, made, at, big, cfg.bigGain); return 1; }
       case 'gust': { gust(c, made, at); return 1; }
-      case 'leaf': { leafRustle(c, made, at); return 1; }
+      case 'sway': { sway(c, made, at); return 1; }
       case 'bird': { bird(c, made, at, cfg.bird); return 1; }
       default: return 0;
     }
@@ -573,11 +749,16 @@ export function createAmbience({ report } = {}) {
     },
     /**
      * 每帧调一次（页面在 `stepWeather` 里）。连续底噪归 `switchTo()` 管，
-     * 这里只排**前景事件**（雨滴、叶子擦过、鸟叫、风紧一下、远雷）；返回这一帧放了几个音。
+     * 这里只排**前景事件**（雨滴、风吹树叶、鸟叫、风紧一下、远雷）；返回这一帧放了几个音。
      *
-     * ⚠️ **一帧最多一个事件**：`every` 最小是 0.065 秒，一帧 16.7ms，正常情况下本来就是
-     * "有时候一帧一个、有时候没有"；加这个上限是为了防止**卡顿一下（dt 变大）之后一帧里
-     * 补上一串雨滴** —— 那种"突然一坨"正是"糊"的听感来源之一。
+     * ⚠️ **一帧每一条流最多一个事件**：雨的最小间隔是 0.022 秒，一帧 16.7ms，
+     * 正常情况本来就是"有时候一帧一个、有时候没有"；加上限是为了防止**卡顿一下（dt 变大）
+     * 之后一帧里补一串** —— 那种"突然一坨"正是"糊"的来源之一。
+     *
+     * ★ **雨有两条独立的时间线**（用户要的"连绵 + 夹杂突出雨点"）：
+     *   ① 颗粒流（`every`，28~45 颗/秒）—— "连绵不断的雨滴声"；
+     *   ② 突出雨点流（`everyExp`，指数分布）—— "比较突出的清晰的雨点"，**不成拍**。
+     *   两条各自推进、互不锁相，所以宏观上永远听不出周期。
      */
     follow(modeName, dt, now) {
       if (!enabled()) return 0;
@@ -590,9 +771,16 @@ export function createAmbience({ report } = {}) {
       if (!when.startedAt) when.startedAt = now;
       if (!when.next) when.next = now + rnd(cfg.every[0], cfg.every[1]);
       if (now >= when.next) {
-        // 到点之后按"错过的整周期"往前推，但**这一帧只放一个**
         while (when.next <= now) when.next += rnd(cfg.every[0], cfg.every[1]);
-        played += spark(cfg, c, 0);
+        played += spark(cfg, c, 0, false);
+      }
+      /** ★ 第二条流：**指数分布**的"突出雨点"（只有配了 `everyExp` 的档才有）。 */
+      if (cfg.everyExp) {
+        if (!when.nextBig) when.nextBig = now + expRnd(cfg.everyExp[0]);
+        if (now >= when.nextBig) {
+          while (when.nextBig <= now) when.nextBig += expRnd(cfg.everyExp[0]);
+          played += spark(cfg, c, 0, true);
+        }
       }
       if (cfg.thunder) {
         if (!when.thunderAt) when.thunderAt = now + rnd(cfg.thunder[0], cfg.thunder[1]);
@@ -628,24 +816,37 @@ export function createAmbience({ report } = {}) {
       when.next = 0; when.thunderAt = 0;
     },
     /**
-     * 诊断：`on` 是**用户开关**，`silent` 才是"现在到底出不出声"
+     * 诊断：**`on` 是"用户开关"**，`silent` 才是"现在到底出不出声"
      * （`on = true` 但 `silent = true` 说明还没拿到手势，或宿主把它挂起了）。
      */
     state: () => ({
       on, unlocked, mode, live: !!live, ctx: ctx ? ctx.state : 'none', failed,
       silent: !(on && unlocked && !failed && live && !!ctx && ctx.state === 'running'),
       master: MASTER_GAIN,
-      /** 这一档的归一化倍数与目标电平（排查"声音太小/太大"时不用猜）。 */
+      /** 这一档的整档增益倍数（排查"声音太小/太大"时不用猜）。 */
       norm: live ? +live.made.norm.toFixed(2) : null,
       target: TARGET_RMS_DB,
       /** 这一档的主角是什么（给诊断页显示用）。 */
-      spark: live ? live.cfg.spark : null,
+      spark: live ? live.cfg.spark : null
+
     }),
   };
   return api;
 }
 
 const rnd = (a, b) => a + Math.random() * (b - a);
+/**
+ * **指数分布**的随机间隔（`mean` = 平均值）。
+ *
+ * ★★ 为什么单独要它（2026-10-11 深夜，用户点名）：雨的"突出雨点"如果用**均匀随机**间隔，
+ * 短时间听不出差别，但听上十几秒就会浮出**拍子感**（用户原话："**不能有很规律的节奏感**"）。
+ * 指数分布是**泊松过程**的间隔分布 —— 抽出来**成簇、有疏有密**（有时连着两三颗、
+ * 然后安静一两秒），那才是真雨。**这是这一版雨的关键之一，别改回 `rnd()`。**
+ *
+ * 实现：`-ln(U) × mean`（U = (0,1]）。夹一个 0.15×mean 的下限，
+ * 免得偶尔抽出 0 导致两颗重叠成一个"啪"。
+ */
+const expRnd = (mean) => Math.max(mean * .15, -Math.log(1 - Math.random()) * mean);
 
 /**
  * ★ **把音色表和总增益暴露出去**（2026-10-11 加），只给一个用途：**离线验收**。
