@@ -1295,8 +1295,17 @@ export function createPet(els, opts) {
    */
   function pointerDown(p, opts = {}) {
     Object.assign(pointer, p, { inside: true });
-    if (!hitPet(p) || pet.mode === 'air') return false;
-    press = { x: p.x, y: p.y, t: performance.now(), grab: opts.grab || null };
+    /**
+     * ★ 2026-10-11 **空中接住**（用户点名的一项）：`air` 时不再一口回绝这次按下。
+     *
+     * 原来这里是 `if (!hitPet(p) || pet.mode === 'air') return false;` —— 于是"丢出去之后
+     * 想在半空抓住"永远做不到，只能等她落地。现在照样接受按下，并用 `press.air` 记下
+     * "这一下是从空中接的"；抓点在 `pointerMove` 里按**她此刻的身体位置**反推（见那里），
+     * 所以进 drag 的那一帧不会跳。命中判定本身没放宽（还是那两个圆），
+     * 所以"窗口什么时候收鼠标"（pet-app 的 `wantsMouse` → `hitPet`）也跟着她当时的身体走。
+     */
+    if (!hitPet(p)) return false;
+    press = { x: p.x, y: p.y, t: performance.now(), grab: opts.grab || null, air: pet.mode === 'air' };
     pointer.samples = [{ t: performance.now(), x: p.x, y: p.y }];
     return true;
   }
@@ -1308,17 +1317,35 @@ export function createPet(els, opts) {
     while (pointer.samples.length > 2 && now - pointer.samples[0].t > 110) pointer.samples.shift();
     pointer.vx = lerp(pointer.vx, velocity().x, .35);
 
-    if (press && pet.mode !== 'drag' && Math.hypot(p.x - press.x, p.y - press.y) > 6) {
+    // 空中接住：位移门槛收到 2px（人在下坠，"先抓住再说"；地面那套 6px 会等太久）
+    const need = press && press.air ? 2 : 6;
+    if (press && pet.mode !== 'drag' && Math.hypot(p.x - press.x, p.y - press.y) > need) {
       // **抓哪儿就从哪儿拎**：用页面按下时算好的局部抓点（没传就还是后颈，跟以前一样）。
       // 抓点会一直贴在光标上（见 render 的 ax/ay），所以"捏着左手"就一直捏着左手。
       const g = press.grab || SCRUFF_GRAB;
+      // ★ 空中接住：`held` 取的是**她此刻**这个身体点的舞台坐标（`toStage` 用的是当前变换
+      //   `pet.xf`，里面已经有她腾空的高度），所以进 drag 的锚点就落在她身上 —— 这就是
+      //   "按当前身体位置反推抓点"，接住的那一刻**不跳**。
       const held = toStage(g.x, g.y);
       pet.grabAt = { x: g.x, y: g.y };
       pet.grabHang = g.hang || 0;
       pet.expr = null;
       setMode('drag', { dx: held.x, dy: held.y });
-      sfx.grab();
-      pet.sqv -= 1.2; pet.tiltV = 0;
+      if (press.air) {
+        /**
+         * ★ **接住 = 稳稳托住**（用户点名的手感）：把她正在下坠/飞出去的速度**当场清零**，
+         * 不做反弹、也不甩出去；给一个小的"托住"压缩（`sqv > 0` 是压一下），
+         * 再响一声**轻的落地音**（`land(false)` = 软的那一档）。听感上就是"啪一下接住、停在你手里"。
+         * （地面上抓起来那套保持不变：`sfx.grab()` + 一点拉伸。）
+         */
+        pet.vx = 0; pet.vy = 0; pet.airKind = null;
+        pet.sqv += 1.6;
+        sfx.land(false);
+      } else {
+        sfx.grab();
+        pet.sqv -= 1.2;
+      }
+      pet.tiltV = 0;
       onEvent('touch', { kind: 'grab' });
     }
     if (press) return 'grabbing';
@@ -1346,7 +1373,10 @@ export function createPet(els, opts) {
       if (speed > 700) sfx.whoosh();
       setMode('air');
       onEvent('touch', { kind: speed > 700 ? 'throw' : 'drop', x: Math.round(pet.x) });
-    } else if (performance.now() - press.t < 400) {
+    } else if (performance.now() - press.t < 400 && pet.mode !== 'air') {
+      // ↑ `pet.mode !== 'air'`：**空中点一下（按下就松、没拖动）什么都不做** ——
+      //   "接住"是"按着拖"（见 pointerMove），而戳/点那套在腾空时没有意义（她本来就在空中，
+      //   而且 `crouch` 那半句会让空中的她再蹲一次）。这一条是随"空中接住"一起加的。
       if (pet.mode === 'sleep' || pet.mode === 'sit') {
         const wasAsleep = pet.mode === 'sleep';
         setMode('wake', { startle: true }); pet.sqv -= 2.2; pet.nextAt = T + 2.4;
