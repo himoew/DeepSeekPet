@@ -1,6 +1,7 @@
 /**
  * 自检区域：天气 ↔ 她的互动（③a：雨溅落 / 樱叶擦身 / 走动带风 / 判定盒子；
- * ③b：雪落在她身上**积住** / 她一动或抖一下就掉 / 切天气**缓缓淡出** / 性能）
+ * ③b：雪落在她身上**积住** / 她一动或抖一下就掉 / 切天气**缓缓淡出**；
+ * 打磨：**用她自己的真实轮廓**做判定（`whale/surface.json`）、雪只积在**三个美术锚点**上 / 性能）
  *
  * **为什么这么测**：这一项的实质是**几何**（"她身上"到底是画布上的哪一块）+ **几条分支**
  * （雨打到就死并溅一圈、樱/落叶被推歪且升到近层、雪积住并跟着她动、她在走时给前方粒子加一条风）。
@@ -23,7 +24,7 @@
  * 单跑：`node test\run-one.cjs 07d-fx-actor.cjs`
  */
 module.exports = {
-  name: '天气与她的互动（盒子/雨/擦身/积雪/走动带风/性能）',
+  name: '天气与她的互动（真实轮廓/雨溅落/雪帽/擦身/走动带风/性能）',
   tags: ['天气', '粒子', '互动', '她', '雪'],
   async run(ctx) {
     const { app, ok } = ctx;
@@ -320,127 +321,232 @@ module.exports = {
         fx.debugBox(false);
       }
 
-      /* ---------- ⑨ 雪：落在她身上**积住**（本地坐标 → 她动雪跟着动） ---------- */
+      /* ---------- ⑨ 她的**真实轮廓**（`whale/surface.json`）：雨和雪落在她画出来的形状上 ---------- */
+      const SURF_JSON = JSON.parse(fs.readFileSync(path.join(app, 'web', 'whale', 'surface.json'), 'utf8'));
       const dropSnow = (f, x, y) => f.spawn('snow', {
         x, y, vy: 120, vT: 120, sway: 0, hz: 0, hzA: 0, phase: 0, wind: 0, slip: 0, stall: 0,
         spin: 0, spinSp: 0, rollSp: 0, layer: 1, layerN: 3, life: 40,
       });
-      /** 从她头顶正上方 `above` 像素处放一片雪；返回放了几片。 */
-      const snowOnHer = (f, n, xOff = 0, above = 40) => {
-        const c1 = f.actorBox().c1;
-        let k = 0;
-        for (let i = 0; i < n; i += 1) {
-          const off = xOff + (n > 1 ? (i % 11 - 5) * 4 : 0);
-          if (dropSnow(f, c1.x + off, c1.y - c1.r - above)) k += 1;
+      /**
+       * 在**本地 x 那一列**的上方放一颗粒子，推若干帧；返回命中次数与落点的本地坐标。
+       * 用 `actorStage` 换算，所以她在什么姿态下都对。
+       */
+      const landAt = (f, kind, lx, t0, frames = 45, fresh = true) => {
+        if (fresh) f.clear(true);
+        const s = f.actorStage(lx, -20);
+        const v = kind === 'rain' ? 900 : 120;
+        f.spawn(kind, {
+          x: s.x, y: s.y, vy: v, vT: v, sway: 0, hz: 0, hzA: 0, phase: 0, wind: 0, slip: 0,
+          stall: 0, spin: 0, spinSp: 0, rollSp: 0, layer: 1, layerN: 3, life: 40,
+        });
+        let hits = 0, t = t0, at = null;
+        for (let i = 0; i < frames; i += 1) {
+          t += 1 / 60;
+          f.frame(1 / 60, t, 'off');
+          const m = f.stats().meta.hits;
+          /**
+           * ⚠️ 只在"这一帧真的新命中了"那一帧读溅落，而且**取本地 x 离这一列最近的那一个**：
+           * 身上的溅落会活 0.16~0.34 秒、几列下来叠在一起，随手 `find` 会拿到**上一列**留下的
+           * （第一版就这么错：逐列核对时最差 112 单位，其实每一列本身都是准的）。
+           * 另外只认 `body` 那种 —— 地上那种也是 `shape === 'splash'`。
+           */
+          if (m > hits) {
+            hits = m;
+            let best = null, bd = 1e9;
+            for (const q of f.stats().list) {
+              if (q.shape !== 'splash' || !q.body) continue;
+              const l = f.actorLocal(q.x, q.y);
+              const d = Math.abs(l.x - lx);
+              if (d < bd) { bd = d; best = l; }
+            }
+            if (best) at = best;
+            break;
+          }
         }
-        return k;
+        return { hits, at };
       };
       {
         setXf({});
         fx.clear(true); fx.actor(null); fx.actor(snapOf());
-        const c1 = fx.actorBox().c1;
-        snowOnHer(fx, 1);
-        const hits = push(fx, 26, 700);
-        const st = fx.stats();
-        const q = st.list.find((k) => k.shape === 'cling');
-        ok(`★天气互动（雪）：落在她身上会**积住**（命中 ${hits} 次、身上 ${st.meta.cling} 片、粒子剩 ${fx.count} 颗）`
-          + ` —— 上限 ${fx.clingMax} 片、寿命 6~10 秒`,
-        hits >= 1 && st.meta.cling === 1 && fx.count === 0);
-        ok(`★天气互动（雪）：积的是**头顶那一带**（画在 ${q ? `${q.x},${q.y}` : 'n/a'}，她的头顶在`
-          + ` ${c1.x.toFixed(0)},${(c1.y - c1.r).toFixed(0)}）—— 不然她脚上顶着一片雪，看着像 bug`,
-        !!q && Math.abs(q.x - c1.x) < 12 && Math.abs(q.y - (c1.y - c1.r)) < 12);
+        ok(`★真实轮廓：\`surface.json\` 读得进来、结构对得上（${SURF_JSON.top.length} 列 / 步长 ${SURF_JSON.step}，`
+          + `有内容的列 ${SURF_JSON.coverage.columns}/${SURF_JSON.coverage.total}，锚点 ${JSON.stringify(SURF_JSON.anchors)}）`,
+        SURF_JSON.top.length === (SURF_JSON.x1 - SURF_JSON.x0) / SURF_JSON.step + 1
+          && SURF_JSON.coverage.columns > SURF_JSON.coverage.total * .5
+          && SURF_JSON.anchors.length === 3
+          && SURF_JSON.bot.length === SURF_JSON.top.length);
+        const crown = SURF_JSON.top[Math.round((128 - SURF_JSON.x0) / SURF_JSON.step)];
+        ok(`★真实轮廓：头顶那一列（本地 x=128）的顶面在 y=${crown} —— 她是个头顶带呆毛的小鱼`
+          + '（这个数是**从 25 张图层拼出来的**，不是写死的）', crown > 12 && crown < 40);
 
-        /* 她**慢慢挪** 120px：积雪要跟着她走（歪头/侧倾/走动的一小步都算这一类） */
-        const x0 = q ? q.x : NaN;
-        let petX = c1.x, t = 800;
+        fx.surface(SURF_JSON);
+        ok('★真实轮廓：`fx.surface()` 接上之后就换了判定（`hasSurface` 为真）', fx.hasSurface === true);
+
+        /** 挑几列做"落点"核对：有内容的列必须**落在她的顶面上**，没内容的列**一次都不许命中**。 */
+        const cols = [];
+        for (let lx = SURF_JSON.x0; lx <= SURF_JSON.x1 && cols.length < 12; lx += 6) {
+          if (Number.isFinite(fx.surfaceTop(lx))) cols.push(lx);
+        }
+        let worst = 0, bad = '';
+        let t0 = 2600;
+        for (const lx of cols) {
+          const r = landAt(fx, 'rain', lx, t0);
+          t0 += 1;
+          const want = fx.surfaceTop(lx);
+          const d = r.at ? Math.abs(r.at.y - want) : 999;
+          if (!r.hits || d > worst) { worst = r.hits ? d : 999; bad = `本地 x=${lx}${r.hits ? '' : '（没命中）'}`; }
+        }
+        ok(`★真实轮廓：**雨点落在她画出来的那条线上**（${cols.length} 列逐列核对，最差 ${worst === 999 ? '未命中' : worst.toFixed(2)} 单位`
+          + `${worst === 999 ? ' @ ' + bad : ''}；1 单位 ≈ 0.42px）`,
+        worst < 2);
+
+        /** ★ 这一条是用户实测那个问题的**回归**：以前 73.5% 的落点在空气里。 */
+        const airCols = [];
+        for (let lx = SURF_JSON.x0; lx <= SURF_JSON.x1 && airCols.length < 10; lx += 4) {
+          if (!Number.isFinite(fx.surfaceTop(lx))) airCols.push(lx);
+        }
+        let airHits = 0;
+        for (const lx of airCols) { if (landAt(fx, 'rain', lx, 2700).hits) airHits += 1; }
+        ok(`★真实轮廓：**她身外的那些列一次都不命中**（${airCols.length} 列全是空气，命中 ${airHits} 次）`
+          + ' —— 这就是"白点看着脏"的根因（原来圆里有 23% 是空气、73.5% 的雪落在身外）',
+        airCols.length > 0 && airHits === 0);
+      }
+
+      /* ---------- ⑩ 雪帽：三个锚点，只有"雪量"在长（不再是到处冒点） ---------- */
+      {
+        setXf({});
+        fx.clear(true); fx.actor(null); fx.actor(snapOf());
+        fx.surface(SURF_JSON);
+        const A0 = fx.caps();
+        ok(`★雪帽：位置是 surface.json 给的**三个美术锚点**（${A0.map((a) => `${a.x},${a.y}`).join(' / ')}）`
+          + ' —— 头顶 + 左右两侧，不是"哪儿命中哪儿冒一个点"',
+        A0.length === 3 && A0.every((a) => Number.isFinite(a.x) && Number.isFinite(a.y)));
+        const crownX = A0[0].x;
+        landAt(fx, 'snow', crownX, 2800, 60);
+        const one = fx.caps()[0].amt;
+        landAt(fx, 'snow', crownX, 2820, 60, false);     // ⚠️ 后两次 `fresh=false`：别把雪量清掉
+        landAt(fx, 'snow', crownX, 2840, 60, false);
+        const full = fx.caps()[0].amt;
+        ok(`★雪帽：雪落在最近的那个锚点上、**三片打满**（一片后 ${one.toFixed(2)} → 三片后 ${full.toFixed(2)}），`
+          + `meta.cling 从现在起是"有几个锚点有雪"（${fx.clinging}）`,
+        Math.abs(one - 1 / 3) < .02 && full > .95 && fx.clinging === 1);
+        const capItem = fx.stats().list.find((q) => q.shape === 'cap');
+        const want = fx.actorStage(A0[0].x, A0[0].y);
+        ok(`★雪帽：画出来的那张**软边贴图**就贴在她头顶那个锚点上（画在 ${capItem ? `${capItem.x.toFixed(0)},${capItem.y.toFixed(0)}` : 'n/a'}，`
+          + `锚点在 ${want.x.toFixed(0)},${want.y.toFixed(0)}）—— 中心还往轮廓里收了 0.28 半径，只露上缘`,
+        !!capItem && Math.abs(capItem.x - want.x) < 4 && Math.abs(capItem.y - want.y) < 6
+          && fx.stats().meta.images > 0);
+
+        /* 她**慢慢挪** 120px（不走、不甩）：雪帽要跟着她走 */
+        const cx0 = capItem ? capItem.x : NaN;
+        let petX = 640, t = 2900;
         for (let i = 0; i < 60; i += 1) {
-          petX += 2;                                  // 2px/帧 = 120px/s（低于"被抖掉"的 250）
+          petX += 2;                                   // 2px/帧 = 120px/s（低于"抖掉"的 250）
           setXf({ AX: petX });
           fx.actor(snapOf());
           t += 1 / 60;
           fx.frame(1 / 60, t, 'off');
         }
-        const q2 = fx.stats().list.find((k) => k.shape === 'cling');
-        ok(`★天气互动（雪）：她动的时候积雪**跟着她动**（她 +120px，雪 ${x0.toFixed(1)} → ${q2 ? q2.x.toFixed(1) : 'n/a'}）`
-          + ' —— 这是"贴在她身上"和"悬在半空"的唯一区别（存的是本地坐标）',
-        !!q2 && Math.abs((q2.x - x0) - 120) < 6 && fx.clinging === 1);
+        const cx1 = (fx.stats().list.find((q) => q.shape === 'cap') || {}).x;
+        ok(`★雪帽：她动的时候雪帽**跟着她动**（她 +120px，雪帽 ${cx0.toFixed(1)} → ${cx1.toFixed(1)}）`
+          + ' —— 这是"贴在她身上"和"悬在半空"的唯一区别',
+        Math.abs((cx1 - cx0) - 120) < 6 && fx.clinging === 1);
 
-        /* 上限：一口气 30 片 */
-        fx.clear(true);
-        setXf({ AX: 640 });
-        fx.actor(snapOf());
-        snowOnHer(fx, 30, 0, 60);
-        push(fx, 40, 900);
-        ok(`★天气互动（雪）：积的数量**有上限**（30 片打上去 → 身上 ${fx.clinging} 片 = 上限 ${fx.clingMax}）`
-          + ' —— 上限是"看着不脏"的那条线（想一键关掉就把它设 0）',
-        fx.clinging === fx.clingMax && fx.clingMax > 0);
+        /* 寿命：用户选的是 15~25 秒（`CAP_LIFE = 20`），不再落雪之后慢慢化掉 */
+        const amt0 = fx.caps()[0].amt;
+        push(fx, 300, 3000);                            // 5 秒
+        const amt5 = fx.caps()[0].amt;
+        push(fx, 960, 3100);                            // 再 16 秒
+        const amt21 = fx.caps()[0].amt;
+        ok(`★雪帽：**寿命 15~25 秒**（满雪量 ${amt0.toFixed(2)} → 5 秒后 ${amt5.toFixed(2)} → 21 秒后 ${amt21.toFixed(2)}）`
+          + ' —— 调研结论是"宁少而大、久而不闪"（6~10 秒会频繁消失，看着像闪）',
+        Math.abs(amt5 - (amt0 - 5 / 20)) < .05 && amt21 === 0);
 
-        /* 她一动就抖掉（不是消失，是**变回一颗粒子落下去**） */
+        /* 她一走动/抖一下 → 雪帽掉光，而且**变回一颗粒子落下去** */
+        fx.clear(true); fx.actor(snapOf());
+        landAt(fx, 'snow', crownX, 4200, 60);
+        landAt(fx, 'snow', crownX, 4220, 60, false);
+        landAt(fx, 'snow', crownX, 4240, 60, false);
+        const before = fx.clinging;   // 1 = 有一个锚点上有雪
+        /**
+         * ⚠️ 这里必须用**软清** `clear()`：`clear(true)` 是"连雪帽一起硬清"，
+         * 那这一条就变成"雪帽已经被清掉了、当然抖不出粒子"（第一版就是这么错的）。
+         */
+        fx.clear();
         fx.actor(snapOf({ moving: true }));
-        push(fx, 3, 1000);
-        ok(`★天气互动（雪）：她一**走动**，身上的雪就抖掉，而且变回正在下落的雪粒子`
-          + `（身上 ${fx.clinging} 片、天上 ${fx.count} 颗）`,
-        fx.clinging === 0 && fx.count >= 3);
-
-        /* 她"抖一下"（页面在雪积够时让她做的那个动作）也是同一条路 */
-        fx.clear(true);
-        fx.actor(snapOf());
-        snowOnHer(fx, 4, 0, 40);
-        push(fx, 30, 1100);
-        const before = fx.clinging;
-        fx.actor(snapOf({ shake: true }));
-        push(fx, 2, 1200);
-        fx.actor(snapOf());
-        ok(`★天气互动（雪）：她**抖一下**（页面积够时让她做的动作）→ 雪当场全掉`
-          + `（抖之前 ${before} 片 → 之后 ${fx.clinging} 片、天上 ${fx.count} 颗）`,
-        before >= 1 && fx.clinging === 0 && fx.count >= before);
+        push(fx, 3, 4300);
+        ok(`★雪帽：她一**走动**，雪帽就抖掉、而且变回正在下落的雪粒子（抖之前 ${before} 个锚点 → 现在 ${fx.clinging} 个、`
+          + `天上 ${fx.count} 颗）`, before === 1 && fx.clinging === 0 && fx.count >= 2);
       }
 
-      /* ---------- ⑩ 切天气：她身上的积雪**缓缓淡出**（用户点名的那条） ---------- */
-      {
-        setXf({});
-        fx.clear(true); fx.actor(null); fx.actor(snapOf());
-        snowOnHer(fx, 3, 0, 40);
-        push(fx, 30, 1300);
-        const n0 = fx.clinging;
-        fx.fadeClings(2);                            // ★ 页面在 setWeather() 里就是这么调的
-        push(fx, 1, 1400);
-        const n1 = fx.clinging;                      // 第一帧：还在（不是瞬间没）
-        push(fx, 55, 1500);
-        const n2 = fx.clinging;                      // +0.9 秒：还在淡
-        const op = (fx.stats().list.find((k) => k.shape === 'cling') || {}).op;
-        push(fx, 90, 1700);
-        const n3 = fx.clinging;                      // +2.5 秒：没了
-        ok(`★天气互动（雪）：切天气时积雪**缓缓淡出**（${n0} 片 → 1 帧后 ${n1} → 1 秒后 ${n2}（不透明度 ${op}）`
-          + ` → 2.5 秒后 ${n3}）—— 用户要的"不能留着、也不能瞬间没"`,
-        n0 === 3 && n1 === 3 && n2 >= 1 && n3 === 0);
-
-        /* `clear()` 默认也走淡出；`clear(true)` 才是硬清（自检/验收页要"画布立刻空"时用） */
-        fx.clear(true);
-        fx.actor(snapOf());
-        snowOnHer(fx, 2, 0, 40);
-        push(fx, 30, 2000);
-        const soft = (fx.clear(), fx.clinging);
-        fx.clear(true);
-        const hard = fx.clinging;
-        ok(`★天气互动（雪）：\`clear()\`（切天气走的那条路）**不硬清积雪**，\`clear(true)\` 才是硬清`
-          + `（软清后还剩 ${soft} 片、硬清后 ${hard} 片）`,
-        soft >= 1 && hard === 0);
-      }
-
-      /* ---------- ⑪ 回归：没有她时雪不会"积"在空气里 ---------- */
+      /* ---------- ⑪ 快速移动/被拎着甩：**不粘**，只冒一下白雾（调研给的那条兜底） ---------- */
       {
         setXf({});
         fx.clear(true); fx.actor(null);
-        const c1at = ctl.toStage(128, 128);
-        dropSnow(fx, c1at.x, c1at.y - 40);
-        push(fx, 26, 2100);
-        ok(`★天气互动（雪）：**没有她时不会积**（身上 ${fx.clinging} 片，那一片照旧往下落：天上 ${fx.count} 颗）`
-          + ' —— 这一套整体关闭时行为同上一版',
-        fx.clinging === 0 && fx.count >= 1);
+        fx.surface(SURF_JSON);
+        fx.actor(snapOf({ moving: true }));              // 她在走
+        const crownX = fx.caps()[0].x;
+        landAt(fx, 'snow', crownX, 5000, 60);
+        landAt(fx, 'snow', crownX, 5020, 60);
+        ok(`★雪帽：她**快速移动时不粘**，只冒一下白雾（白雾 ${fx.stats().meta.puff} 个、雪帽 ${fx.clinging} 个）`
+          + ' —— 那时候贴片最容易暴露"没跟着姿势更新"',
+        fx.clinging === 0 && fx.stats().meta.puff >= 1);
+        /* 回归：没有 surface（Coo 形象）时**也只冒白雾**，不积 */
+        fx.surface(null);
+        setXf({}); fx.actor(null); fx.actor(snapOf());
+        const c1c = fx.actorBox().c1;
+        landAt(fx, 'snow', 128, 5100, 60);
+        ok(`★雪帽：没有真实轮廓时（Coo / 老宿主）**退回圆的判定 + 只冒白雾**（雪帽 ${fx.clinging} 个、`
+          + `白雾 ${fx.stats().meta.puff}，hasSurface=${fx.hasSurface}）`,
+        fx.hasSurface === false && fx.clinging === 0 && fx.stats().meta.puff >= 1);
+        void c1c;
       }
 
-      /* ---------- ⑫ 性能：满屏粒子下"物理"每帧多花多少 ---------- */
+      /* ---------- ⑫ 切天气：她身上的雪**缓缓淡出**（用户点名的那条）+ clear 的软硬两种 ---------- */
+      {
+        setXf({});
+        fx.clear(true); fx.actor(null); fx.actor(snapOf());
+        fx.surface(SURF_JSON);
+        const crownX = fx.caps()[0].x;
+        for (let i = 0; i < 3; i += 1) landAt(fx, 'snow', crownX, 6000 + i * 20, 60, i === 0);
+        const n0 = fx.caps()[0].amt;
+        fx.fadeClings(2);                                // ★ 页面在 setWeather() 里就是这么调的
+        push(fx, 1, 6100);
+        const n1 = fx.caps()[0].amt;                     // 第一帧：还在（不是瞬间没）
+        push(fx, 114, 6200);
+        const n2 = fx.caps()[0].amt;                     // +1.9 秒：快没了
+        push(fx, 30, 6400);
+        const n3 = fx.caps()[0].amt;                     // +2.4 秒：没了
+        ok(`★雪帽：切天气时**缓缓淡出**（满雪量 ${n0.toFixed(2)} → 1 帧后 ${n1.toFixed(2)} → 1.9 秒后 ${n2.toFixed(2)}`
+          + ` → 2.4 秒后 ${n3.toFixed(2)}）—— 用户要的"不能留着、也不能瞬间没"`,
+        n0 > .95 && n1 > .95 && n2 > 0 && n3 === 0);
+
+        for (let i = 0; i < 3; i += 1) landAt(fx, 'snow', crownX, 6600 + i * 20, 60, i === 0);
+        const soft = (fx.clear(), fx.capLoad);
+        fx.clear(true);
+        const hard = fx.capLoad;
+        ok(`★雪帽：\`clear()\`（切天气走的那条路）**不硬清雪**，\`clear(true)\` 才是硬清`
+          + `（软清后还剩 ${soft.toFixed(2)}、硬清后 ${hard.toFixed(2)}）`,
+        soft > .9 && hard === 0);
+      }
+
+      /* ---------- ⑬ 诊断轮廓：开了 `fxbox` 画的就是**她自己那条线** ---------- */
+      {
+        setXf({}); fx.actor(null); fx.actor(snapOf());
+        fx.surface(SURF_JSON);
+        fx.clear(true);
+        fx.debugBox(true);
+        let t = 7000;
+        t += 1 / 60; fx.frame(1 / 60, t, 'off');
+        const st = fx.stats();
+        const out = st.list.filter((q) => q.shape === 'outline');
+        ok(`★真实轮廓：\`fxbox\` 打开时画的是**她的轮廓线**（上沿 + 下沿两笔 = ${out.length} 个），`
+          + `不是两个判定圆 —— "盒子有没有对上她"从这一笔就能看出来`,
+        out.length === 2 && st.meta.box === 2);
+        fx.debugBox(false);
+        fx.surface(null);
+      }
+
+      /* ---------- ⑭ 性能：满屏粒子下"物理"每帧多花多少 ---------- */
       {
         const bench = (withHer) => {
           fx.clear(true); fx.actor(null); setXf({});
@@ -458,6 +564,27 @@ module.exports = {
           + `（无她 ${without.avg.toFixed(3)} → 有她 ${withHer.avg.toFixed(3)}；门槛 0.5ms）`
           + ' —— 每颗就多两次圆的"在不在里面"',
         add < .5 && withHer.avg < 1.2);
+      }
+
+      /* ---------- ⑮ 性能（真实轮廓那条判定）：同一天气、有表 vs 没表 ---------- */
+      {
+        const bench2 = (withSurf) => {
+          fx.clear(true); fx.actor(null); setXf({});
+          if (withSurf) fx.surface(SURF_JSON); else fx.surface(null);
+          fx.actor(snapOf());
+          let t = 900;
+          for (let i = 0; i < 120; i += 1) { t += 1 / 60; fx.frame(1 / 60, t, 'snow', 3); }
+          let ms = 0;
+          const N = 300;
+          for (let i = 0; i < N; i += 1) { t += 1 / 60; fx.frame(1 / 60, t, 'snow', 3); ms += fx.spendPhys(); }
+          return { avg: ms / N, n: fx.count };
+        };
+        const circ = bench2(false), surf = bench2(true);
+        ok(`★真实轮廓：换成"她自己的轮廓"判定之后，物理每帧是 ${surf.avg.toFixed(3)}ms`
+          + `（两个圆那条是 ${circ.avg.toFixed(3)}ms，差 ${(surf.avg - circ.avg).toFixed(3)}ms）`
+          + ' —— 每颗多两次逆变换 + 两次查表，跟两个圆一个量级',
+        surf.avg < 1.2);
+        fx.surface(null);
       }
     } finally {
       if (had.win) globalThis.window = saved.win; else delete globalThis.window;

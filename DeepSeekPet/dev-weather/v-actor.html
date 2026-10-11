@@ -149,8 +149,8 @@ function run() {
   api.box(true);
   const boxed = api.drive('off', 1 / 30);
   api.box(false);
-  ok('②b `fxbox` 打开时画的就是那两个判定圆（这一帧 box 形状数 = 2）',
-    boxed.boxDrawn === 2, `box 形状数=${boxed.boxDrawn}`);
+  ok('②b `fxbox` 打开时画的是"她被当成什么"（有真实轮廓 = 上下两条轮廓线，没有 = 两个判定圆）',
+    boxed.boxDrawn === 2, `这一帧画了 ${boxed.boxDrawn} 笔（surfaceOn=${api.surfaceOn()}）`);
 
   /* ③ 往她头顶正上方放一滴雨：命中 + 身上溅落 + **近层她身上那块真有像素**（远层没有） */
   api.clear(true);
@@ -192,28 +192,42 @@ function run() {
     api.clear(true);
     api.drive('off', 1 / 30);                            // 一帧：把 actor 挂回去 + 拿到盒子
     const box2 = api.actor();
-    const snowAt = { x: box2.c1.x, y: box2.c1.y - box2.c1.r - 50 };
+    /**
+     * ★ **真实轮廓接上了没有**（`whale/surface.json`）：接上之后雨雪落在的是**她画出来的形状**上，
+     * 而不是那两个"点得到的圆"（实测：圆里有 23% 是空气、73.5% 的雪落点在她身外 —— 这就是
+     * 用户报的"不同大小的白点"的根因）。这里看三个雪帽锚点在哪儿，雪只往**头顶那个锚点**上放。
+     */
+    const caps0 = api.caps();
+    const headStage = { x: box2.c1.x, y: box2.c1.y - box2.c1.r };
+    ok('⑤ 她的**真实轮廓**接上了（`surfaceOn` 为真，三个雪帽锚点都在她顶面上）',
+      api.surfaceOn() === true && caps0.length === 3,
+      `surfaceOn=${api.surfaceOn()} 锚点 ${caps0.map((a) => `${a.x},${a.y}`).join(' / ')}`);
+    const capOn = () => api.at('snow', headStage.x, headStage.y - 60, { vy: 140, vT: 140, sway: 0, hz: 0, hzA: 0, phase: 0, wind: 0, slip: 0, stall: 0, spin: 0, spinSp: 0, rollSp: 0, layer: 1, layerN: 3, life: 40 });
+    capOn();
+    /** 她身上那块（用**两个圆的盒子**围出来一块区域，只用来数像素）。 */
     const r2 = { x0: box2.c1.x - box2.c1.r, y0: box2.c1.y - box2.c1.r, x1: box2.c1.x + box2.c1.r, y1: box2.c1.y + box2.c1.r };
     const nBefore = inkIn(near, r2.x0, r2.y0, r2.x1, r2.y1);
-    api.at('snow', snowAt.x, snowAt.y, { vy: 140, vT: 140, sway: 0, hz: 0, hzA: 0, phase: 0, wind: 0, slip: 0, stall: 0, spin: 0, spinSp: 0, rollSp: 0, layer: 1, layerN: 3, life: 40 });
-    let clingMax = 0, nearSnow = 0;
-    for (let i = 0; i < 40; i += 1) {
-      const d = api.drive('off', 1 / 30);
-      clingMax = Math.max(clingMax, d.cling);
-      nearSnow = Math.max(nearSnow, inkIn(near, r2.x0, r2.y0, r2.x1, r2.y1));
+    let amtMax = 0, nearSnow = 0;
+    for (let i = 0; i < 3; i += 1) {
+      if (i) capOn();
+      for (let k = 0; k < 30; k += 1) {
+        const d = api.drive('off', 1 / 30);
+        amtMax = Math.max(amtMax, (d && d.capAmt) || 0);
+        nearSnow = Math.max(nearSnow, inkIn(near, r2.x0, r2.y0, r2.x1, r2.y1));
+      }
     }
-    ok('⑤ 雪落在她身上会**积住**（`cling` ≥1，而且近层画布她身上那块真的多了像素）',
-      clingMax >= 1 && nearSnow > nBefore + 3,
-      `身上 ${api.cling()} 片（峰值 ${clingMax}）· 近层 ${nBefore} → ${nearSnow}`);
-    /** 让她**真的走两步**（`act('walk')` 走的是产品自己的动作系统）→ 积雪应当掉光。 */
+    ok('⑤ 雪落在头顶那个锚点上会**积起来**（雪量 > 0.5），而且近层画布她身上那块真的多了像素',
+      api.cling() >= 1 && amtMax > .5 && nearSnow > nBefore + 3,
+      `有雪的锚点 ${api.cling()} 个 · 雪量峰值 ${amtMax.toFixed(2)} · 近层 ${nBefore} → ${nearSnow}`);
+    /** 让她**真的走两步**（`act('walk')` 走的是产品自己的动作系统）→ 雪帽应当抖掉。 */
     const walked = api.act('walk');
     let gone = false, drops = 0;
     for (let i = 0; i < 60; i += 1) {
       api.drive('off', 1 / 30);                          // 每帧走产品自己的 pushActor + fx.frame
       if (api.cling() === 0) { gone = true; drops = api.stats().n; break; }
     }
-    ok('⑤ 她一**走动**，身上的雪就抖掉（而且掉成一粒粒雪，不是凭空消失）',
-      walked !== false && gone, `act('walk')=${walked} 抖掉后身上 ${api.cling()} 片`);
+    ok('⑤ 她一**走动**，雪帽就抖掉（而且掉成一粒粒雪，不是凭空消失）',
+      walked !== false && gone, `act('walk')=${walked} 抖掉后还有雪的锚点 ${api.cling()} 个 · 画了 ${drops} 个形状`);
   }
 
   /* ⑥ 收拾干净 */

@@ -449,7 +449,15 @@ connect();
 let whale = null, wanted = 'coo';
 async function applyFigure(s) {
   wanted = s.figure;
-  if (s.figure !== 'whale') { ctl.setFigure(null); return; }
+  if (s.figure !== 'whale') {
+    ctl.setFigure(null);
+    /**
+     * ⚠️ Coo（内置形象）**没有** `surface.json` —— 把表清掉，天气判定退回原来那两个圆
+     * （对她来说那两个圆就是她的身体，准的）。见 `fx.js` 的 `SURF` 那段。
+     */
+    fx.surface(null);
+    return;
+  }
   /**
    * ⚠️ **这一段的失败必须留痕**（2026-10-10 踩到）：服装贴图少一张（比如只放了 `tex\` 忘了 `feat\`），
    * `createWhaleFigure` / `setScheme` 会 reject，而调用点只 `console.error` ——
@@ -464,7 +472,14 @@ async function applyFigure(s) {
     // a scheme picked while she is on screen fades in
     await fig.setScheme(s.scheme, { fade: ctl.figure === fig ? .45 : 0, at: ctl.time });
     ctl.setFigure(fig);
-    report(`${tag} 加载成功（她换过来了）`);
+    /**
+     * ★★ **把她自己的"真实顶面"交给粒子系统**（`whale/surface.json`）：
+     * 从那以后雨/雪落在的是**她画出来的轮廓**上，而不是那个"点得到的圆"
+     * （实测：圆里有 23% 是空气、73.5% 的雪落点在她身外 —— 用户实测报的"白点"就是这个）。
+     * 读不到表（老资源包）时 `fig.surface` 是 null → `fx.surface(null)` → 自动退回圆的判定。
+     */
+    fx.surface(fig.surface || null);
+    report(`${tag} 加载成功（她换过来了）${fig.surface ? '· 已接上真实轮廓（雨雪落点用她自己的形状）' : '· 没读到 surface.json，雨雪还用圆的判定'}`);
   } catch (err) {
     report(`${tag} 加载失败：${(err && err.message) || err} —— 这套的贴图是不是少放了？（schemes/<id>/ 下 tex/ 和 feat/ 都要整套）`);
     throw err;
@@ -2455,12 +2470,13 @@ const SLOW_MS = 26;
 /** 卡顿时减到几成（0.4 = 粒子少一半多，视觉上还看得出是雪/雨，但不糊成一团）。 */
 const SLOW_DENSITY = .4;
 /**
- * ★ **"雪积够了她抖一下"的两个数**（③b，2026-10-11 晚）：积到几片才抖、两次之间至少隔多久。
- * 上限是 `fx.js` 的 `CLING_MAX`（6 片），所以 **5 = "快积满的时候"**。
- * 冷却给 25 秒：积满要十来秒（~0.8 片/秒落到她身上）、抖掉之后要重新积 ——
- * 正常大概 35~40 秒才抖一次，站在雪里也不会一直抖（那看着像抽搐）。
+ * ★ **"雪积够了她抖一下"的两个数**（③b，2026-10-11 晚；打磨之后雪量改成"三个锚点各 0..1"）：
+ * 总共积到多少算"够"、两次之间至少隔多久。
+ * **3 个锚点 × 1.0 = 满值 3**，所以 **2.4 ≈ 八分满**。
+ * 冷却给 25 秒：积满要十来秒（~0.8 片/秒落到她身上、每片 +1/3、20 秒融化）、抖掉之后要重新积 ——
+ * 正常大概 30~40 秒才抖一次，站在雪里也不会一直抖（那看着像抽搐）。
  */
-const SNOW_SHAKE_AT = 5;
+const SNOW_SHAKE_LOAD = 2.4;
 const SNOW_SHAKE_COOLDOWN = 25;
 const weatherEl = $('#weatherTint');
 /** 现在这条天气的配置（`off` 时 `kind` 是 undefined）。 */
@@ -2574,6 +2590,8 @@ if (POINTER_DIAG) {
           strokes: s.meta.callStroke, images: s.meta.callImage,
           // ★ 跟她的互动那几个数（自检/验收页读它们，见 fx.js 的 meta 说明）
           hits: s.meta.hits, onBody: s.meta.onBody, splash: s.meta.splash, box: s.meta.box, cling: s.meta.cling,
+          // ★ 打磨之后：雪帽的雪量（0..1）与"没粘住时冒的白雾"数
+          capAmt: s.meta.capAmt, puff: s.meta.puff,
         },
       };
     },
@@ -2594,12 +2612,16 @@ if (POINTER_DIAG) {
     detach: () => fx.actor(null),
     at: (kind, x, y, over) => !!fx.spawn(kind, { x, y, ...(over || {}) }),
     cling: () => fx.clinging,
+    /** 三个雪帽锚点的本地坐标与雪量（验收页/自检用）。 */
+    caps: () => fx.caps(),
+    /** 现在用的是"她自己的真实轮廓"还是两个圆。 */
+    surfaceOn: () => fx.hasSurface,
     fade: (secs) => { fx.fadeClings(secs); return fx.clinging; },
     /** 让她做一个动作（验收页用它让她**真的走两步**，见 ③b 的"她一动雪就掉"）。 */
     act: (a) => ctl.act(a),
     drive(kind, secs = 1) {
       const dt = 1 / 60;
-      let t = ctl.time, hits = 0, onBody = 0, boxDrawn = 0, cling = 0;
+      let t = ctl.time, hits = 0, onBody = 0, boxDrawn = 0, cling = 0, capAmt = 0, puff = 0;
       for (let i = 0; i < Math.round(secs * 60); i += 1) {
         t += dt;
         pushActor(true);
@@ -2609,11 +2631,13 @@ if (POINTER_DIAG) {
         if (m.onBody > onBody) onBody = m.onBody;
         if (m.box > boxDrawn) boxDrawn = m.box;
         if (m.cling > cling) cling = m.cling;
+        if (m.capAmt > capAmt) capAmt = m.capAmt;
+        if (m.puff > puff) puff = m.puff;
       }
       const st = fx.stats();
       return {
-        n: fx.count, hits, onBody, boxDrawn, cling, splash: st.meta.splash,
-        sticking: fx.clinging, actor: fx.actorBox(), counts: fx.layerCounts(),
+        n: fx.count, hits, onBody, boxDrawn, cling, capAmt, puff, splash: st.meta.splash,
+        sticking: fx.clinging, load: fx.capLoad, actor: fx.actorBox(), counts: fx.layerCounts(),
       };
     },
   });
@@ -2721,12 +2745,12 @@ function stepWeather(dt) {
    * 做的时候：`actorSnap.shake = true` 只放**这一帧**（`fx.js` 见到就把身上的积雪
    * **抖成一粒粒雪掉下去**，不是凭空消失），动作走 `ctl.act('shake')`（★ 收字符串，不是数组）。
    */
-  if (cfg.kind === 'snow' && fx.clinging >= SNOW_SHAKE_AT
+  if (cfg.kind === 'snow' && fx.capLoad >= SNOW_SHAKE_LOAD
     && ctl.time >= weather.shakeAt && !item && !ctl.busy()) {
     weather.shakeAt = ctl.time + SNOW_SHAKE_COOLDOWN;
     actorSnap.shake = true;
     ctl.act('shake');
-    try { report(`[天气] 她身上的雪积到 ${fx.clinging} 片 → 抖了一下（雪掉下来了）`); } catch { /* 报告失败就算了 */ }
+    try { report(`[天气] 她身上的雪积到 ${fx.capLoad.toFixed(1)}/3 → 抖了一下（雪掉下来了）`); } catch { /* 报告失败就算了 */ }
   }
   /**
    * ② 粒子：物理、外观、发射节奏、渲染都在 fx.js 里（`weather.density` 是卡顿减量，见上面 ①）。

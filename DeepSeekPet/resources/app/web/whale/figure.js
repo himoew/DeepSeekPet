@@ -65,6 +65,19 @@ function loadImage(url) {
  */
 export async function createWhaleFigure(base = new URL('./', import.meta.url), opts = {}) {
   const model = opts.model || await (await fetch(new URL('model.json', base))).json();
+  /**
+   * ★★ **她的"真实顶面"**（`surface.json`，2026-10-11 晚加）：由 `tools\make-snow-surface.py`
+   * 把 25 张图层按 `box` 拼起来、取**每列最上面/最下面那个不透明像素**（rig 单位）。
+   *
+   * 天气粒子拿它当"她被雨雪打到的地方" —— 而不是 `pet-core` 那两个"点得到的圆"
+   * （实测圆里有 **23% 是空气**、雪 **73.5% 落在她身外**，用户实测报的就是这个）。
+   *
+   * ⚠️ 读不到就 `null`：调用方退回圆的判定（老宿主 / 别的小页面 / 文件缺了都不会出错）。
+   * ⚠️ 它是**生成物**：重导美术资源之后要重跑那个脚本（见它的docstring）。
+   */
+  const surface = opts.surface !== undefined
+    ? opts.surface
+    : await fetch(new URL('surface.json', base)).then(r => (r.ok ? r.json() : null)).catch(() => null);
   const asset = opts.asset || (p => new URL(p, base));
   const { S, X0, FEET } = model.units;
   const U = x => 128 + (x - X0) * S, V = y => 256 - (FEET - y) * S;
@@ -786,5 +799,7 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
       hearts: [96, 176, 62], bubble: [128, 18],
     },
     model,
+    /** 她的真实顶面（给 `fx.surface()` 用；见这个变量那段注释）。读不到时是 `null`。 */
+    surface,
   };
 }

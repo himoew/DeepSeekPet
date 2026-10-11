@@ -301,6 +301,28 @@ export const LEAF_METRICS = (() => {
  * —— 形状画在 `[-len/2, +len/2]` 里，正好等于贴图中心。
  */
 const SPRITE = {
+  /**
+   * ★ **一小堆雪**（她身上的"雪帽"，2026-10-11 晚的打磨）：**软边**的径向渐变圆球，
+   * 顶上略亮 → 看着有厚度。
+   *
+   * 为什么必须软边、必须烘成贴图：硬边实心圆在 2~3px 上就等于一个**像素点**（看着就是脏点，
+   * 用户实测的原话），而每帧现建一个径向渐变 = 每帧一个对象（文件头第 ① 条不许的）。
+   * 烘一次、之后每帧只是 `drawImage` —— 比原来那几个 `arc + fill` 还便宜。
+   */
+  cap: {
+    len: 26, boxRate: 1.3,
+    paint(g, s, pal) {
+      const R = s.len / 2;
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      const grd = g.createRadialGradient(s.cx, s.cy - R * .18, R * .12, s.cx, s.cy, R);
+      grd.addColorStop(0, '#FFFFFF');            // 顶上一小片最亮（受光）
+      grd.addColorStop(.45, pal.snow);
+      grd.addColorStop(1, 'rgba(255,255,255,0)'); // 边缘化开，不要硬边
+      g.globalAlpha = 1;
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(s.cx, s.cy, R, 0, 6.2832); g.fill();
+    },
+  },
   petal: {
     len: 22, boxRate: 1.15,
     /**
@@ -474,8 +496,11 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
   let poolN = 0;
   const S = [];                        // 每帧的统计（自检读它）
   const meta = { fills: 0, strokes: 0, images: 0, maxLen: 0, minSpin: 1, maxSpin: 1, splash: 0, byKind: {},
-    /** 跟她的互动：这一帧新命中几颗 / 她身上的溅落数 / 她身上的积雪数 / 调试盒子描边数。 */
-    hits: 0, onBody: 0, cling: 0, box: 0 };
+    /**
+     * 跟她的互动：这一帧新命中几颗 / 她身上的溅落数 / **有雪的锚点数** / 调试轮廓数 /
+     * **最满那一顶的雪量**（0..1）/ **白雾数**（雪没粘住时冒的那一下）。
+     */
+    hits: 0, onBody: 0, cling: 0, box: 0, capAmt: 0, puff: 0 };
   /** 每帧一张的绘制对象（雨/雪花/音符/溅落用同一张，字段互相覆盖）。 */
   function take() {
     if (poolN < pool.length) return pool[poolN++];
@@ -702,7 +727,8 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
        */
       hit: 0,                          // 0 = 这一生还没碰过她；1 = 碰过了（每颗只算一次）
       nearFix: 0,                      // 1 = 强制画在近层（擦过她的花瓣/落叶要留在她身前）
-      px: 0, py: 0,                    // 上一帧的位置（求入射点用）
+      px: 0, py: 0,                    // 上一帧的位置（舞台坐标，圆那条判定用）
+      plx: NaN, ply: NaN,              // 上一帧的位置（**本地坐标**，真实轮廓那条判定用）
     };
     if (kind === 'snow') {                             // 六角星：每颗的臂长/粗细/小枝都不同
       it.arms = 3 + Math.floor(Math.random() * 2);
@@ -804,24 +830,35 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
   const bsplash = [];
   const BODY_SPLASH_MAX = 8;
   /**
-   * ★★ **她身上的积雪**（③b，2026-10-11 晚）：每一片存的是**本地坐标**（她画稿单位里的
-   * `lx/ly`），所以她自己动（歪头、侧倾、呼吸起伏、转身）时**雪跟着她动** ——
-   * 这是"贴在她身上"与"悬在半空"的唯一区别（换算见 `mapX/mapY/unmapX/unmapY`）。
+   * ★★ **她的"真实顶面"**（`fx.surface(...)`，来自 `whale/surface.json`；2026-10-11 晚的打磨）。
    *
-   * 三个数怎么定的：
-   *   · `CLING_MAX = 6`：以现在的雪密度估算，**~0.8 片/秒**会落到她身上，寿命 6~10 秒 →
-   *     长期稳定在 5~8 片。**6 片**正好是"她站在雪里"的样子，再多就开始糊（用户担心的"脏"）；
-   *     **想一键关掉就把它设 0**（退化成"落到身上温柔消失"，结构不变）。
-   *   · 寿命 `6~10 秒`：太短看不出来，太长会一直挂着。
-   *   · `CLING_FADE = 2`：**切天气时"缓缓淡出"用几秒**（用户点名："不能留着、也不能瞬间没"）。
+   * 为什么不用那两个判定圆：那是 `pet-core` 的**"点得到的范围"**（以 x=128 对称的两个圆），
+   * 而她的画是 3/4 侧身、整体不居中 —— 实测：圆覆盖的格子里 **23% 是空气**，
+   * 真跑 180 秒雪 **73.5% 的落点在她身外**（用户实测原话："不同大小的白点，确实不好看"）。
+   * 现在用**她自己的 25 张图层拼出来的"每列顶面／底面"**（`tools\make-snow-surface.py` 生成）：
+   * 下落的东西在这一列上先撞到哪条线，是**算得出来**的 —— 雪和雨的落点都在她真实轮廓上。
+   *
+   * ⚠️ `SURF === null`（Coo 形象 / 老宿主 / 自检没给表）→ **完全退回两个圆的判定**，行为同上一版。
    */
-  const cling = [];
-  const clingPool = [];
-  const CLING_MAX = 6;
+  let SURF = null;
+  /** 命中点在**本地坐标**里的位置（`hitSurface()` 算出来，供"这一片雪该积在哪个锚点"用）。 */
+  let HIT_LX = 0;
+  /**
+   * ★★ **雪帽**（同一轮打磨）：不再"到处冒点"，而是**三个美术锚点各攒一份雪量**
+   * （头顶 / 左 / 右，位置由 `surface.json` 的 `anchors` 给 —— 就是她顶面上那三个点）。
+   *
+   * · `amt` 0→1，每次落雪 `+1/3`（三片打满）；平时按 `CAP_LIFE` 线性融化。
+   * · 用户选的是**寿命 15~25 秒**（调研结论："宁少而大、久而不闪"，6~10 秒会频繁消失像闪）→ 取 20。
+   * · 画的时候**只有 `amt` 在长**（贴片变宽变厚），**不新建随机点** —— 这是"不像脏点"的关键。
+   */
+  let ANCH = [];
+  const CAP_LIFE = 20;          // 秒：不再落雪之后，从满到化完要多久
+  const CAP_STEP = 1 / 3;       // 一次落雪加多少
+  const CAP_MIN = .02;          // 小于它就算"没有雪"
+  /** 切天气时的"缓缓淡出"：`capMeltLeft` 秒内把雪量线性抹掉（用户点名："不能留着、也不能瞬间没"）。 */
+  let capMeltLeft = 0, capMeltRate = 0;
   const CLING_FADE = 2;
-  /** 只积在**上半身**（本地 y ≤ 这个值：头顶/肩/手臂那一圈）——雪从上面落下来本来就该落在那里。 */
-  const CLING_TOP = 150;
-  /** 她**真的在走/跑**、或者被拎着甩得很快（>250px/s）→ 积雪被抖掉；只是歪头/呼吸不算。 */
+  /** 她**真的在走/跑**、或者被拎着甩得很快（>250px/s）→ 雪不粘（只冒白雾）+ 已有的雪抖掉。 */
   const CLING_SHAKE_V = 250;
 
   /**
@@ -871,6 +908,54 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
     }
     return true;
   }
+  /* ---------- 她的真实顶面（`surface.json`） ---------- */
+  /**
+   * 在一条"按列采样"的表里取值（`x` 是**本地坐标**；表里的 `null` 已经变成 `NaN` = 这一列没有她）。
+   * 两个相邻样本都在才插值 —— 轮廓边上不许插到空气里去。
+   */
+  function surfVal(arr, x) {
+    const u = (x - SURF.x0) / SURF.step;
+    if (!(u >= 0) || u > SURF.n - 1) return NaN;
+    const i = u | 0, f = u - i;
+    const a = arr[i], b = i + 1 < SURF.n ? arr[i + 1] : NaN;
+    if (!Number.isFinite(a)) return NaN;
+    if (!Number.isFinite(b) || f <= 0) return a;
+    return a + (b - a) * f;
+  }
+  /**
+   * ★★ 这一颗这一帧落到**她的真实轮廓**上了吗？（有 `SURF` 走这条，否则退回两个圆的判定。）
+   *
+   * 判据（在**本地坐标**里做，所以她转身/倾斜时这套跟着一起转）：
+   *   `top(列) ≤ 这一帧的本地 y ≤ bot(列)` —— 下落的东西在这一列上一定先撞到 `top`。
+   * 入射点用"上一帧 → 这一帧"插值到 `top` 那条线上（雨一帧走 33px，拿当前位置会插进她身体里）。
+   * 成本：每颗每帧两次逆变换 + 两次查表（约 20 次浮点），跟原来两个圆是一个量级。
+   */
+  function hitSurface(p) {
+    const lx = unmapX(p.x, p.y), ly = unmapY(p.x, p.y);
+    const t = surfVal(SURF.top, lx), b = surfVal(SURF.bot, lx);
+    let hit = false;
+    /**
+     * ⚠️ 判据是"**这一帧那条线段**有没有碰到她的竖直带 `[top, bot]`"，不是"这一帧的位置在不在里面"：
+     * 雨一帧走 33px = **79 个本地单位**，而她的呆毛/鳍只有几个单位厚 —— 只看当前位置会**穿过去**。
+     * 实测（自检抓的）：12 列里有一列差 **100 单位**，就是漏过了头顶那根呆毛、落到下面身体上。
+     * 所以要求"上一帧还在她底边之上（`ply <= bot`）、这一帧已经到她顶面之下（`ly >= top`）"。
+     */
+    if (Number.isFinite(t) && ly >= t && !(Number.isFinite(p.ply) && p.ply > b)) {
+      hit = true;
+      const k = Number.isFinite(p.plx) && ly > p.ply ? (t - p.ply) / (ly - p.ply) : 1;
+      const ex = Number.isFinite(p.plx) ? p.plx + (lx - p.plx) * clamp(k, 0, 1) : lx;
+      HIT_LX = ex;
+      HIT.x = mapX(ex, t); HIT.y = mapY(ex, t);
+    }
+    p.plx = lx; p.ply = ly;
+    return hit;
+  }
+  /** 离得最近的那个雪帽锚点（按本地 x 比）。 */
+  function nearestAnchor(lx) {
+    let best = null, bd = 1e9;
+    for (const a of ANCH) { const d = Math.abs(lx - a.x); if (d < bd) { bd = d; best = a; } }
+    return best;
+  }
   /**
    * **她走动带起来的一阵风**（px/s）：只吹她**前方**、只在她真的走/跑时、有上限。
    * 要的是"她走过去，前面的雪被带了一下"，不是"她是个吹风机"。
@@ -892,72 +977,72 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
     return clamp(sp * .22, 0, HER_WIND_MAX) * (1 - d / HER_WIND_R);
   }
   /** 打在她身上的一次溅落（复用同一套 `splash` 形状，只是位置与形状按"身体"来）。 */
-  function splashOnBody(x, y, size) {
-    const s = bsplash.length >= BODY_SPLASH_MAX ? bsplash.shift() : { x: 0, y: 0, age: 0, life: 0, size: 0 };
+  function splashOnBody(x, y, size, snow) {
+    const s = bsplash.length >= BODY_SPLASH_MAX ? bsplash.shift() : { x: 0, y: 0, age: 0, life: 0, size: 0, snow: false };
     s.x = x; s.y = y; s.age = 0; s.life = rnd(.16, .34);
     s.size = clamp(size, .7, 1.6);
+    s.snow = !!snow;
     bsplash.push(s);
   }
-  /* ---------- 她身上的积雪（③b） ---------- */
   /**
-   * 给她身上添一片雪（`lx/ly` 是**本地坐标**，见 `cling` 的说明）。
-   * 对象从 `clingPool` 里 reuse（跟粒子一个道理：这东西一秒钟可能添好几片，别给 GC 送垃圾）。
+   * **一记白雾**：雪落到身上但**没积住**时冒的那一下（她快速移动/被拎着甩的时候用）。
+   * 复用"身上的溅落"那一套（同样的上限、同样的绘制项），只是换成雪的颜色、圆一点、短一点。
    */
-  function addCling(lx, ly) {
-    if (CLING_MAX <= 0 || cling.length >= CLING_MAX) return false;
-    const c = clingPool.pop() || { lx: 0, ly: 0, age: 0, life: 0, r: 0 };
-    c.lx = lx + rnd(-7, 7);          // 别都堆在同一个像素上（不然像贴了一张贴纸）
-    c.ly = ly + rnd(-3, 3);
-    c.age = 0;
-    c.life = rnd(6, 10);
-    c.r = rnd(1.7, 3.1);
-    cling.push(c);
+  function puffAt(x, y, size) { splashOnBody(x, y, size, true); }
+  /* ---------- 她身上的积雪（③b） ---------- */
+  /* ---------- 雪帽（三个锚点，只有"雪量"在长） ---------- */
+  /**
+   * 往最近的锚点上加一份雪（`lx` 是命中点的本地 x）。第三次就满了（`CAP_STEP = 1/3`）。
+   * ⚠️ **不新建随机点**：锚点位置是固定的（`surface.json` 给的），只有 `amt` 在长 ——
+   * 这正是"从脏点变成一层雪"的关键（调研结论：尺寸/位置随机 = 噪点）。
+   */
+  function addCap(lx) {
+    const a = nearestAnchor(lx);
+    if (!a) return false;
+    a.amt = Math.min(1, a.amt + CAP_STEP);
     return true;
   }
+  /** 抖掉/融化：**变回一颗粒子落下去**（不是凭空消失）—— 她抖那一下才看得见"雪掉了"。 */
+  function dropCaps(n) {
+    let k = 0;
+    for (const a of ANCH) {
+      if (a.amt <= CAP_MIN) continue;
+      const count = Math.max(1, Math.round(a.amt * (n || 3)));
+      for (let i = 0; i < count; i += 1) {
+        const p = spawn('snow', {
+          x: mapX(a.x + rnd(-6, 6), a.y), y: mapY(a.x + rnd(-6, 6), a.y),
+          vy: rnd(20, 60), vT: rnd(60, 130), layer: 2, layerN: 3,
+          /**
+           * ★ **`hit: 1`**：这粒雪"已经碰过她了"。不然它会**当场又被她接住** ——
+           * 它出生的位置就在她的轮廓上（就是它刚才化的地方），下一帧判定又命中 →
+           * 抖掉一顶雪、马上又积回来（实测踩过：自检里 6 片抖了 5 片、又回来 1 片）。
+           */
+          hit: 1,
+        });
+        if (p) { p.wind = 1; k += 1; }
+      }
+      a.amt = 0;
+    }
+    return k;
+  }
+  /** 现在身上总共积了多少雪（0..锚点数）；页面用它判断"积够了该抖一下"。 */
+  function capLoad() { let s = 0; for (const a of ANCH) s += a.amt; return s; }
+  /** 有几个锚点上有雪（`meta.cling` 用它）。 */
+  function capCount() { let n = 0; for (const a of ANCH) if (a.amt > CAP_MIN) n += 1; return n; }
   /**
-   * 一片积雪的不透明度：入画 0.25 秒淡入、中间满、末尾淡出。
-   * ⚠️ 淡出窗口按**它自己剩下的寿命**算（`left`）—— 这样"切天气时把 life 改成 2 秒"那一下
-   * 也会跟着走出真正的淡出，而不是到点一刀切没（`fadeClings()`）。
+   * ★ **切天气时让雪帽缓缓淡掉**（用户点名："不能留着、也不能瞬间没"）：
+   * 接下来 `secs` 秒内线性抹掉（这段时间里走的是 `capMeltRate` 而不是平时的 `CAP_LIFE`）。
    */
-  function clingOpacity(c) {
-    const left = c.life - c.age;
-    if (left <= 0) return 0;
-    const fin = Math.min(.25, c.life * .3);
-    if (c.age < fin) return Math.min(1, c.age / Math.max(.05, fin));
-    const fout = Math.min(1.2, Math.max(.15, c.life * .4));
-    return Math.min(1, left / fout);
-  }
-  /** 抖掉一片：**变回一颗粒子落下去**（不是凭空消失）—— 她抖那一下才看得见"雪掉了"。 */
-  function dropCling(c) {
-    const p = spawn('snow', {
-      x: mapX(c.lx, c.ly), y: mapY(c.lx, c.ly),
-      vy: rnd(20, 60), vT: rnd(60, 130), layer: 2, layerN: 3,
-      /**
-       * ★ **`hit: 1`**：这粒雪"已经碰过她了"。不然它会**当场又被她接住** ——
-       * 它出生的位置就在她身体那个圆上（就是它刚才化的地方），下一帧判定又命中 →
-       * 抖掉一片、马上又积回来一片，看着像"雪抖不掉"（实测踩过：自检里 6 片抖了 5 片、又回来 1 片）。
-       */
-      hit: 1,
-    });
-    if (p) { p.wind = 1; }
-    return !!p;
-  }
-  /** 把每一片积雪的寿命压到"从现在起 `secs` 秒"→ 它们就会在这么久里**缓缓**淡掉。 */
   function fadeClings(secs) {
     const s = Math.max(.2, Number(secs) || CLING_FADE);
-    for (const c of cling) c.life = Math.min(c.life, c.age + s);
+    capMeltLeft = s; capMeltRate = 1 / s;
   }
-  /** 立刻清掉积雪（不走淡出）。 */
-  function killClings() {
-    while (cling.length) {
-      const c = cling.pop();
-      if (clingPool.length < CLING_MAX * 2) clingPool.push(c);
-    }
-  }
+  /** 立刻清掉雪帽（不走淡出）。 */
+  function killClings() { for (const a of ANCH) a.amt = 0; capMeltLeft = 0; }
   /**
    * ★ **跟她的身体有反应的天气**（其余天气碰到她"什么都不做"，行为与上一版逐字相同）。
    * 分天气的意思：雨是"打到就没了 + 溅一圈"；樱/落叶是"擦一下、被推歪、留在她身前接着飘"；
-   * **雪是"落在她身上积住"**（③b）。
+   * **雪是"落在她身上积住"**（落在最近的那个雪帽锚点上）。
    */
   const REACT = { rain: 1, blossom: 1, leaf: 1, snow: 1 };
   /**
@@ -969,12 +1054,13 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
     frameHits += 1;
     if (p.kind === 'snow') {
       /**
-       * **雪：碰到就化在这一下，但只在上半身留下一片**。
-       * 侧面/下方飘过来的那些只当"碰到了"（不积）—— 免得她脚上顶着一片雪，看着像 bug。
-       * 入画点换算成本地坐标存起来，所以她动雪跟着动（见 `cling`）。
+       * **雪**：这一颗化在这一下。**她快速移动/被拎着甩的时候不粘**（只冒一下白雾）——
+       * 那时候贴片最容易暴露"没跟着姿势更新"（调研结论里那条兜底）。
+       * 粘的时候走"最近的那个雪帽锚点"，于是雪只出现在**她的顶面那三个点**上。
        */
-      const lx = unmapX(HIT.x, HIT.y), ly = unmapY(HIT.x, HIT.y);
-      if (ly <= CLING_TOP) addCling(lx, ly);
+      const busy = A.moving || A.shake || actorVx > CLING_SHAKE_V || actorVx < -CLING_SHAKE_V;
+      if (busy || !ANCH.length) puffAt(HIT.x, HIT.y, p.size);
+      else addCap(HIT_LX);
       dead(p, i);
       return;
     }
@@ -1022,18 +1108,18 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
      * ⚠️ **歪头、侧倾、呼吸起伏不算** —— 那些时候雪要**跟着她动**（这正是存本地坐标的意义），
      * 不然"贴在她身上"就成了"悬在半空"。
      *
-     * 掉下来时**变回一颗粒子**（`dropCling`），不是凭空消失 —— 她抖那一下才看得见"雪掉了"。
+     * 掉下来时**变回一颗粒子**（`dropCaps`），不是凭空消失 —— 她抖那一下才看得见"雪掉了"。
+     * 平时**缓缓融化**：新落一片把雪量顶上去，停下来之后按 `CAP_LIFE`（20 秒）化完 ——
+     * 用户选的是"15~25 秒、宁久不闪"。
      */
-    if (cling.length) {
-      const shook = !A.on || A.shake || A.moving || (actorVx > CLING_SHAKE_V) || (actorVx < -CLING_SHAKE_V);
-      for (let i = cling.length - 1; i >= 0; i -= 1) {
-        const c = cling[i];
-        c.age += dt;
-        if (c.age < c.life && !shook) continue;
-        if (shook && A.on) dropCling(c);
-        cling.splice(i, 1);
-        if (clingPool.length < CLING_MAX * 2) clingPool.push(c);
-      }
+    if (ANCH.length) {
+      const shook = A.on && (A.shake || A.moving || actorVx > CLING_SHAKE_V || actorVx < -CLING_SHAKE_V);
+      if (shook) dropCaps(3);
+      else if (!A.on) { /* 她不在场了（切走天气）：走 fadeClings 那条缓融，这里什么都不做 */ }
+      let dec;
+      if (capMeltLeft > 0) { capMeltLeft = Math.max(0, capMeltLeft - dt); dec = capMeltRate; }
+      else dec = 1 / CAP_LIFE;
+      if (dec > 0) for (const a of ANCH) if (a.amt > 0) a.amt = Math.max(0, a.amt - dec * dt);
     }
     for (let i = P.length - 1; i >= 0; i -= 1) {
       const p = P[i];
@@ -1102,9 +1188,9 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
        * ② 每颗**只算一次**（`p.hit`，擦过她之后不会被反复推）；
        * ③ `A.on` 为假时这个 `if` 直接短路 —— 没有她时**一帧都不多算**。
        */
-      if (hitOn && p.hit === 0 && REACT[p.kind] === 1 && hitActor(p)) {
+      if (hitOn && p.hit === 0 && REACT[p.kind] === 1 && (SURF ? hitSurface(p) : hitActor(p))) {
         react(p, i);
-        continue;                       // ⚠️ react 可能已经 dead()（雨），之后不许再碰 p
+        continue;                       // ⚠️ react 可能已经 dead()（雨/雪），之后不许再碰 p
       }
       p.px = p.x; p.py = p.y;           // 留给下一帧求入射点
       // 雨：落到"窗口底"就记一次溅落（"落地"是最容易看出真假的一处）
@@ -1261,6 +1347,8 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
        * （`meta.onBody` 不再读这个字段了 —— 直接数 `bsplash`，见 `draw()` 里那段。）
        */
       d.run = 0;
+      /** `body: false` = 地上那种；`true` = 打在她身上那种（统计/自检要用它区分，见 `draw()`）。 */
+      d.body = false;
       D.push(d);
     }
     /**
@@ -1275,44 +1363,85 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
       const d = take();
       d.shape = 'splash'; d.kind = 'rain'; d.op = .8 * (1 - k) * (1 - k);
       d.x = s.x; d.y = s.y;
-      d.rx = r * 1.05; d.ry = r * .55;
-      d.run = (1 - k) * (7 + s.size * 5);
-      d.w = 1.3 - 1.0 * k; d.col = pal.rain;
+      /** 雪的白雾画成圆的、短一点、不带水痕；雨那段细水流只给雨（`d.run`）。 */
+      d.rx = s.snow ? r * 1.0 : r * 1.05;
+      d.ry = s.snow ? r * 1.0 : r * .55;
+      d.run = s.snow ? 0 : (1 - k) * (7 + s.size * 5);
+      d.w = s.snow ? 1.8 - 1.4 * k : 1.3 - 1.0 * k;
+      d.col = s.snow ? pal.snow : pal.rain;
+      d.snow = !!s.snow;
+      d.body = true;
       d.spr = null; d.sx = 1; d.branches = null;
       d.near = true;
       D.push(d);
     }
     /**
-     * ★★ **她身上的积雪**（③b，2026-10-11 晚）：画在**近层**（盖在她身上才看得见）。
-     * 位置每帧由**本地坐标现算**（`mapX/mapY`）—— 所以她动它就跟着动。
-     * 成本：最多 `CLING_MAX` 笔 `fill`（≤6），比一颗粒子还便宜。
+     * ★★ **她身上的雪帽**（三个锚点，2026-10-11 晚的打磨）：画在**近层**（盖在她身上才看得见）。
+     * 位置每帧由**本地坐标现算**（`mapX/mapY`）；`amt` 只影响**大小与不透明度** ——
+     * 雪多了是"这一顶更厚更宽"，而不是"多出几个白点"。
+     *
+     * 两个锚点都积起来时，用一条**圆头粗线**把它们连成一条"雪带"（调研给的做法：
+     * 相邻贴片连起来才像"积了一层"，散着就是斑点）。带头在 `amt` 小的时候不出。
      */
-    for (const c of cling) {
-      const op = clingOpacity(c);
-      if (op <= .02) continue;
+    for (const a of ANCH) {
+      if (a.amt <= CAP_MIN) continue;
+      const sc = .62 + .55 * a.amt;                 // 雪越多，雪帽越大
+      const len = a.len * (A.S / .42) * sc;         // 她的体型变了雪帽跟着变
+      const spr = sprite('cap', 'cap', len, null, null);
       const d = take();
-      d.shape = 'cling'; d.kind = 'snow'; d.op = op;
-      d.x = mapX(c.lx, c.ly); d.y = mapY(c.lx, c.ly);
-      d.r = c.r; d.col = pal.snow;
+      d.shape = 'cap'; d.kind = 'snow'; d.op = .35 + .5 * a.amt;
+      /**
+       * ⚠️ **中心往轮廓内侧收**（`+ a.len * .3 * sc`）：只让**上缘**露在顶面之上，
+       * 才像"积在上面"；正中心压在轮廓线上就变成一个浮在外面的白点（调研结论第 3 条）。
+       */
+      d.x = mapX(a.x, a.y + a.len * .28 * sc);
+      d.y = mapY(a.x, a.y + a.len * .28 * sc);
+      d.spr = spr; d.rot = .08 * Math.sin(a.x); d.sx = 1; d.sc = len / spr.len;
+      d.branches = null; d.run = 0;
+      d.near = true;
+      D.push(d);
+    }
+    for (let i = 1; i < ANCH.length; i += 1) {
+      const a = ANCH[i - 1], b = ANCH[i];
+      if (a.amt < .28 || b.amt < .28) continue;     // 两头都积起来才连
+      const d = take();
+      d.shape = 'band'; d.kind = 'snow'; d.op = .3 + .35 * Math.min(a.amt, b.amt);
+      d.x = mapX(a.x, a.y); d.y = mapY(a.x, a.y);
+      d.x2 = mapX(b.x, b.y); d.y2 = mapY(b.x, b.y);
+      d.w = 3.2 * (A.S / .42); d.col = pal.snow;
       d.spr = null; d.sx = 1; d.branches = null; d.run = 0;
       d.near = true;
       D.push(d);
     }
     /**
-     * ★ **`?diag=1&fxbox=1`：把她的判定盒子画出来**（两个圆，与 `hitPet` 同源）。
-     * "盒子有没有对上她"不该靠猜 —— 这是 1×1 画布那次事故之后最该有的东西。
-     * 只有诊断开关打开时才进绘制清单，**正式运行一格开销都没有**（`boxOn` 默认 false）。
+     * ★ **`?diag=1&fxbox=1`：把"她被当成什么"画出来**。
+     * 有 `SURF`（她的真实顶面表）时画的就是**她自己那条轮廓线**（上沿 + 下沿两笔）；
+     * 没有（Coo / 老宿主）时退回两个判定圆 —— "盒子有没有对上她"不该靠猜
+     * （这是 1×1 画布那次事故之后最该有的东西）。只有诊断开关打开时才进绘制清单。
      */
     if (boxOn && A.on) {
-      const box = [[R.c1x, R.c1y, R.r1], [R.c2x, R.c2y, R.r2]];
-      for (const [bx, by, br] of box) {
-        const d = take();
-        d.shape = 'box'; d.kind = 'box'; d.op = .9;
-        d.x = bx; d.y = by; d.r = br;
-        d.col = '#4FE3C1'; d.w = 1.5;
-        d.spr = null; d.sx = 1; d.branches = null; d.run = 0;
-        d.near = true;
-        D.push(d);
+      if (SURF) {
+        const xs = SURF.x0;
+        for (const arr of [SURF.top, SURF.bot]) {
+          const d = take();
+          d.shape = 'outline'; d.kind = 'box'; d.op = .9;
+          d.col = '#4FE3C1'; d.w = 1.5;
+          d.out = arr; d.ox0 = xs; d.ostep = SURF.step; d.on_ = SURF.n;
+          d.spr = null; d.sx = 1; d.branches = null; d.run = 0; d.x = 0; d.y = 0;
+          d.near = true;
+          D.push(d);
+        }
+      } else {
+        const box = [[R.c1x, R.c1y, R.r1], [R.c2x, R.c2y, R.r2]];
+        for (const [bx, by, br] of box) {
+          const d = take();
+          d.shape = 'box'; d.kind = 'box'; d.op = .9;
+          d.x = bx; d.y = by; d.r = br;
+          d.col = '#4FE3C1'; d.w = 1.5;
+          d.spr = null; d.sx = 1; d.branches = null; d.run = 0;
+          d.near = true;
+          D.push(d);
+        }
       }
     }
     /** ★ 分流：每颗按 `assignCanvas()` 决定去近层还是远层（溅落已在上面直接标了近层）。 */
@@ -1366,6 +1495,29 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
         g.setTransform(dpr, 0, 0, dpr, 0, 0);
         g.globalAlpha = d.op * .92; g.fillStyle = d.col;
         g.beginPath(); g.arc(d.x, d.y, Math.max(.4, d.r), 0, 6.2832); g.fill(); calls.fill += 1;
+      } else if (d.shape === 'band') {
+        /** 两个雪帽之间那条"雪带"：圆头粗线（`lineCap` 在 `paintLayer` 里已经设成 round）。 */
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        g.globalAlpha = d.op; g.strokeStyle = d.col; g.lineWidth = d.w;
+        g.beginPath(); g.moveTo(d.x, d.y); g.lineTo(d.x2, d.y2); g.stroke(); calls.stroke += 1;
+      } else if (d.shape === 'outline') {
+        /**
+         * `fxbox` 的诊断轮廓：把 `surface.json` 里那条**按列采样**的线画出来
+         * （本地坐标逐点过一遍 `mapX/mapY`，所以她转身/倾斜时它跟着转）。
+         * 只有诊断开关打开时才有这一项。
+         */
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        g.globalAlpha = d.op; g.strokeStyle = d.col; g.lineWidth = d.w;
+        g.beginPath();
+        let started = false;
+        for (let i = 0; i < d.on_; i += 1) {
+          const y = d.out[i];
+          if (!Number.isFinite(y)) { started = false; continue; }
+          const lx = d.ox0 + i * d.ostep;
+          const sx = mapX(lx, y), sy = mapY(lx, y);
+          if (started) g.lineTo(sx, sy); else { g.moveTo(sx, sy); started = true; }
+        }
+        g.stroke(); calls.stroke += 1;
       } else if (d.shape === 'box') {
         /** `?diag=1&fxbox=1` 的盒子描边（诊断用；正式运行进不了这份清单）。 */
         g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1448,7 +1600,9 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
      * （验收页 `v-actor.html` 的 ④：先溅过一次在她身上，下一帧那颗粒子的绘制项复用了同一个对象，
      * 于是"没有她"的那一轮也报出 `onBody=1`）。`cling` 这一条同理，而且更简单：它本来就是状态。
      */
-    meta.onBody = bsplash.length; meta.cling = cling.length; meta.box = 0; meta.hits = frameHits;
+    meta.onBody = bsplash.length; meta.cling = capCount(); meta.box = 0; meta.hits = frameHits;
+    meta.capAmt = 0; meta.puff = 0;
+    for (const a of ANCH) if (a.amt > meta.capAmt) meta.capAmt = a.amt;
     meta.callStroke = calls.stroke; meta.callFill = calls.fill; meta.callImage = calls.image;
     meta.byKind = {};
     for (const d of D) {
@@ -1462,9 +1616,13 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
       if (o.len > meta.maxLen) meta.maxLen = o.len;
       if (d.sx !== undefined) { if (d.sx < meta.minSpin) meta.minSpin = d.sx; if (d.sx > meta.maxSpin) meta.maxSpin = d.sx; }
       if (d.shape === 'splash') meta.splash += 1;
-      if (d.shape === 'box') meta.box += 1;
+      if (d.shape === 'splash' && d.snow) meta.puff += 1;
+      /** ⚠️ `body` 只对"溅落"这一种形状有意义 —— 所以**只在溅落上读它**，不会有池子串味。 */
+      if (d.shape === 'splash' && d.body) o.body = 1;
+      if (d.shape === 'box' || d.shape === 'outline') meta.box += 1;
       meta.byKind[d.kind] = (meta.byKind[d.kind] || 0) + 1;
-      if (d.shape === 'rain' || d.shape === 'snow' || d.shape === 'splash' || d.shape === 'box') meta.strokes += 1; else meta.fills += 1;
+      if (d.shape === 'rain' || d.shape === 'snow' || d.shape === 'splash' || d.shape === 'box'
+        || d.shape === 'band' || d.shape === 'outline') meta.strokes += 1; else meta.fills += 1;
       if (d.spr) meta.images += 1;
       S.push(o);
     }
@@ -1581,10 +1739,41 @@ export function createFx({ ctl, canvas, canvasNear, report, onPaint, onCtx } = {
      * ——包括切到 `off`（那时候 `clear()` 也会顺带走一遍，两条路都通向"缓缓淡出"）。
      */
     fadeClings(secs) { fadeClings(secs); },
-    /** 她身上现在积着几片雪（只读；页面用它判断"积够了该抖一下"）。 */
-    get clinging() { return cling.length; },
-    /** 上限（自检用；观感脏了把它设 0 就退化成"落到身上温柔消失"，见 `cling` 的说明）。 */
-    get clingMax() { return CLING_MAX; },
+    /** 她身上现在有几个锚点积着雪（只读；页面用它判断"积够了该抖一下"）。 */
+    get clinging() { return capCount(); },
+    /** 她身上总共积了多少雪（0..锚点数）—— 比"几个锚点"更能说明"积够了没有"。 */
+    get capLoad() { return capLoad(); },
+    /** 现在用的是"她自己的真实轮廓"还是两个圆（自检/诊断用；见 `surface()`）。 */
+    get hasSurface() { return !!SURF; },
+    /** 诊断/自检：这条本地 x 上，她的顶面在哪儿（`NaN` = 这一列没有她）。 */
+    surfaceTop(lx) { return SURF ? surfVal(SURF.top, lx) : NaN; },
+    /** 诊断/自检：这条本地 x 上，她的底面在哪儿。 */
+    surfaceBot(lx) { return SURF ? surfVal(SURF.bot, lx) : NaN; },
+    /** 自检用：三个雪帽锚点的本地坐标与雪量（`amt` 0..1）。 */
+    caps() { return ANCH.map((a) => ({ x: a.x, y: a.y, amt: +a.amt.toFixed(4) })); },
+    /**
+     * ★★ **换一张"她的真实顶面"**（`whale/surface.json`；页面在她的形象换了之后调一次）。
+     * 传 `null` / 不给 → 退回两个判定圆（Coo 形象、老宿主、自检里不给表时都是这条）。见 `SURF` 那段。
+     */
+    surface(s) {
+      if (!s || !Array.isArray(s.top) || !s.top.length) { SURF = null; ANCH = []; return false; }
+      const mk = (arr) => {
+        const out = new Float32Array(s.top.length);
+        for (let i = 0; i < s.top.length; i += 1) {
+          const v = Array.isArray(arr) ? arr[i] : null;
+          out[i] = v == null ? NaN : +v;
+        }
+        return out;
+      };
+      const len = +s.anchorLen || 26;
+      SURF = {
+        x0: +s.x0 || 0, step: +s.step || 2, n: s.top.length,
+        top: mk(s.top), bot: mk(Array.isArray(s.bot) ? s.bot : s.top),
+      };
+      ANCH = (s.anchors || []).map((a) => ({ x: +a[0], y: +a[1], amt: 0, len }));
+      capMeltLeft = 0;
+      return true;
+    },
     /** 这一层（近/远）现在有几颗在画（诊断用：两张画布分流有没有生效，一眼看得出）。 */
     layerCounts() {
       let far = 0, near = 0;
