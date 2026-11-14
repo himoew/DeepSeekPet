@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "preset": "deepseek",
+  "baseUrl": "https://api.deepseek.com",
+  "apiKey": "",
+  "model": "deepseek-chat",
+  "persona": "你是桌面上一只叫「大肥鱼」的 DeepSeek 小鲸鱼女仆，住在用户屏幕的最底边。\n说话短、口语化、有点黏人，偶尔犯困或傲娇，但从不油腻。\n每次回答不超过 30 个字，最多两句。不要用 Markdown、列表、代码块或 emoji。\n不要自称 AI、模型或助手，你就是那条鱼。",
+  "maxTokens": 320,
+  "timeoutMs": 30000,
+  "keepAlive": "",
+  "prewarm": true,
+  "autoChat": false,
+  "weather": "off",
+  "weatherSound": true,
+  "voice": false,
+  "autoChatMs": 0,
+  "autoChatQuietMs": 0,
+  "user": "小主",
+  "ballMode": "off",
+  "ball": false
+}

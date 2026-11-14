@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blue Fish Deskpet · 音色</title>
+<style>
+  :root {
+    --bg: #11151d; --panel: #1a202b; --panel2: #212836; --line: #2c3542;
+    --fg: #e6ebf2; --dim: #8b97a8; --accent: #4d9fff; --ok: #46c98b; --warn: #e8b64c; --bad: #ef6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.6 "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+    padding: 18px 20px 96px;
+  }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  .sub { color: var(--dim); font-size: 12.5px; margin-bottom: 16px; }
+  .banner {
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; font-size: 13px;
+    border: 1px solid var(--line); background: var(--panel);
+  }
+  .banner.bad { border-color: #5a2a2a; background: #2a1a1a; color: #ffc9c9; }
+  .banner .k { color: var(--dim); }
+
+  /* ★ 2026-11-01：她的声音（QQ 语音）—— 从设置页搬到这里，放在最上面 */
+  .card.qq { border-color: #33507a; background: linear-gradient(180deg, #1b2432, #1a202b); }
+  .card.qq .who { color: var(--dim); font-weight: 400; font-size: 12.5px; margin-left: 8px; }
+  .qq-switch { display: flex; align-items: center; gap: 6px; margin-left: auto; color: var(--fg); font-size: 13px; cursor: pointer; }
+  .card.qq .row2 { display: grid; grid-template-columns: 88px 1fr; gap: 10px; align-items: center; margin: 9px 0; }
+  .card.qq .row2 label { color: var(--dim); font-size: 12.5px; }
+  .card.qq select {
+    width: 100%; background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px;
+  }
+  .card.qq .mix { color: #6f7889; font-size: 11.5px; margin: 2px 0 0 98px; }
+  .card.qq details { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+  .card.qq details summary { cursor: pointer; color: #6f7889; font-size: 12px; }
+  .card.qq .adv-row { display: grid; grid-template-columns: 88px 1fr; gap: 10px; align-items: center; margin: 8px 0; }
+  .card.qq .adv-row label { color: var(--dim); font-size: 12.5px; }
+  .card.qq .btns { margin-top: 10px; }
+  .card.qq .status { margin-left: 4px; }
+  .card.qq .status.bad { color: var(--bad); }
+  .card.qq .status.ok { color: var(--ok); }
+
+  .card {
+    border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+    padding: 14px 16px; margin-bottom: 14px;
+  }
+  .card.current { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(77,159,255,.25); }
+  .card.broken { opacity: .55; }
+  .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .head .name { font-size: 15px; font-weight: 600; }
+  .head .folder { color: var(--dim); font-size: 12px; font-family: Consolas, monospace; }
+  .tag {
+    font-size: 11.5px; padding: 1px 7px; border-radius: 20px;
+    border: 1px solid var(--line); color: var(--dim);
+  }
+  .tag.on { border-color: var(--accent); color: #bcd9ff; background: rgba(77,159,255,.12); }
+  .tag.bad { border-color: #5a2a2a; color: #ffc9c9; }
+  .note { color: var(--dim); font-size: 12.5px; margin: 6px 0 10px; }
+
+  .row { display: grid; grid-template-columns: 88px 1fr 58px; gap: 10px; align-items: center; margin: 9px 0; }
+  .row label { color: var(--dim); font-size: 12.5px; }
+  .row output { font-family: Consolas, monospace; font-size: 12.5px; text-align: right; color: #cfd8e3; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=number], input[type=text] {
+    width: 100%; background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px;
+  }
+  .hint { color: var(--dim); font-size: 11.5px; margin-top: 2px; grid-column: 2 / 4; }
+
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  button {
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 7px; padding: 7px 14px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: #3d4a5c; background: #262e3d; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: #1d4b86; border-color: #2b6ab8; }
+  button.primary:hover:not(:disabled) { background: #235a9e; }
+  button.ghost { background: transparent; }
+  .status { color: var(--dim); font-size: 12.5px; margin-left: auto; }
+
+  .presets { display: flex; gap: 6px; margin: 2px 0 8px 98px; flex-wrap: wrap; }
+  .presets button { padding: 3px 10px; font-size: 12px; border-radius: 20px; }
+
+  /* 参数分组：音色类在最上面最显眼，sherpa 标准参数折叠起来别抢戏 */
+  .group { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
+  .group:first-of-type { border-top: 0; margin-top: 4px; }
+  .g-head {
+    display: block; width: 100%; text-align: left; background: none; border: 0;
+    color: var(--dim); font-size: 12px; font-weight: 600; letter-spacing: .02em;
+    padding: 2px 0 4px; cursor: default;
+  }
+  .group.collapsed > .g-head::before { content: '▸ '; }
+  .group.collapsed > .g-head { cursor: pointer; }
+  .group:not(.collapsed) > .g-head::before { content: '▾ '; }
+  .group.collapsed > .g-body { display: none; }
+
+  footer {
+    position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 20px;
+    background: rgba(17,21,29,.94); border-top: 1px solid var(--line);
+    display: flex; gap: 10px; align-items: center; backdrop-filter: blur(6px);
+  }
+  .spinner {
+    width: 13px; height: 13px; border: 2px solid var(--line); border-top-color: var(--accent);
+    border-radius: 50%; display: inline-block; vertical-align: -2px;
+    animation: spin .7s linear infinite; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <h1>大肥鱼的声音</h1>
+  <div class="sub">
+    拖动滑杆 → 点「保存并生效」→ 点「试听」。<b>音高稳定度</b>是重点：
+    觉得说话忽大忽小、不像人，就往「稳」拉；觉得平平的没灵气，就往「起伏」拉。
+  </div>
+
+  <div id="banner"></div>
+
+  <!-- ★ 2026-11-02：桌宠里她回话要不要念出来（用户："把对话的语音加上，让她用语音回复"，
+       并且"可以在音色里加开关，让我自己选择"）。跟 QQ 的 bubbleVoice 是两件事。 -->
+  <section class="card qq" id="desk">
+    <div class="head">
+      <span class="name">桌宠里回话</span>
+      <span class="who">你用麦克风 / 打字跟她说话时</span>
+      <label class="qq-switch"><input type="checkbox" id="deskVoice"><span>用语音回我</span></label>
+    </div>
+    <div class="note">
+      打开：她回话时把回答念出来（文字照常显示）。关掉：只显示文字，不出声。
+      <b>QQ 那边</b>的语音不受这一格影响（那是「她的声音」那张卡和「她的耳朵」里的回话方式）。
+    </div>
+    <div class="row2">
+      <label>念的声音</label>
+      <select id="deskVoiceKit">
+        <option value="cloud">她的 QQ 声音（火山 1.0 · 快，约 1~2 秒）</option>
+        <option value="local">本机音色（fanchen-c · 慢，实测一句约 5~6 秒）</option>
+      </select>
+    </div>
+    <div class="hint">总闸仍是右键菜单的「声音」：要选到「音效 + 念出来」，两处都开才有声。火山没配 Key 时会自动退回本机音色。</div>
+  </section>
+
+  <!-- ★ 2026-11-01：她的声音（QQ 语音）。原先在「设置页 → QQ 陪伴卡」，用户让搬到这里。
+       合成直连火山 1.0，不再经过 7860 调音台；试听就在这个窗口里播，不发 QQ。 -->
+  <section class="card qq" id="qq">
+    <div class="head">
+      <span class="name">她的声音</span>
+      <span class="who">在 QQ 里发语音</span>
+      <label class="qq-switch"><input type="checkbox" id="qqOn"><span>允许她发语音</span></label>
+    </div>
+    <div class="note">
+      想让他听见的时候，她会先用语音说一句、再打两句，也可以整条都说；关掉就只打字。
+      语音由火山「豆包语音合成 1.0」合成，文本会发到火山，Key 存在本机
+      <code>config\companion.json</code>。没有间隔限制 —— 她想说就说。
+    </div>
+
+    <div class="row"><label>语速</label><input type="range" id="qqRate" min="-50" max="100" step="5"><output id="qqRateOut">-5</output></div>
+    <div class="row"><label>音量</label><input type="range" id="qqLoud" min="-50" max="100" step="5"><output id="qqLoudOut">0</output></div>
+    <div class="row"><label>音色</label><input type="range" id="qqPitch" min="-12" max="12" step="1"><output id="qqPitchOut">+2</output></div>
+    <div class="row2">
+      <label>情感</label>
+      <select id="qqEmotion">
+        <option value="">不指定（跟着她当时的话自己变）</option>
+        <option value="lovey-dovey">撒娇</option>
+        <option value="tender">温柔</option>
+        <option value="shy">害羞</option>
+        <option value="comfort">安慰鼓励</option>
+        <option value="happy">开心</option>
+        <option value="sad">悲伤</option>
+        <option value="angry">生气</option>
+        <option value="warm">温暖</option>
+      </select>
+    </div>
+    <div class="mix">音色方案：<b>小肥鱼</b>（佩奇猪 40 · 撒娇学妹 20 · 魅力女友 40），写在 <code>companion.json</code> 的 <code>voice.tts.mix</code>；改完点下面「重新读取配置」</div>
+
+    <div class="btns">
+      <button class="primary" id="qqSave" type="button">保存</button>
+      <button id="qqPlay" type="button">试听</button>
+      <button class="ghost" id="qqReload" type="button">重新读取配置</button>
+      <span class="status" id="qqStatus"></span>
+    </div>
+
+    <details>
+      <summary>高级：火山 API Key / 接口地址</summary>
+      <div class="adv-row"><label>API Key</label><input type="password" id="qqKey" spellcheck="false" autocomplete="off" placeholder="粘贴火山 API Key"></div>
+      <div class="adv-row"><label>接口地址</label><input type="text" id="qqEndpoint" spellcheck="false"></div>
+      <div class="hint" style="margin-left:98px">
+        只有 1.0 音色支持混音（2.0 会回空音频），所以固定走 <code>seed-tts-1.0</code>。
+        Key 只存在本机，留空保存 = 不改。
+      </div>
+      <div class="btns"><button class="ghost" id="qqClearKey" type="button">清除 Key</button></div>
+    </details>
+  </section>
+
+  <!-- ★ 2026-11-02：她的耳朵（语音识别，火山方舟 doubao-seed-2-1-lite）。
+       两条路都走这里：QQ 里你发的语音条、桌宠麦克风听到的话。 -->
+  <section class="card qq" id="asr">
+    <div class="head">
+      <span class="name">她的耳朵</span>
+      <span class="who">听得懂你说的话</span>
+      <label class="qq-switch"><input type="checkbox" id="asrOn"><span>允许她听语音</span></label>
+    </div>
+    <div class="note">
+      QQ 里你发的语音条、桌宠麦克风听到的话，都交给火山方舟 <code>doubao-seed-2-1-lite</code>
+      转成文字（顺带听出语气 / 情绪 / 语速）。配置存在本机 <code>config\voice-asr.json</code>，
+      和上面那张卡的 <code>companion.json</code> 是两份文件，互不覆盖。
+    </div>
+    <div class="row2">
+      <label>收到语音后</label>
+      <select id="asrReply">
+        <option value="free">她自己决定（回文字或语音都行，默认）</option>
+        <option value="always">每条都用语音回（语音对讲 /「打电话」那种）</option>
+        <option value="never">永远打字回</option>
+      </select>
+    </div>
+    <div class="mix">默认<b>不替她决定</b>：你发语音，她回文字还是回语音，按她自己的意思来。想体验"打电话"，就把上面切成「每条都用语音回」。</div>
+    <div class="mix">QQ 没有"语音通话"接口（OneBot 协议里没有 call 事件），所以"打电话"这条线做成<b>一来一回的语音消息</b>：你发语音 → 她听得懂、也用语音回。</div>
+
+    <details open>
+      <summary>方舟 API Key / 模型</summary>
+      <div class="adv-row"><label>API Key</label><input type="password" id="asrKey" spellcheck="false" autocomplete="off" placeholder="粘贴方舟 API Key"></div>
+      <div class="adv-row"><label>模型 ID</label><input type="text" id="asrModel" spellcheck="false" placeholder="doubao-seed-2-1-lite-260915"></div>
+      <div class="hint" style="margin-left:98px">
+        报"模型不存在"就换成控制台的 <code>ep-xxxx</code> 接入点。Key 只存在本机，留空保存 = 不改。
+      </div>
+      <div class="btns"><button class="ghost" id="asrClearKey" type="button">清除 Key</button></div>
+    </details>
+
+    <div class="btns">
+      <button class="primary" id="asrSave" type="button">保存</button>
+      <button id="asrTest" type="button">测一下耳朵</button>
+      <span class="status" id="asrStatus"></span>
+    </div>
+    <div class="hint">
+      「测一下耳朵」会用她自己的嗓子合成一句已知的话，再让耳朵听回来 —— 不占麦克风、也不发 QQ。
+    </div>
+  </section>
+  <div id="list"></div>
+
+  <footer>
+    <button class="primary" id="save">保存并生效</button>
+    <button id="play">试听这句话</button>
+    <button class="ghost" id="reset">恢复这套的默认值</button>
+    <span class="status" id="status" role="status" aria-live="polite"></span>
+  </footer>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const listEl = $('#list'), bannerEl = $('#banner'), statusEl = $('#status');
+
+/**
+ * 界面上的旋钮。**分两组**，因为这组的实际影响差别极大：
+ *
+ *  · 「改变音色」= pitch / brightness（`tts.cjs` 里的后处理）。
+ *    官方 VITS 手册里**没有**音高参数（只有 lengthScale / noiseScale / noiseScaleW / sid），
+ *    这几套又都是单说话人模型、音色写在权重里，所以想让声音"换个人"只能靠刻意的后处理。
+ *  · 「说话方式」= speed / volume + 三个 VITS 标准参数。
+ *    实测噪声那几个对"像不像少女"影响很小（noiseScale 从 0.15 拉到 0.9 只差约 1dB），
+ *    出厂默认值（0.667 / 0.8）本来就是官方推荐的甜点，所以放在折叠区里，别抢眼。
+ */
+const KNOB_GROUPS = [
+  {
+    title: '改变音色（想让声音更像少女/更萌，主要调这两个）',
+    knobs: [
+      {
+        key: 'pitch', label: '音高', min: .6, max: 1.8, step: .01, fmt: (v) => v.toFixed(2) + '×',
+        hint: '1.0 原声。往右升调：1.2 明显更年轻，1.35 以上开始像童声；往左降调更成熟。'
+          + '这个不是模型参数，是合成之后的重采样（所以是这里最有效的一个）',
+      },
+      {
+        key: 'brightness', label: '亮度', min: .4, max: 2, step: .02, fmt: (v) => v.toFixed(2) + '×',
+        hint: '高频多少。往右更亮更脆，往左更闷更柔。辅助项，影响没有音高大',
+      },
+    ],
+  },
+  {
+    title: '说话方式',
+    knobs: [
+      {
+        key: 'speed', label: '语速', min: .6, max: 1.6, step: .01, fmt: (v) => v.toFixed(2) + '×',
+        hint: '1.0 是原速。调音高不会连带改语速（已经补偿好了）',
+      },
+      {
+        key: 'volume', label: '音量', min: .3, max: 3, step: .05, fmt: (v) => v.toFixed(2) + '×',
+        hint: '各套音色天生响度差很多，已经自动拉齐；这里再微调',
+      },
+    ],
+  },
+  {
+    title: '高级：sherpa 的标准参数（VITS 手册里就这几个，对音色影响小）',
+    collapsed: true,
+    knobs: [
+      {
+        key: 'noiseScale', label: '音高稳定度', invert: true, min: 0, max: 1.2, step: .005,
+        fmt: (v) => (v >= .67 ? '稳 ' : v >= .35 ? '偏稳 ' : v >= .15 ? '自然 ' : '活泼 ') + v.toFixed(3),
+        hint: '实测对"忽大忽小"只有约 1dB 的影响，默认 0.667 就是官方甜点，一般不用动',
+      },
+      {
+        key: 'noiseScaleW', label: '音调起伏', invert: true, min: 0, max: 1.2, step: .01,
+        fmt: (v) => v.toFixed(3),
+        hint: '同上，管语调的抑扬，默认 0.8',
+      },
+      {
+        key: 'lengthScale', label: '吐字长短', min: .6, max: 1.6, step: .01, fmt: (v) => v.toFixed(2),
+        hint: '音素时长。和语速配合，1.0 最自然',
+      },
+      {
+        key: 'silenceScale', label: '句间停顿', min: 0, max: 1, step: .01, fmt: (v) => v.toFixed(2),
+        hint: '句子之间静音的长短',
+      },
+    ],
+  },
+];
+
+/** 兼容老代码：一张卡里要遍历的全部旋钮。 */
+const KNOBS = KNOB_GROUPS.flatMap((g) => g.knobs);
+
+/** 一键预设：音高是主角，所以预设主要动它。 */
+const PRESETS = [
+  { label: '原声', knobs: { pitch: 1.0, brightness: 1.0, speed: 1.05 } },
+  { label: '少女', knobs: { pitch: 1.18, brightness: 1.1, speed: 1.05 } },
+  { label: '很萌（童声）', knobs: { pitch: 1.38, brightness: 1.15, speed: 1.0 } },
+  { label: '软糯', knobs: { pitch: 1.12, brightness: 0.85, speed: 0.95 } },
+  { label: '成熟', knobs: { pitch: 0.88, brightness: 0.95, speed: 1.0 } },
+];
+
+/**
+ * 说话人的起步建议 —— 这是**实测**出来的，不是猜的。
+ *
+ * 结论（重要）：**"忽大忽小"主要是说话人本身决定的，不是 noiseScale 那几个旋钮。**
+ * 实测同一句话的响度动态范围：fanchen-c 的 8 号 23.5dB（最稳）> 60 号 27.2dB >
+ * theresa 的 0 号 30.5dB / 88 号 34.9dB / 300 号 36.8dB。
+ * 而把 noiseScale 从 0.15 拉到 0.9，同一个说话人只差 1dB 左右。
+ * 所以"听着不像人"时**先换说话人**，再微调滑杆。
+ */
+const SPEAKER_PRESETS = [
+  { label: '偏高·较稳（推荐 8）', sid: 8 },
+  { label: '中高（20）', sid: 20 },
+  { label: '更自然（30）', sid: 30 },
+  { label: '偏低女声（100）', sid: 100 },
+];
+
+/** 当前选中的那一套（保存/试听都作用于它）。 */
+let selected = null;
+/** 服务端给的原始数据。 */
+let data = null;
+/** 每套音色界面上的当前值（`folder -> {knob: 值}`）。 */
+const drafts = new Map();
+
+function setStatus(text, busy) {
+  statusEl.innerHTML = (busy ? '<span class="spinner"></span>' : '') + (text || '');
+}
+
+/** 数值 → 滑杆位置（处理"反着显示"的那两个）。 */
+function toSlider(knob, v) {
+  return knob.invert ? knob.max + knob.min - v : v;
+}
+function fromSlider(knob, pos) {
+  return knob.invert ? knob.max + knob.min - pos : pos;
+}
+
+function render() {
+  if (!data) return;
+  bannerEl.className = 'banner' + (data.available ? '' : ' bad');
+  bannerEl.innerHTML = data.available
+    ? `<span class="k">正在使用：</span><b>${data.playing || '—'}</b>` +
+      `<span class="k"> ｜ 参数存在各自的 voice.json 里，选中的那套点「保存并生效」即时换声</span>`
+    : `<b>语音当前不可用</b>：${data.why || '未知原因'}`;
+
+  listEl.innerHTML = '';
+  for (const v of data.voices) {
+    if (!drafts.has(v.folder)) drafts.set(v.folder, { ...v.knobs });
+
+    const card = document.createElement('div');
+    card.className = 'card' + (v.folder === data.current ? ' current' : '') + (v.usable ? '' : ' broken');
+    card.dataset.folder = v.folder;
+
+    const head = document.createElement('div');
+    head.className = 'head';
+    head.innerHTML =
+      `<span class="name">${v.name}</span>` +
+      `<span class="folder">${v.folder}</span>` +
+      (v.folder === data.current ? '<span class="tag on">正在用</span>' : '') +
+      (v.usable ? '' : `<span class="tag bad">缺 ${v.gaps.join('、')}</span>`);
+    card.appendChild(head);
+
+    if (v.note) {
+      const n = document.createElement('div');
+      n.className = 'note';
+      n.textContent = v.note;
+      card.appendChild(n);
+    }
+
+    const presets = document.createElement('div');
+    presets.className = 'presets';
+    for (const p of PRESETS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = p.label;
+      b.addEventListener('click', () => {
+        const d = drafts.get(v.folder);
+        Object.assign(d, p.knobs);
+        syncCard(card, v);
+        select(v);
+      });
+      presets.appendChild(b);
+    }
+    card.appendChild(presets);
+
+    // 多说话人：先给几个"起步说话人"，免得从 0 号开始瞎试（0 号往往是最尖最飘的那个）
+    if (v.multiSpeaker) {
+      const spkRow = document.createElement('div');
+      spkRow.className = 'presets';
+      const tip = document.createElement('span');
+      tip.style.cssText = 'color:var(--dim);font-size:12px;align-self:center;margin-right:2px';
+      tip.textContent = '说话人起步建议：';
+      spkRow.appendChild(tip);
+      for (const p of SPEAKER_PRESETS) {
+        if (p.sid > (v.speakers || 1) - 1) continue;
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = p.label;
+        b.addEventListener('click', () => {
+          drafts.get(v.folder).sid = p.sid;
+          syncCard(card, v);
+          select(v);
+        });
+        spkRow.appendChild(b);
+      }
+      card.appendChild(spkRow);
+    }
+
+    /** 画一根滑杆（连带它下面那行说明）。 */
+    const addKnob = (parent, knob) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.dataset.knob = knob.key;
+      const lab = document.createElement('label');
+      lab.textContent = knob.label;
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = knob.min; input.max = knob.max; input.step = knob.step;
+      input.value = toSlider(knob, drafts.get(v.folder)[knob.key] ?? 0);
+      const out = document.createElement('output');
+      // 显示的是**滑杆位置**换算回去的值（两个"反着显示"的旋钮靠这个还原）
+      const refresh = () => { out.textContent = knob.fmt(fromSlider(knob, Number(input.value))); };
+      input.addEventListener('input', () => {
+        drafts.get(v.folder)[knob.key] = knob.step >= 1
+          ? Math.round(fromSlider(knob, Number(input.value)))
+          : fromSlider(knob, Number(input.value));
+        refresh();
+        select(v);
+      });
+      refresh();
+      row.append(lab, input, out);
+      parent.appendChild(row);
+      if (knob.hint) {
+        const h = document.createElement('div');
+        h.className = 'hint';
+        h.textContent = knob.hint;
+        parent.appendChild(h);
+      }
+    };
+
+    // 按组画：音色类（音高/亮度）在前，说话方式其次，sherpa 标准参数折叠起来
+    for (const group of KNOB_GROUPS) {
+      const box = document.createElement('div');
+      box.className = 'group' + (group.collapsed ? ' collapsed' : '');
+
+      const head = document.createElement('button');
+      head.type = 'button';
+      head.className = 'g-head';
+      head.textContent = group.title;
+      box.appendChild(head);
+
+      const body = document.createElement('div');
+      body.className = 'g-body';
+      if (group.collapsed) head.addEventListener('click', () => box.classList.toggle('collapsed'));
+      box.appendChild(body);
+      card.appendChild(box);
+      for (const knob of group.knobs) addKnob(body, knob);
+    }
+
+    // 多说话人的模型才给"说话人"这一项（上限按这套音色实际有多少人）
+    if (v.multiSpeaker) {
+      const box = document.createElement('div');
+      box.className = 'group';
+      const head = document.createElement('div');
+      head.className = 'g-head';
+      head.textContent = '换一个人（这套有 ' + v.speakers + ' 个说话人）';
+      box.appendChild(head);
+      const body = document.createElement('div');
+      body.className = 'g-body';
+      box.appendChild(body);
+      addKnob(body, {
+        key: 'sid', label: '说话人', min: 0, max: Math.max(1, (v.speakers || 1) - 1), step: 1,
+        fmt: (x) => `${x} / ${(v.speakers || 1) - 1}`,
+        hint: '换编号就是换一个人。音高滑杆只在这一个人的音色上变调，换人能拿到完全不同的底子',
+      });
+      card.appendChild(box);
+    }
+
+    const btns = document.createElement('div');
+    btns.className = 'btns';
+    const useBtn = document.createElement('button');
+    useBtn.type = 'button';
+    useBtn.textContent = v.folder === data.current ? '重新载入这套' : '用这套（保存并生效）';
+    useBtn.className = 'primary';
+    useBtn.disabled = !v.usable;
+    useBtn.addEventListener('click', async () => {
+      select(v);
+      setStatus('正在保存并重建语音引擎…', true);
+      const r = await window.voice.apply(v.folder, drafts.get(v.folder));
+      if (!r.ok) { setStatus(`失败：${r.error || '未知'}`, false); return; }
+      setStatus(`已换到「${v.name}」`, false);
+      await reloadData();
+    });
+    btns.appendChild(useBtn);
+
+    const prevBtn = document.createElement('button');
+    prevBtn.type = 'button';
+    prevBtn.textContent = '试听这套';
+    prevBtn.disabled = !v.usable;
+    prevBtn.addEventListener('click', () => { select(v); preview(v); });
+    btns.appendChild(prevBtn);
+
+    card.appendChild(btns);
+    listEl.appendChild(card);
+  }
+}
+
+/** 只把一张卡片上的滑杆同步成 draft 的值（用了预设之后要刷新显示）。 */
+function syncCard(card, v) {
+  const d = drafts.get(v.folder);
+  // 按下标对着 KNOBS 找是不可靠的（卡片里还有分组的"说话人"那一行），
+  // 所以每根滑杆在 addKnob 里都写了 `data-knob`，直接按名字找。
+  for (const row of card.querySelectorAll('.row[data-knob]')) {
+    const key = row.dataset.knob;
+    const input = row.querySelector('input');
+    if (!input) continue;
+    const def = ALL_KNOBS[key];
+    if (!def) continue;
+    input.value = toSlider(def, d[key] ?? def.def ?? 0);
+    input.dispatchEvent(new Event('input'));
+  }
+}
+
+/** 所有旋钮的定义（含范围与显示方式），按 key 索引。 */
+const ALL_KNOBS = Object.fromEntries(
+  KNOB_GROUPS.flatMap((g) => g.knobs)
+    .concat([{ key: 'sid', min: 0, max: 1000, step: 1, def: 0 }])
+    .map((k) => [k.key, k]),
+);
+
+function select(v) {
+  selected = v;
+  for (const c of listEl.querySelectorAll('.card')) {
+    c.classList.toggle('current', c.dataset.folder === v.folder);
+  }
+}
+
+/** 让服务端按**当前已生效**的参数合成一句，然后放出来。 */
+async function preview(v) {
+  const text = '你好呀，我是大肥鱼，今天也一起玩吧。';
+  setStatus('正在合成…', true);
+  try {
+    const res = await fetch('/api/voice/preview', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) { setStatus(`试听失败：${await res.text()}`, false); return; }
+    const buf = await res.arrayBuffer();
+    const url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    const a = new Audio(url);
+    a.addEventListener('ended', () => { URL.revokeObjectURL(url); setStatus('试听完毕', false); });
+    await a.play();
+    setStatus('正在播放…', false);
+  } catch (err) {
+    setStatus(`试听失败：${err.message}`, false);
+  }
+}
+
+async function reloadData() {
+  data = await window.voice.load();
+  render();
+}
+
+$('#save').addEventListener('click', async () => {
+  if (!selected) { setStatus('先选一套音色', false); return; }
+  setStatus('正在保存并重建语音引擎…（约 2~4 秒）', true);
+  const r = await window.voice.apply(selected.folder, drafts.get(selected.folder));
+  setStatus(r.ok ? `已生效：${r.name || selected.name}` : `失败：${r.error || '未知'}`, false);
+  await reloadData();
+});
+
+$('#play').addEventListener('click', () => {
+  if (!selected) { setStatus('先选一套音色', false); return; }
+  preview(selected);
+});
+
+$('#reset').addEventListener('click', () => {
+  if (!selected) return;
+  drafts.set(selected.folder, { ...selected.defaults });
+  const card = listEl.querySelector(`.card[data-folder="${CSS.escape(selected.folder)}"]`);
+  if (card) syncCard(card, selected);
+  setStatus('已恢复默认值（还没保存）', false);
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') window.voice.close();
+});
+
+/* ---------- ★ 2026-11-01：她的声音（QQ 语音，火山 1.0 直连） ----------
+ * 这一块原来在「设置页 → QQ 陪伴卡」，用户让搬到这个窗口。
+ * 试听**只在这个窗口里播**，不发 QQ（用户 2026-11-01："试听也不用发 qq"）。 */
+const qq = {
+  on: $('#qqOn'), rate: $('#qqRate'), loud: $('#qqLoud'), pitch: $('#qqPitch'),
+  emotion: $('#qqEmotion'), key: $('#qqKey'), endpoint: $('#qqEndpoint'), status: $('#qqStatus'),
+};
+const sgn = (n) => (Number(n) > 0 ? `+${n}` : String(n));
+
+function qqOut() {
+  $('#qqRateOut').textContent = sgn(qq.rate.value);
+  $('#qqLoudOut').textContent = sgn(qq.loud.value);
+  $('#qqPitchOut').textContent = sgn(qq.pitch.value);
+}
+
+function qqStatus(text, kind, busy) {
+  qq.status.className = 'status' + (kind ? ' ' + kind : '');
+  qq.status.innerHTML = (busy ? '<span class="spinner"></span>' : '') + (text || '');
+}
+
+/** 表单里的值（`apiKey` 只有真的填了才带上，留空 = 不动已存的）。 */
+function qqPatch() {
+  const patch = {
+    enabled: qq.on.checked,
+    tts: {
+      speechRate: Number(qq.rate.value),
+      loudnessRate: Number(qq.loud.value),
+      pitch: Number(qq.pitch.value),
+      emotion: qq.emotion.value,
+      endpoint: qq.endpoint.value.trim(),
+    },
+  };
+  const key = qq.key.value.trim();
+  if (key) patch.apiKey = key;
+  return patch;
+}
+
+async function loadQQ() {
+  const s = await window.qqVoice.load();
+  qq.on.checked = !!s.enabled;
+  qq.rate.value = Number(s.tts.speechRate);
+  qq.loud.value = Number(s.tts.loudnessRate);
+  qq.pitch.value = Number(s.tts.pitch);
+  qq.emotion.value = s.tts.emotion || '';
+  qq.endpoint.value = s.tts.endpoint || '';
+  qq.key.value = '';
+  qq.key.placeholder = s.keyed ? '已保存（留空 = 不改）' : '粘贴火山 API Key';
+  qqOut();
+  qqStatus(s.keyed ? `今天 ${s.today || 0} 条` : '还没填 Key，她现在只能打字', s.keyed ? '' : 'bad');
+  return s;
+}
+
+for (const el of [qq.rate, qq.loud, qq.pitch]) el.addEventListener('input', qqOut);
+
+$('#qqSave').addEventListener('click', async () => {
+  qqStatus('正在保存…', '', true);
+  try {
+    await window.qqVoice.save(qqPatch());
+    const p = await window.qqVoice.probe();
+    const s = await loadQQ();
+    qqStatus(p.ok ? `已保存 · 今天 ${s.today || 0} 条` : `已保存，但${p.why}`, p.ok ? 'ok' : 'bad');
+  } catch (err) {
+    qqStatus(`保存失败：${err.message}`, 'bad');
+  }
+});
+
+$('#qqPlay').addEventListener('click', async () => {
+  qqStatus('正在合成…', '', true);
+  try {
+    const r = await window.qqVoice.preview(qqPatch());
+    if (!r.ok) { qqStatus(r.error || '合成失败', 'bad'); return; }
+    const a = new Audio(`data:${r.mime || 'audio/mpeg'};base64,${r.audio}`);
+    a.addEventListener('ended', () => qqStatus(`试听完毕 · ${r.ms}ms · ${Math.round((r.bytes || 0) / 1024)}KB`, 'ok'));
+    await a.play().catch(() => {});
+    qqStatus(`播放中 · ${r.ms}ms · ${Math.round((r.bytes || 0) / 1024)}KB`, 'ok');
+  } catch (err) {
+    qqStatus(`试听失败：${err.message}`, 'bad');
+  }
+});
+
+$('#qqClearKey').addEventListener('click', async () => {
+  qqStatus('正在清除 Key…', '', true);
+  try {
+    await window.qqVoice.save({ enabled: qq.on.checked, tts: {}, apiKey: '' });
+    const s = await loadQQ();
+    qqStatus(s.keyed ? 'Key 还在（清除没生效？）' : '已清除 Key，她现在只能打字', s.keyed ? 'bad' : 'ok');
+  } catch (err) {
+    qqStatus(`清除失败：${err.message}`, 'bad');
+  }
+});
+
+/** 手改了 companion.json（主要是 mix 音色配比）之后，让它重新读一遍，不用重启桌宠。 */
+$('#qqReload').addEventListener('click', async () => {
+  qqStatus('正在重新读取 companion.json…', '', true);
+  try {
+    const s = await window.qqVoice.reload();
+    const picks = (s.mix || []).map((m) => `${m.speaker.replace(/_bigtts$/, '')} ${m.factor}`).join(' · ');
+    await loadQQ();
+    qqStatus(`已重新读取 · ${picks || '（没有混音，单音色）'}`, 'ok');
+  } catch (err) {
+    qqStatus(`重新读取失败：${err.message}`, 'bad');
+  }
+});
+
+loadQQ().catch((err) => qqStatus(`读不到语音设置：${err.message}`, 'bad'));
+
+/* ---------- ★ 2026-11-02：她的耳朵（语音识别，方舟 doubao-seed-2-1-lite） ---------- */
+const ears = {
+  on: $('#asrOn'), reply: $('#asrReply'), key: $('#asrKey'), model: $('#asrModel'), status: $('#asrStatus'),
+};
+
+function asrStatus(text, kind, busy) {
+  ears.status.className = 'status' + (kind ? ' ' + kind : '');
+  ears.status.innerHTML = (busy ? '<span class="spinner"></span>' : '') + (text || '');
+}
+
+async function loadASR() {
+  const s = await window.asr.load();
+  ears.on.checked = !!s.enabled;
+  ears.reply.value = s.reply || 'free';
+  ears.model.value = s.model || '';
+  ears.key.value = '';
+  ears.key.placeholder = s.keyed ? '已保存（留空 = 不改）' : '粘贴方舟 API Key';
+  asrStatus(s.keyed ? `只认 ${s.model}` : '还没填 Key，她听不见你说的话',
+    s.keyed ? '' : 'bad');
+  return s;
+}
+
+$('#asrSave').addEventListener('click', async () => {
+  asrStatus('正在保存…', '', true);
+  try {
+    const patch = {
+      enabled: ears.on.checked,
+      reply: { voice: ears.reply.value },
+      ark: { model: ears.model.value.trim() },
+    };
+    const key = ears.key.value.trim();
+    if (key) patch.ark.apiKey = key;
+    const r = await window.asr.save(patch);
+    const s = await loadASR();
+    asrStatus(r.ok ? `已保存 · 只认 ${s.model}` : '保存失败', r.ok ? 'ok' : 'bad');
+  } catch (err) {
+    asrStatus(`保存失败：${err.message}`, 'bad');
+  }
+});
+
+$('#asrClearKey').addEventListener('click', async () => {
+  asrStatus('正在清除 Key…', '', true);
+  try {
+    await window.asr.save({ ark: { apiKey: '' } });
+    const s = await loadASR();
+    asrStatus(s.keyed ? 'Key 还在（清除没生效？）' : '已清除 Key，她听不见了', s.keyed ? 'bad' : 'ok');
+  } catch (err) {
+    asrStatus(`清除失败：${err.message}`, 'bad');
+  }
+});
+
+$('#asrTest').addEventListener('click', async () => {
+  asrStatus('正在合成的测试音频，再让她听一遍…（约 3~8 秒）', '', true);
+  try {
+    const r = await window.asr.test();
+    if (!r.ok) { asrStatus(`没通过：${r.error || '失败'}${r.text ? ` · 听到「${r.text}」` : ''}`, 'bad'); return; }
+    const heard = String(r.text || '').trim();
+    const hit = heard && r.expected && (heard.includes('大肥鱼') || r.expected.includes(heard.slice(0, 4)));
+    asrStatus(`听到了「${heard}」${r.tone ? ` · 语气：${r.tone}` : ''} · ${r.ms}ms${hit ? ' · ✅' : ' · 和预想的不完全一样（模型转写本来就会有出入）'}`,
+      hit ? 'ok' : '');
+  } catch (err) {
+    asrStatus(`测试失败：${err.message}`, 'bad');
+  }
+});
+
+loadASR().catch((err) => asrStatus(`读不到语音识别设置：${err.message}`, 'bad'));
+
+/* ---------- ★ 2026-11-02：桌宠里她回话要不要念出来 + 用哪个嗓子 ---------- */
+const deskSwitch = $('#deskVoice');
+const deskKit = $('#deskVoiceKit');
+async function loadDeskVoice() {
+  const s = await window.voice.deskVoiceLoad();
+  deskSwitch.checked = !!s.on;
+  deskKit.value = s.kit === 'local' ? 'local' : 'cloud';
+}
+async function saveDeskVoice() {
+  try {
+    await window.voice.deskVoiceSave({ on: deskSwitch.checked, kit: deskKit.value });
+  } catch (err) {
+    asrStatus(`保存失败：${err.message}`, 'bad');
+  }
+}
+deskSwitch.addEventListener('change', saveDeskVoice);
+deskKit.addEventListener('change', saveDeskVoice);
+loadDeskVoice().catch((err) => asrStatus(`读不到桌宠回话设置：${err.message}`, 'bad'));
+
+reloadData().catch((err) => { setStatus(`读不到音色：${err.message}`, false); });
+</script>
+</body>
+</html>

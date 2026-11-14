@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blue Fish Deskpet</title>
+<link rel="stylesheet" href="/web/pet.css">
+</head>
+<body>
+<div class="floor" aria-hidden="true"></div>
+<div class="stage" id="stage">
+  <!--
+    天气粒子的**远层**画布（2026-10-11）。
+    ★ 为什么单独开 canvas 而不是继续画在 `#fxCore` 的 SVG 里：粒子原来每帧拼字符串再
+      `innerHTML = …`，60fps × 200 颗 = 每秒重建上万个 DOM 节点，这就是"特效会卡顿"的来源。
+      现在整层粒子在这张 canvas 上画（跟 SVG **同一个坐标系**：1 用户单位 = 1 CSS 像素），
+      每帧一次 clearRect + N 次画图，不产生任何 DOM。
+    ★ 它排在 `svg` **前面**：DOM 顺序 = 绘制顺序，所以这张上面的粒子在**她身后**
+      （远景的雨丝/雪片、中景的花瓣）。近处那一层在 `svg` 后面，见下面的 `#fxCanvasNear`。
+    ★ `pointer-events:none`：它盖在整张桌面上，绝不能挡住点击穿透（见 pet.css）。
+  -->
+  <canvas id="fxCanvas" aria-hidden="true"></canvas>
+  <svg id="stageSvg" aria-hidden="true">
+    <defs>
+      <!-- a soft light gray glow behind the body, for backdrops of the body's own color -->
+      <filter id="halo" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+        <feMorphology in="SourceAlpha" operator="dilate" radius="3" result="grown"/>
+        <feGaussianBlur in="grown" stdDeviation="7" result="soft"/>
+        <feFlood id="haloFlood" flood-color="#B8B8B8" flood-opacity="0"/>
+        <feComposite in2="soft" operator="in" result="glow"/>
+        <feMerge><feMergeNode in="glow"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+    <ellipse id="shadow" class="shadow" cx="0" cy="0" rx="0" ry="0"/>
+    <g id="pet"></g>
+    <!-- #fx 是"特效那一层"：#fxCore 装她的粒子（爱心/z/眼泪/灰尘，pet-core 会整层重写它），
+         其余子节点留给别的绘制者（玩具球就挂在这里），**互不干扰** -->
+    <g id="fx"><g id="fxCore"></g></g>
+  </svg>
+  <!--
+    天气粒子的**近层**画布：排在 `svg` **后面**，所以这一层的粒子盖在她**身前**。
+    ★ 分流规则只看 `p.layer`（`PROFILE[kind].layers` 从远到近排，最后一层=最近的那层）：
+      见 `web\fx.js` 的 `assignCanvas()`。她的音符（♪）永远在这一层（从嘴边冒出来，被脸挡住就没意义）。
+    ★ 没有这张画布也能跑：`fx.js` 会自动退化成"只有远层"（老宿主 / 自检都是这样）。
+  -->
+  <canvas id="fxCanvasNear" aria-hidden="true"></canvas>
+</div>
+<div class="trail" id="trail" hidden aria-hidden="true"><i></i><i></i><i></i></div>
+<!-- 进球时窗口四边内圈发光（比赛模式，见 pet-app.js 的 goalGlow 与 pet.css） -->
+<div id="goalGlow" aria-hidden="true"></div>
+<!-- 天气时窗口内圈染一点色（下雪偏蓝、樱偏粉、落叶偏黄、雨偏灰蓝；见 pet-app.js 的 stepWeather） -->
+<div id="weatherTint" aria-hidden="true"></div>
+<div class="bubble heard" id="heard" role="status" aria-live="polite" hidden></div>
+<div class="bubble" id="bubble" role="status" aria-live="polite" hidden></div>
+<div class="menu" id="menu" role="menu" hidden></div>
+<!--
+  QQ 陪伴模式的「手机」面板（2026-10-22）。
+  ★ 只读：不提供回复/翻历史，但**可以拖**（顶部那条），方便挪开不挡视线。
+  面板只在陪伴模式的三挡里到第 3 挡时显示（`hidden` 由 pet-app.js 控制），收起时不占任何位置。
+-->
+<div class="phone" id="phone" aria-hidden="true" hidden>
+  <div class="p-head" title="按住这里拖动手机">
+    <span class="p-tit">QQ · 聊天</span>
+    <span class="p-chat" id="phoneChat">还没连上</span>
+    <span class="p-badge" id="phoneBadge">陪伴</span>
+  </div>
+  <!--
+    ★ 2026-10-26：没连上 QQ 时，小手机直接显示登录二维码（NapCat 写到 cache\qrcode.png）。
+    这样"扫码登录"不用再打开设置页；设置页那张卡仍然在，给换号/看日志用。
+  -->
+  <div class="p-login" id="phoneLogin" hidden>
+    <img class="p-qr" id="phoneQr" alt="QQ 登录二维码">
+    <div class="p-login-tip" id="phoneLoginTip">拿手机 QQ 扫一下</div>
+    <div class="p-login-btns">
+      <button type="button" id="phoneRefresh">刷新二维码</button>
+      <button type="button" id="phoneSettings">打开设置</button>
+    </div>
+  </div>
+  <div class="p-list" id="phoneList"></div>
+  <!--
+    ★ 2026-10-30：第 3 挡给的是**真机**（MuMu 窗口）。冷启动 30~60 秒，窗口还没出来的
+    那段时间这里显示"开机中"（就摆在原来面板的位置），不然屏幕上一点反应都没有，
+    用户会以为按钮坏了 —— 上一轮就是这么误判的。
+  -->
+  <div class="p-boot" id="phoneBoot" hidden>
+    <div class="p-boot-ic" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="p-boot-tit" id="phoneBootTit">正在把手机拿出来…</div>
+    <div class="p-boot-sub" id="phoneBootSub">第一次要三十秒左右</div>
+  </div>
+  <div class="p-foot" id="phoneFoot">只读 · 不抢鼠标</div>
+</div>
+<div class="tools" id="tools" hidden></div>
+<script type="module" src="/web/pet-app.js"></script>
+<script>
+  /**
+   * 页面自检自报（`?diag=1` 时打开，平时完全不跑）。
+   *
+   * **为什么需要**：主进程的 `console.log` 在 GUI 起来之后是被丢掉的，而页面里的异常
+   * 又不会自己冒出来——"她没画出来"这类问题因此完全没有线索。这段代码把"页面到底画了
+   * 什么"持续写进 `document.title`，于是**从窗口外面**（Get-Process / user32 读标题）
+   * 就能看到：SVG 里有没有内容、canvas 多大、有没有 WebGL、有没有 JS 异常。
+   */
+  if (new URLSearchParams(location.search).get('diag') === '1') {
+    const report = (tag) => {
+      const petG = document.getElementById('pet');
+      const svg = document.getElementById('stageSvg');
+      const r = svg ? svg.getBoundingClientRect() : null;
+      const cs = [...document.querySelectorAll('canvas')].map((c) => {
+        const b = c.getBoundingClientRect();
+        return `${c.id || '?'}:${c.width}x${c.height}@${Math.round(b.x)},${Math.round(b.y)}:${Math.round(b.width)}x${Math.round(b.height)}`;
+      });
+      /**
+       * ★ **粒子那一行**（2026-10-11 加）：粒子搬进 canvas 之后，页面上**没有 DOM 节点可数**，
+       * 从窗口外面完全看不出"它在不在画"。`pet-app.js` 暴露了 `window.petFxDiag()`，
+       * 这里每秒取一次，写进标题（=从窗口外面/日志里都能读）。
+       * ⚠️ 只在 `?diag=1` 里调 —— 它每帧都在算 stats()，别放进正常路径。
+       */
+      let fxs = '';
+      try { fxs = typeof window.petFxDiag === 'function' ? window.petFxDiag() : ' fx=(未接线)'; } catch (e) { fxs = ' fx=throw'; }
+      // ⚠️ 探针**不要每秒新建一个 canvas 再要一个 WebGL 上下文**：Chromium 每页只给约 16 个
+      // 活动上下文（见 rig/rig.js 的 dispose 注释），这个自检本身会把它耗光 ——
+      // 于是读出来的 `GLNONE` 反而是**自检造成的假象**（排查时最误导人的一种）。
+      // 现在只复用页面里已有的那块 canvas：它已经有 webgl2 上下文，`getContext` 只会把它取回来。
+      let gl = 'GLNONE';
+      try {
+        const c = document.querySelector('#pet canvas');
+        const ctx = c && c.getContext('webgl2');
+        gl = !ctx ? 'GLNONE' : (ctx.isContextLost() ? 'gl2:LOST' : 'gl2');
+      } catch (e) { gl = 'glthrow'; }
+      document.title = `DIAG ${tag} ready=${document.readyState} kids=${petG ? petG.childElementCount : -1}`
+        + ` inner=${petG ? petG.innerHTML.length : -1} tf=${petG ? petG.getAttribute('transform') : null}`
+        + ` svg=${r ? [r.x, r.y, r.width, r.height].map(Math.round).join(',') : null}`
+        + fxs
+        + ` canvas=[${cs.join(' ')}] ${gl}`;
+    };
+    window.addEventListener('error', (e) => report(`ERR ${e.message}@${e.lineno}`));
+    window.addEventListener('unhandledrejection', (e) => report(`REJ ${(e.reason && (e.reason.stack || e.reason.message)) || e.reason}`));
+    setInterval(() => report('T'), 1000);
+  }
+</script>
+</body>
+</html>

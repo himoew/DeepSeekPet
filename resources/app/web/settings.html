@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blue Fish Deskpet · 设置</title>
+<style>
+  :root { color-scheme: dark; --accent: #4d6bfe; --line: #262c38; --ink: #e8ecf4; --dim: #8b95a8; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 22px 34px; background: #11151d; color: var(--ink);
+    font: 14px/1.6 "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  }
+  h1 { margin: 0 0 4px; font-size: 19px; }
+  .sub { margin: 0 0 20px; color: var(--dim); }
+  .card { background: #171c26; border: 1px solid var(--line); border-radius: 10px; padding: 16px 16px 6px; margin-bottom: 14px; }
+  .card.foot { padding: 12px 16px; }
+  label { display: block; margin-bottom: 14px; font-size: 13px; color: var(--dim); }
+  label b { color: var(--ink); font-size: 14px; }
+  label em { display: block; font-style: normal; color: #6f7889; font-size: 12px; margin-top: 3px; }
+  input[type=text], input[type=password], input[type=number], select, textarea {
+    display: block; width: 100%; margin-top: 5px; padding: 8px 10px;
+    background: #0e1219; color: var(--ink); border: 1px solid var(--line); border-radius: 7px;
+    font: inherit; font-size: 13px;
+  }
+  textarea { resize: vertical; line-height: 1.5; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); margin: 0 9px 0 0; vertical-align: -3px; }
+  .switch label { display: flex; align-items: flex-start; margin: 0 0 10px; color: var(--ink); }
+  .switch em { margin-top: 2px; }
+  label.inline > span { display: flex; align-items: center; margin-top: 5px; color: var(--ink); font-size: 13px; }
+  label.inline > span > span { margin-left: 2px; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 4px 0 18px; flex-wrap: wrap; }
+  /* 2026-10-22：接口预设与 QQ 陪伴模式左右两栏并排，字段各自往下排；
+     窗口窄到放不下时（< 860px）自动退回单列，不会把输入框挤成一条线。 */
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; margin-bottom: 14px; }
+  .cols > .col { min-width: 0; }
+  .cols .card { margin-bottom: 0; }
+  .cols .row { margin-bottom: 14px; }
+  .cols code { overflow-wrap: anywhere; }
+  @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+  button { font: inherit; font-size: 13px; padding: 8px 18px; border-radius: 7px; cursor: pointer; border: 1px solid var(--line); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); }
+  button.ghost { background: #1d2330; color: var(--ink); }
+  button.ghost:hover { border-color: #3a4354; }
+  button.link { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; }
+  .status { font-size: 13px; color: var(--dim); }
+  .status.ok { color: #4ec98a; }
+  .status.bad { color: #ff7b72; }
+  .status.busy { color: var(--dim); }
+  code { user-select: all; background: #0e1219; border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 12px; color: #b8c2d4; }
+  .foot p { margin: 0 0 8px; font-size: 12px; color: var(--dim); }
+  .off { opacity: .5; }
+  /* QQ 网关卡（2026-10-26）：二维码放在卡片里，别弹新窗口 */
+  .g-qr { margin: 2px 0 12px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: #0e1219; text-align: center; }
+  .g-qr[hidden] { display: none; }
+  .g-qr img { width: 180px; height: 180px; border-radius: 6px; background: #fff; padding: 6px; display: block; margin: 0 auto 6px; }
+  .g-qr .status { margin: 0 0 6px; }
+  .g-quick { margin: 0 0 12px; font-size: 12px; color: var(--dim); }
+  .g-quick button { margin-left: 6px; padding: 3px 10px; font-size: 12px; }
+  .g-sub { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 0 0 10px; }
+  .g-sub .status { margin: 0; }
+  /* 两栏里的卡片默认没有下边距，网关卡和陪伴卡会贴在一起 */
+  #gatewayCard { margin-bottom: 14px; }
+  /* ★ 2026-10-27：模型分两套（桌宠 / QQ），各占一张卡。
+     以后再加 vision / summary 时也只加卡，不再往同一张表单里塞字段。 */
+  .model-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; margin-bottom: 14px; }
+  .model-grid > .card { margin-bottom: 0; }
+  @media (max-width: 980px) { .model-grid { grid-template-columns: 1fr; } }
+  .card-head { display: flex; align-items: center; gap: 8px; margin: 0 0 5px; }
+  .card-head h2 { margin: 0; font-size: 16px; }
+  .badge { font-size: 11px; line-height: 1.6; padding: 1px 8px; border-radius: 999px; background: #1e2a4a; color: #9db2ff; border: 1px solid #2e3d63; white-space: nowrap; }
+  .badge.qq { background: #2a1e3a; color: #d0a6ff; border-color: #46305f; }
+  .hint { margin: 0 0 12px; font-size: 12px; color: #6f7889; line-height: 1.55; }
+  .hint strong { color: #aab4c6; }
+  /* 她的声音（QQ 语音）2026-11-01 搬去「音色」窗口了，这里不再有 .voice-box */
+  .mode-row { display: flex; gap: 18px; flex-wrap: wrap; margin: 2px 0 10px; }
+  .mode-row label { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--ink); font-size: 13px; cursor: pointer; }
+  .mode-row input[type=radio] { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+  #qqFields { border: 1px solid var(--line); border-radius: 9px; background: #0e1219; padding: 12px 12px 0; margin: 0 0 12px; }
+  #qqFields label { margin-bottom: 12px; }
+  #qqFields .hint { margin: -2px 0 10px; }
+  .splitbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 14px; margin: 0 0 14px; border: 1px solid var(--line); border-radius: 9px; background: #141a24; font-size: 13px; }
+  .splitbar .note { color: var(--dim); font-size: 12px; margin-left: auto; }
+  .splitbar code { font-size: 12px; }
+  .splitbar em { color: var(--dim); font-style: normal; font-size: 12px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <h1>Blue Fish Deskpet</h1>
+  <p class="sub">让它接上大模型说话。不接也能用——它会说 <code>lines.cjs</code> 里的内置台词。</p>
+
+  <section class="card switch">
+    <label>
+      <input type="checkbox" id="enabled">
+      <span><b>接大模型</b><em>关掉时只用内置台词；开着但调用失败时也会退回内置台词</em></span>
+    </label>
+  </section>
+
+  <section class="card" id="petCard">
+    <label>你的名字
+      <input type="text" id="user" spellcheck="false" maxlength="12" placeholder="你">
+      <em>它会用这个名字叫你（台词里写的是 <code>{name}</code>，比如「早安,{name}。」）。
+        留空就是"你"。<b>保存后立刻生效，不用重启</b>——它下次开口就叫新名字了。</em>
+    </label>
+  </section>
+
+  <section class="model-grid">
+    <section class="card" id="llmCard">
+      <div class="card-head"><span class="badge">桌面 API</span><h2>桌宠模型</h2></div>
+      <p class="hint">桌面气泡、桌宠里打字（0 挡）、自动说话都用这一套。存在 <code>config/settings.json</code>。</p>
+      <label>预设
+        <select id="preset"></select>
+        <em>预设只帮你填地址和模型名，之后可以随便改</em>
+      </label>
+      <p class="hint"><button class="link" id="detectLocal" type="button">检测本机 Ollama 并填入</button> · 只填地址和模型名，仍要点保存</p>
+        <label>供应地址
+          <input type="text" id="baseUrl" spellcheck="false" placeholder="https://api.deepseek.com">
+          <em>填到域名或 <code>/v1</code> 为止，不用带 <code>/chat/completions</code></em>
+        </label>
+        <label>API Key
+          <input type="password" id="apiKey" spellcheck="false" placeholder="sk-…（本地模型留空）">
+          <em>明文存在 config\settings.json，只在本机，不会发到别处</em>
+        </label>
+        <label>模型
+          <input type="text" id="model" spellcheck="false" placeholder="deepseek-chat">
+        </label>
+        <label>一次最多生成
+          <input type="number" id="maxTokens" min="16" max="8192" step="16">
+          <em>本地模型大约 6 token/秒：128 就是 20 秒上限，40 字左右的回复约 7 秒。云端可以放大。</em>
+        </label>
+        <label>本地模型常驻（keep_alive）
+          <input type="text" id="keepAlive" spellcheck="false" placeholder="8h（留空 = 不发送）">
+          <em>Ollama 默认 5 分钟没人问就把模型从内存里卸掉，下次再问要重读几 GB 权重——实测 7B
+            要 <b>11 秒</b>。填 <code>8h</code>（或 <code>-1</code> 永不卸载）就能免掉这段等待，
+            代价是它常驻内存（7B 约 5 GB）。<b>只对本地端点发送</b>，云端留空。</em>
+        </label>
+        <label class="inline">启动时预热本地模型
+          <span><input type="checkbox" id="prewarm"><span>启动后先悄悄问一句，把模型读进内存</span></span>
+          <em>把那 11 秒挪到你说话之前。关掉的话，你第一句话就要等它加载。</em>
+        </label>
+        <!-- ★ 2026-11-04：从桌宠右键菜单搬过来的（用户："把左下角自动说话按钮丢到桌宠设置里"）。
+             它跟"桌宠模型"是同一套东西（这张卡上面那句提示就写着"自动说话都用这一套"），
+             而且同在一处才不会出现"菜单里开着、配置里关着"两个真相。 -->
+        <label class="inline">她可以自己说话
+          <span><input type="checkbox" id="autoChat"><span>每隔一分钟它自己找一句说（要接着模型）</span></span>
+          <em>接上 QQ 陪伴模式、且那边开着"自主说话"时会让给 QQ 那条，不会两边各说一句。
+            <b>保存后最多一分钟生效，不用重启</b>（原来在右键菜单里，现在只认这个开关）。</em>
+        </label>
+        <label>人设（system 提示词）
+          <textarea id="persona" rows="6" spellcheck="false"></textarea>
+          <em>「测试桌宠模型」会用这段人设去问一句，所以你看到的就是它平时说话的样子——
+            不填人设它会用模型的原始语气回答，那又长又客气，跟桌宠没关系。</em>
+        </label>
+      <div class="row">
+        <button class="ghost" id="probe">测试桌宠模型</button>
+        <button class="primary" id="save">保存桌宠设置</button>
+        <!-- role=status + aria-live：保存/测试/清空的结果是这一页唯一的反馈通道，读屏也要能听到
+             （pet.html 的两个气泡本来就是这么写的，这里原来漏了） -->
+        <span class="status" id="status" role="status" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <section class="card" id="qqModelCard">
+      <div class="card-head"><span class="badge qq">QQ API</span><h2>QQ 模型</h2></div>
+      <p class="hint">QQ 消息、手机对话框（1/2 挡）用这一套。存在 <code>config/companion.json</code>，和桌宠<strong>完全分开</strong>。</p>
+      <div class="mode-row">
+        <label><input type="radio" name="qqMode" id="qqSame" value="same"> 跟桌宠用同一个</label>
+        <label><input type="radio" name="qqMode" id="qqCustom" value="custom"> 单独配一套</label>
+      </div>
+      <p class="hint" id="qqSameHint" hidden>直接复用上面「桌宠模型」的地址、Key 和模型名；QQ 回复的 token 下限仍按 192 算。</p>
+      <div id="qqFields">
+        <label>预设
+          <select id="qPreset"></select>
+          <em>只帮你填地址和模型名，之后可以改</em>
+        </label>
+        <label>供应地址
+          <input type="text" id="qBaseUrl" spellcheck="false" placeholder="https://api.deepseek.com">
+          <em>QQ 这条是独立的：留空就是没填，不会再从桌宠借</em>
+        </label>
+        <label>API Key
+          <input type="password" id="qApiKey" spellcheck="false" placeholder="sk-…（本地模型留空）">
+          <em>明文存在 <code>config/companion.json</code>；和桌宠那把分开</em>
+        </label>
+        <label>模型
+          <input type="text" id="qModel" spellcheck="false" placeholder="deepseek-chat">
+        </label>
+        <label>一次最多生成
+          <input type="number" id="qMaxTokens" min="192" max="8192" step="16">
+          <em>QQ 回复比桌面长，最低 192；512 比较合适</em>
+        </label>
+        <label>超时（毫秒）
+          <input type="number" id="qTimeoutMs" min="5000" max="120000" step="1000">
+          <em>在线模型一般 45 秒够；本地慢可以放大</em>
+        </label>
+        <label>本地模型常驻（keep_alive）
+          <input type="text" id="qKeepAlive" spellcheck="false" placeholder="8h（留空 = 不发送）">
+          <em>只有本地端点会发送；云端留空</em>
+        </label>
+        <p class="hint">看图跟着 QQ 模型走：QQ 用在线多模态模型才能看图；换成本地纯文本模型，图只会当 <code>[图片]</code>。</p>
+      </div>
+      <div class="row">
+        <button class="ghost" id="qTest">测试 QQ 模型</button>
+        <button class="primary" id="qSave">保存 QQ 设置</button>
+        <button class="link" id="qCopyDeskpet" type="button">从桌宠复制</button>
+        <span class="status" id="qStatus" role="status" aria-live="polite"></span>
+      </div>
+      <p class="status" id="qState"></p>
+    </section>
+  </section>
+
+  <section class="splitbar" id="modelSummary">
+    <span><b>桌宠</b> <code id="sumDeskpet">…</code></span>
+    <span>·</span>
+    <span><b>QQ</b> <code id="sumQq">…</code> <em id="sumQqMode"></em></span>
+    <span class="note">两套互不影响：0 挡用桌宠，1/2 挡用 QQ。</span>
+  </section>
+
+  <div class="cols">
+    <div class="col">
+      <section class="card" id="gatewayCard">
+        <label class="inline">
+          <span><input type="checkbox" id="gAuto"><span><b>桌宠启动时自动拉起 QQ 网关</b></span></span>
+          <em>勾上后开桌宠就等于开 QQ；掉线会按 30 秒 → 5 分钟退避重启（同一次最多 5 次）。
+            <b>桌宠退出不会关 QQ</b>，登录态更稳；要真下线点下面的「停止网关」。</em>
+        </label>
+        <label>NapCat 目录
+          <input type="text" id="gDir" spellcheck="false" placeholder="D:\pet\NapCat">
+          <em>留空自动找 <code>D:\pet\NapCat</code> 和桌宠旁边的 <code>NapCat</code>。
+            目录里要有 <code>NapCatWinBootMain.exe</code> / <code>QQ.exe</code> / <code>napcat.mjs</code>。</em>
+        </label>
+        <label>QQ 号（可留空）
+          <input type="text" id="gUin" spellcheck="false" placeholder="留空 = 用 NapCat 记住的账号">
+          <em>填了就用 <code>-q 小号</code> 快速登录；扫过一次码之后一般不用再扫。</em>
+        </label>
+        <div class="row">
+          <button class="primary" id="gStart">启动 / 连接</button>
+          <button class="ghost" id="gRestart">重新登录</button>
+          <button class="ghost" id="gStop">停止网关</button>
+        </div>
+        <p class="status" id="gState" role="status" aria-live="polite">…</p>
+        <div class="g-qr" id="gQrWrap" hidden>
+          <img id="gQr" alt="QQ 登录二维码" width="180" height="180">
+          <p class="status" id="gQrTip">拿手机 QQ 扫一下</p>
+          <button class="link" id="gRefresh">刷新二维码</button>
+        </div>
+        <p class="g-quick" id="gQuick" hidden></p>
+        <p class="status" id="gDetail"></p>
+      </section>
+    </div>
+    <div class="col">
+      <section class="card" id="companionCard">
+        <label class="inline">
+          <span><input type="checkbox" id="cEnabled"><span><b>启用 QQ 连接</b>（保持 OneBot 在线；用哪个大脑由悬停小手机三挡切）</span></span>
+          <em>勾上后即使当前是「桌宠大脑」也保持连接，只是不通讯（不记、不回、不冒手机面板）；
+            切到「QQ 拟人聊天」时不用重连。桌宠里打字和 QQ 里聊天仍共用同一本人物账。</em>
+        </label>
+        <label class="inline">
+          <span><input type="checkbox" id="cBubbleVoice"><span>陪伴模式的回复也在桌宠气泡里<strong>念出来</strong>（本地语音）</span></span>
+          <em>机器带不动本地 TTS 时关掉：QQ 回复和桌宠里打字都照样冒气泡、照样发到手机，只是不合成语音。
+            只影响陪伴模式，桌宠自己的短句和「声音」总开关不受影响。</em>
+        </label>
+        <label class="inline">
+          <span><input type="checkbox" id="cAutoSpeak"><span><b>她会自己找你说话</b>（不用你先开口）</span></span>
+          <em>她平时会自己"想事情"，心里攒着话；沉默越久越想开口，刚聊完、你还没回就安静。
+            深夜只在真憋不住时留一句。关掉她就只回你，不主动。</em>
+        </label>
+        <label>自主说话的频率
+          <select id="cAutoFreq">
+            <option value="low">少一点（半小时以上才冒一句）</option>
+            <option value="normal">正常（十几分钟一句，推荐）</option>
+            <option value="high">多一点（几分钟一句，有点黏）</option>
+          </select>
+          <em>这不是"定时发消息"：她心里有事才说，没事就不说 —— 所以实际间隔会从几分钟到半小时不等。</em>
+        </label>
+        <label>连接方式
+          <select id="cAdapter">
+            <option value="builtin">内置：桌宠自己连 OneBot（推荐）</option>
+            <option value="kit-jsonl">只读：外部 ai-companion-kit 的 events.jsonl</option>
+          </select>
+          <em>「内置」是桌宠自己收发 QQ；「只读」只显示外部 kit 的聊天，不参与回复。
+            <b>两条不要同时接同一个 QQ 号，会双回。</b></em>
+        </label>
+        <label>OneBot WebSocket
+          <input type="text" id="cWs" spellcheck="false" placeholder="ws://127.0.0.1:3001">
+          <em>SnowLuma / NapCat 的正向 WebSocket。只填本机地址；别开 0.0.0.0。</em>
+        </label>
+        <label>OneBot HTTP
+          <input type="text" id="cHttp" spellcheck="false" placeholder="http://127.0.0.1:3000">
+          <em>发消息用的 HTTP API。NapCat 和 SnowLuma 默认都是 3000。留空就改走 WS 调用。</em>
+        </label>
+        <label>OneBot access token
+          <input type="password" id="cToken" spellcheck="false" placeholder="没设就留空">
+          <em>会放进 <code>Authorization: Bearer …</code>。明文存在 <code>config/companion.json</code>，只在本机。</em>
+        </label>
+        <label>她的名字 / 昵称
+          <input type="text" id="cNames" spellcheck="false" placeholder="大肥鱼, 肥鱼">
+          <em>群里有人叫到这些词，她就醒。逗号分隔。</em>
+        </label>
+        <label>主人 QQ 号
+          <input type="text" id="cOwners" spellcheck="false" placeholder="123456789">
+          <em>这些号说话必回；填一个的话，桌宠里打字也记到这本账上（跨场合同一本记忆）。留空用 <code>owner</code>。</em>
+        </label>
+        <!-- ★ 2026-11-01：群聊策略（以前只能手改 config\companion.json） -->
+        <label>群里主动说话的概率
+          <input type="number" id="cWakeProb" min="0" max="20" step="1">
+          <em>0 = 群里不主动插话（只认 @ / 叫到名字 / 被戳 / 被引用）。范围 0~20，单位是 <b>百分比</b>。</em>
+        </label>
+        <label class="inline">
+          <span><input type="checkbox" id="cGroupAtOnly"><span>群里<b>只认 @</b>（不按提问/概率醒）</span></span>
+          <em>勾上（默认）：群里只有被 @、被戳、叫到名字、或者引用她那句话，她才醒。
+            去掉之后，群里像在提问的话也会让她开口（再按上面的概率决定要不要插一句）。</em>
+        </label>
+        <label>外部 kit 的事件文件（只读模式用）
+          <input type="text" id="cKitPath" spellcheck="false" placeholder="D:\ai-companion-kit\packages\companion\data\events.jsonl">
+          <em>留空 = <code>D:\ai-companion-kit\packages\companion\data\events.jsonl</code>。</em>
+        </label>
+        <label>角色卡（role.md）
+          <textarea id="cRole" rows="9" spellcheck="false"></textarea>
+          <em>这段会作为 system 提示词发给她。改完点保存；也可以用下面的按钮打开文件直接改。
+            默认是一份通用的拟人聊天人设，不绑定桌宠；想让她扮演别的角色可以直接改这里。</em>
+        </label>
+        <div class="row">
+          <button class="primary" id="cSave">保存陪伴设置</button>
+          <button class="ghost" id="cTest">试一句</button>
+          <button class="ghost" id="cClear">清空陪伴记忆</button>
+          <button class="ghost" id="cClearMedia" title="只删 data\companion\media 里的图片缓存，不删记忆">清空图片缓存</button>
+          <span class="status" id="cStatus" role="status" aria-live="polite"></span>
+        </div>
+        <p class="status" id="cState">…</p>
+        <!-- ★ 2026-11-01：最近 10 次模型调用（以前"刚才那句为什么慢/花了多少 token"只能翻日志） -->
+        <details id="cCallsWrap">
+          <summary>最近 10 次模型调用（慢在哪 / 花了多少 token / 有没有被截断）</summary>
+          <div class="mem" id="cCalls">…</div>
+        </details>
+        <p>角色卡：<code id="cRolePath"></code> <button class="link" id="cOpenRole">打开所在文件夹</button>
+          · 记忆：<code id="cMemPath"></code> <button class="link" id="cOpenMem">打开所在文件夹</button></p>
+        <p>表情包：<span id="cStickerState">…</span>
+          <button class="link" id="cOpenStickers">打开文件夹</button>
+          <button class="link" id="cRefreshStickers">同步 QQ 收藏</button>
+          <em>把图丢进这个文件夹，文件名就是关键词（晚安.png）；小号的 QQ 收藏表情会自动同步。</em></p>
+      </section>
+    </div>
+  </div>
+
+  <!-- ★ 2026-11-01：长期记忆面板（以前只能翻 data\companion\memory\*.md） -->
+  <section class="card" id="longMemoryCard">
+    <div class="card-head"><span class="badge">记忆</span><h2>长期记忆</h2></div>
+    <label>搜索
+      <input type="text" id="lmSearch" spellcheck="false" placeholder="留空 = 最近的 60 条">
+      <em>用的就是"她想起什么"那套检索（BM25 + 时间衰减）；留空按时间倒序。
+        这里只看不改：删掉的那条她以后就不会再想起来。</em>
+    </label>
+    <div class="row">
+      <button class="ghost" id="lmFind">搜索</button>
+      <button class="ghost" id="lmExtract" title="把还没整理的对话立刻抽成记忆">立即整理</button>
+      <button class="ghost" id="lmCompress" title="把最旧的一批并成一条摘要">立即压缩</button>
+      <span class="status" id="lmStatus" role="status" aria-live="polite"></span>
+    </div>
+    <p class="status" id="lmCount">…</p>
+    <div class="mem" id="lmList"></div>
+    <p>存在：<code id="lmPath">…</code></p>
+  </section>
+
+  <section class="card" id="memoryCard">
+    <label>它的记忆
+      <em>它自己记着的事。**平时不显示任何数字**——只偶尔把里面的一件说出来（每天最多两句）。
+        这里给你看，不满意可以清空。</em>
+    </label>
+    <p><b>现在的心情</b> <span id="moodNow" role="status" aria-live="polite">…</span></p>
+    <div class="mem" id="mem"></div>
+    <div class="row">
+      <button class="ghost" id="forget">忘掉一切</button>
+      <span class="status" id="memStatus" role="status" aria-live="polite"></span>
+    </div>
+    <p>存在：<code id="memFile"></code></p>
+  </section>
+
+  <section class="card foot">
+    <p>配置：<code id="configFile"></code> <button class="link" id="reveal">打开所在文件夹</button></p>
+    <p>日志：<code id="logFile"></code> <button class="link" id="openLog">打开日志</button></p>
+  </section>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let presets = [];
+  let deskpetCfg = null;
+  let companionState = null;
+
+  const clampInt = (value, min, max, fallback) => Math.min(max, Math.max(min, Math.round(Number(value) || fallback)));
+
+  const form = () => ({
+    enabled: $('enabled').checked,
+    preset: $('preset').value,
+    baseUrl: $('baseUrl').value.trim(),
+    apiKey: $('apiKey').value,
+    model: $('model').value.trim(),
+    // 表单里的 min/max 只是提示，不会拦住手输的值；这里**真的夹一下**，免得把 -5 或 1e9
+    // 写进配置（本地模型跑一晚上都出不来一句话，还看不出是谁干的）。
+    maxTokens: Math.min(8192, Math.max(16, Math.round(Number($('maxTokens').value) || 128))),
+    keepAlive: $('keepAlive').value.trim(),
+    prewarm: $('prewarm').checked,
+    // ★ 2026-11-04：从右键菜单搬过来的那个开关（真源就是这份配置，桌宠每分钟读一次）
+    autoChat: $('autoChat').checked,
+    persona: $('persona').value,
+    user: $('user').value.trim() || '你',
+  });
+
+  function fill(cfg, { syncQq = false } = {}) {
+    deskpetCfg = cfg;
+    $('enabled').checked = !!cfg.enabled;
+    $('preset').value = cfg.preset || 'custom';
+    $('baseUrl').value = cfg.baseUrl || '';
+    $('apiKey').value = cfg.apiKey || '';
+    $('model').value = cfg.model || '';
+    $('maxTokens').value = cfg.maxTokens || 128;
+    $('keepAlive').value = cfg.keepAlive || '';
+    $('prewarm').checked = cfg.prewarm !== false;
+    $('autoChat').checked = cfg.autoChat === true;
+    $('persona').value = cfg.persona || '';
+    $('user').value = cfg.user && cfg.user !== '你' ? cfg.user : '';
+    markOff();
+    updateModelSummary();
+    // 两个 load 谁先回来不确定：桌宠配置到了之后，把 QQ 表单再套一次默认值/预设。
+    if (syncQq && companionState) fillQqModel(companionState.cfg, companionState.state);
+  }
+
+  const markOff = () => $('llmCard').classList.toggle('off', !$('enabled').checked);
+
+  function status(text, kind) {
+    const el = $('status');
+    el.textContent = text;
+    el.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  /** 两套模型的一句话汇总，放在页面中段，省得用户自己猜现在到底在用哪套。 */
+  function updateModelSummary() {
+    const d = deskpetCfg || {};
+    const q = (companionState && companionState.state && companionState.state.model) || {};
+    $('sumDeskpet').textContent = d.model
+      ? `${d.model}${d.baseUrl ? ` @ ${d.baseUrl}` : ''}`
+      : '（没配）';
+    const mode = q.mode === 'custom' ? '单独' : '跟桌宠相同';
+    $('sumQq').textContent = q.model || '（没配）';
+    $('sumQqMode').textContent = `（${mode}）`;
+  }
+
+  const qStatus = (text, kind) => {
+    const el = $('qStatus');
+    el.textContent = text;
+    el.className = 'status' + (kind ? ' ' + kind : '');
+  };
+
+  /** 同一个模式开关同时控制「字段区」和「跟桌宠相同」的说明。 */
+  function syncQqMode() {
+    const custom = $('qqCustom').checked;
+    $('qqFields').hidden = !custom;
+    $('qqSameHint').hidden = custom;
+  }
+
+  /** 刚点完模式开关、还没保存时，状态行先说清楚“保存后会变成什么”。 */
+  function previewQqState() {
+    if ($('qqSame').checked) {
+      const d = deskpetCfg || {};
+      $('qState').textContent = `跟桌宠相同：${d.model || '（没配）'}（保存后生效）`;
+    } else {
+      const saved = companionState?.state?.model;
+      $('qState').textContent = saved?.mode === 'custom'
+        ? `当前生效：${saved.model || '（没配）'}（改了要保存）`
+        : '单独配置：填好下面几项，保存后生效。';
+    }
+  }
+
+  /**
+   * QQ 的模型表单。
+   * `same` 时**只发 mode**：这样合并保存不会把用户以前填过的 custom 字段清空，
+   * 下次切回「单独配一套」还在。
+   */
+  function qForm() {
+    if ($('qqSame').checked) return { mode: 'same' };
+    return {
+      mode: 'custom',
+      preset: $('qPreset').value,
+      baseUrl: $('qBaseUrl').value.trim(),
+      apiKey: $('qApiKey').value,
+      model: $('qModel').value.trim(),
+      maxTokens: clampInt($('qMaxTokens').value, 192, 8192, 512),
+      timeoutMs: clampInt($('qTimeoutMs').value, 5000, 120000, 45000),
+      keepAlive: $('qKeepAlive').value.trim(),
+    };
+  }
+
+  /**
+   * 把 companion.json 里的 QQ 模型填进表单。
+   * 老配置没有 mode 时按"有没有填过字段"推断；`state.model` 是**实际生效**的那套，
+   * 所以老配置里"空字段跟桌宠借"的值也能显示出来，保存时会写成显式字段。
+   */
+  function fillQqModel(cfg = {}, state = {}) {
+    // 两个 load 谁先回来不确定：QQ 表单先到时，预设下拉可能还没填，这里补一次。
+    if (!$('qPreset').options.length && presets.length) {
+      $('qPreset').innerHTML = presets
+        .map((p) => '<option value="' + p.id + '">' + p.label + '（Key ' + p.key + '）</option>')
+        .join('');
+    }
+    const m = cfg.model || {};
+    const any = ['baseUrl', 'apiKey', 'model', 'maxTokens', 'timeoutMs', 'keepAlive'].some((key) => {
+      const value = m[key];
+      return typeof value === 'string' ? value.trim() !== '' : Number(value) > 0;
+    });
+    const mode = (m.mode === 'same' || m.mode === 'custom') ? m.mode : (any ? 'custom' : 'same');
+    $('qqSame').checked = mode === 'same';
+    $('qqCustom').checked = mode === 'custom';
+
+    const eff = state.model || {};
+    const inherited = mode === 'custom' && eff.mode === 'custom' ? eff : {};
+    $('qPreset').value = m.preset || inherited.preset || (mode === 'custom' ? 'custom' : (deskpetCfg?.preset || 'deepseek'));
+    $('qBaseUrl').value = m.baseUrl || inherited.baseUrl || '';
+    $('qApiKey').value = m.apiKey || '';
+    $('qModel').value = m.model || inherited.model || '';
+    $('qMaxTokens').value = m.maxTokens || inherited.maxTokens || 512;
+    $('qTimeoutMs').value = m.timeoutMs || inherited.timeoutMs || 45000;
+    $('qKeepAlive').value = m.keepAlive || inherited.keepAlive || '';
+    syncQqMode();
+
+    const ready = eff.ready ? ' ✓' : (eff.why ? `（${eff.why}）` : '');
+    $('qState').textContent = mode === 'same'
+      ? `跟桌宠相同：${eff.model || '（没配）'}${ready}`
+      : `当前生效：${eff.model || '（没配）'}${eff.baseUrl ? ` @ ${eff.baseUrl}` : ''}${ready}`;
+    const isLocalUrl = /(localhost|127\.0\.0\.1|\[::1\]|:11434)/.test($('qBaseUrl').value);
+    if (mode === 'custom' && !$('qApiKey').value && !isLocalUrl) {
+      $('qState').textContent += ' · Key 还空着；老配置可能借了桌宠的，单独保存前请重填一把';
+    }
+  }
+
+  (async () => {
+    const data = await window.settings.load();
+    presets = data.presets;
+    const options = presets.map((p) => '<option value="' + p.id + '">' + p.label + '（Key ' + p.key + '）</option>').join('');
+    $('preset').innerHTML = options;
+    $('qPreset').innerHTML = options;
+    $('configFile').textContent = data.configFile;
+    $('logFile').textContent = data.logFile;
+    fill(data.cfg, { syncQq: true });
+  })().catch((err) => status('读配置失败：' + err.message, 'bad'));
+
+  $('enabled').addEventListener('change', markOff);
+
+  $('preset').addEventListener('change', () => {
+    const p = presets.find((x) => x.id === $('preset').value);
+    if (!p || p.id === 'custom') return;          // 自定义：别覆盖用户填的
+    $('baseUrl').value = p.baseUrl;
+    $('model').value = p.model;
+    $('keepAlive').value = p.keepAlive || '';     // 只有本地预设才带常驻
+    status('已填入「' + p.label + '」的地址和模型名，记得点保存', '');
+  });
+
+  $('detectLocal').addEventListener('click', async () => {
+    status('正在查 127.0.0.1:11434…', 'busy');
+    try {
+      const r = await window.settings.detectLocal();
+      if (!r.ok) return status(`没找到本机 Ollama：${r.why}`, 'bad');
+      $('preset').value = 'ollama';
+      $('baseUrl').value = r.baseUrl || 'http://127.0.0.1:11434/v1';
+      $('apiKey').value = '';
+      $('model').value = r.model;
+      $('maxTokens').value = 128;
+      $('keepAlive').value = '8h';
+      $('prewarm').checked = true;
+      status(`已填入 ${r.model}（本机 Ollama），点「保存桌宠设置」生效。`, 'ok');
+    } catch (err) {
+      status('探测失败：' + err.message, 'bad');
+    }
+  });
+
+  /* ---------- QQ 模型：单独一套 API ---------- */
+  $('qPreset').addEventListener('change', () => {
+    const p = presets.find((x) => x.id === $('qPreset').value);
+    if (!p || p.id === 'custom') return;
+    $('qBaseUrl').value = p.baseUrl;
+    $('qModel').value = p.model;
+    $('qKeepAlive').value = p.keepAlive || '';
+    qStatus('已填入「' + p.label + '」的地址和模型名，记得点「保存 QQ 设置」', '');
+  });
+
+  $('qqSame').addEventListener('change', () => { syncQqMode(); previewQqState(); });
+  $('qqCustom').addEventListener('change', () => { syncQqMode(); previewQqState(); });
+
+  $('qCopyDeskpet').addEventListener('click', () => {
+    if (!deskpetCfg) return qStatus('还没读到桌宠配置', 'bad');
+    $('qqCustom').checked = true;
+    syncQqMode();
+    $('qPreset').value = deskpetCfg.preset || 'custom';
+    $('qBaseUrl').value = deskpetCfg.baseUrl || '';
+    $('qApiKey').value = deskpetCfg.apiKey || '';
+    $('qModel').value = deskpetCfg.model || '';
+    $('qMaxTokens').value = Math.max(192, Number(deskpetCfg.maxTokens) || 512);
+    $('qTimeoutMs').value = Number(deskpetCfg.timeoutMs) || 45000;
+    $('qKeepAlive').value = deskpetCfg.keepAlive || '';
+    qStatus('已把桌宠当前配置抄过来，改完点「保存 QQ 设置」。', '');
+  });
+
+  $('qTest').addEventListener('click', async () => {
+    qStatus('正在试 QQ 模型…', 'busy');
+    try {
+      const r = await window.settings.companionProbe(qForm());
+      qStatus(r.ok
+        ? `${r.mode === 'same' ? '（跟桌宠相同）' : ''}${r.message}`
+        : `没试成：${r.message}`, r.ok ? 'ok' : 'bad');
+    } catch (err) {
+      qStatus('测试失败：' + err.message, 'bad');
+    }
+  });
+
+  $('qSave').addEventListener('click', async () => {
+    const f = qForm();
+    if (f.mode === 'custom' && !f.baseUrl) return qStatus('先填 QQ 的供应地址', 'bad');
+    if (f.mode === 'custom' && !f.model) return qStatus('先填 QQ 的模型名', 'bad');
+    qStatus('正在保存…', 'busy');
+    try {
+      // restart:false：只换模型，不断 OneBot；下一句 QQ 消息就生效。
+      await window.settings.companionSave({ cfg: { model: f }, restart: false });
+      const data = await window.settings.companionLoad();
+      fillCompanion(data);
+      qStatus(data.state?.model?.ready
+        ? '已保存。下一句 QQ 就用它，不用重连。'
+        : `已保存，但还没配全：${data.state?.model?.why || '看上面的状态'}`, data.state?.model?.ready ? 'ok' : 'bad');
+    } catch (err) {
+      qStatus('保存失败：' + err.message, 'bad');
+    }
+  });
+
+  $('probe').addEventListener('click', async () => {
+    status('正在试……', 'busy');
+    try {
+      const r = await window.settings.probe(form());   // 用表单里还没保存的值试
+      status(r.message, r.ok ? 'ok' : 'bad');
+    } catch (err) {
+      status('测试失败：' + err.message, 'bad');
+    }
+  });
+
+  $('save').addEventListener('click', async () => {
+    try {
+      const { cfg } = await window.settings.save(form());
+      fill(cfg);
+      // 如果 QQ 选的是「跟桌宠相同」，汇总条和 QQ 状态要跟着刷新
+      window.settings.companionLoad().then(fillCompanion).catch(() => {});
+      status('已保存。下一句话就生效，不用重启桌宠。', 'ok');
+    } catch (err) {
+      status('保存失败：' + err.message, 'bad');
+    }
+  });
+
+  $('reveal').addEventListener('click', () => window.settings.revealConfig());
+  $('openLog').addEventListener('click', () => window.settings.openLog());
+
+  /* ---------- 它的记忆：只读的一张清单（数字只在你要的时候出现） ---------- */
+  const AREA_CN = { head: '头', body: '肚子', hand: '手', fin: '鳍', tail: '尾巴', low: '裙子', foot: '脚' };
+  const hourCn = (h) => (h < 5 ? '凌晨' : h < 9 ? '清早' : h < 12 ? '上午' : h < 14 ? '中午' : h < 18 ? '下午' : h < 23 ? '晚上' : '深夜');
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function showMemory(m) {
+    const rows = [
+      `认识第 <b>${m.days}</b> 天（第一次见面 ${esc(m.first)}）`,
+      `来过 <b>${m.visits}</b> 天`,
+      `聊过 <b>${m.talks}</b> 次${m.words ? `，上次你说「${esc(m.words)}」` : ''}`,
+      `戳 <b>${m.touch.poke}</b> · 摸 <b>${m.touch.pet}</b> · 拎起来 <b>${m.touch.grab}</b> · 放下 <b>${m.touch.drop}</b>`,
+      m.areaTop ? `最常摸的地方：<b>${AREA_CN[m.areaTop] || esc(m.areaTop)}</b>（${m.areaTopCount} 次）` : '还没摸熟呢',
+      `你常在 <b>${hourCn(m.hourTop)}</b> 出现${m.quiet ? `，让我安静过 <b>${m.quiet}</b> 次` : ''}`,
+      `这些事今天已经说过 <b>${m.saidToday}</b> 句`,
+    ];
+    $('mem').innerHTML = rows.map((r) => `<p>${r}</p>`).join('');
+    $('memFile').textContent = m.file;
+    showMood();
+  }
+
+  /**
+   * 现在的心情：两条轴（love/energy）+ 中文档位。
+   * 它是**会自己变的运行期状态**，跟记忆不是一回事（清空记忆只顺手把它拉回中位）。
+   */
+  function showMood() {
+    if (!window.settings.mood) return;
+    window.settings.mood().then((k) => {
+      const pct = (v) => Math.round(v * 100);
+      $('moodNow').innerHTML = `<b>${esc(k.label)}</b>（喜欢 ${pct(k.love)} · 精神 ${pct(k.energy)}）`
+        + ` · 动作 ${k.speed}× · 黏你 ${k.cling}px`;
+    }).catch(() => { $('moodNow').textContent = '（读不到）'; });
+  }
+
+  $('forget').addEventListener('click', async () => {
+    if (!confirm('让它忘掉一切？\n（认识的这些天、聊过的话、互动的次数都会清空，从今天重新认识；它会回到平常的心情）')) return;
+    try {
+      showMemory(await window.settings.forget());
+      $('memStatus').textContent = '已经忘掉了，从今天重新开始。';
+      setTimeout(() => { $('memStatus').textContent = ''; }, 4000);
+    } catch (err) {
+      $('memStatus').textContent = '清空失败：' + err.message;
+    }
+  });
+
+  window.settings.memory().then(showMemory).catch(() => { $('mem').textContent = '（读不到记忆文件）'; });
+
+  /**
+   * ★ 2026-11-01：**最近 10 次模型调用**（遥测）。
+   * `ms` 回答"刚才那句为什么慢"，token 回答"花了多少"，
+   * `truncated` = 被 `max_tokens` 截断（回复说到一半没了就是它）。
+   */
+  function renderCalls(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    if (!list.length) { $('cCalls').innerHTML = '<p>还没有调用记录（这里只留本次开机后的最近 10 次）。</p>'; return; }
+    $('cCalls').innerHTML = list.slice().reverse().map((c) => {
+      const at = new Date(Number(c.at) || Date.now());
+      const hh = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}:${String(at.getSeconds()).padStart(2, '0')}`;
+      const tok = (c.promptTokens || c.completionTokens) ? `${c.promptTokens || 0}+${c.completionTokens || 0} tok` : 'token 未报';
+      const slow = Number(c.ms) >= 5000 ? ' · <b>偏慢</b>' : '';
+      return `<p>${hh} · ${esc(c.model || '?')} · <b>${(Number(c.ms) / 1000).toFixed(1)}s</b> · ${tok}`
+        + `${c.truncated ? ' · <b>被截断</b>' : ''}${slow}</p>`;
+    }).join('');
+  }
+
+  /* ---------- 长期记忆面板（2026-11-01） ---------- */
+  const lmStatus = (text, kind = '') => {
+    $('lmStatus').textContent = text;
+    $('lmStatus').className = `status${kind ? ` ${kind}` : ''}`;
+  };
+
+  function showLongMemory(res) {
+    const rows = (res && res.rows) || [];
+    const q = String(res?.q || '');
+    $('lmCount').textContent = `共 ${res?.total ?? 0} 条`
+      + (q ? `（搜「${q}」命中 ${rows.length} 条）` : `（显示最近 ${rows.length} 条）`);
+    if (!rows.length) {
+      $('lmList').innerHTML = `<p>${q ? '没有搜到。' : '还没有长期记忆 —— 聊够几轮她会自己整理；也可以点「立即整理」。'}</p>`;
+      return;
+    }
+    $('lmList').innerHTML = rows.map((r) => `<div class="lm-row">
+      <p>${esc(r.when)} · <b>${esc(r.kind)}</b> · ${esc(r.person)}${r.importance ? ` · 重要 ${r.importance}` : ''}${r.evidence > 1 ? ` · 确认 ${r.evidence} 次` : ''}</p>
+      <p>${esc(r.body)}</p>
+      <p><button class="link" data-del="${esc(r.id)}">删掉这条</button></p>
+    </div>`).join('');
+  }
+
+  const lmLoad = async () => {
+    try {
+      showLongMemory(await window.settings.companionMemoryList({ q: $('lmSearch').value.trim(), limit: 60 }));
+    } catch (err) {
+      lmStatus(`读不出来：${err.message}`, 'bad');
+    }
+  };
+
+  $('lmFind').addEventListener('click', () => { lmStatus(''); lmLoad(); });
+  $('lmSearch').addEventListener('keydown', (e) => { if (e.key === 'Enter') { lmStatus(''); lmLoad(); } });
+  $('lmList').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-del]');
+    if (!btn) return;
+    const id = btn.dataset.del;
+    if (!confirm('删掉这条记忆？\n（删了就找不回来了；她以后不会再想起这一条）')) return;
+    try {
+      const r = await window.settings.companionMemoryDelete(id);
+      lmStatus(r.ok ? '删掉了。' : '没找到这条（可能已经删过）。', r.ok ? 'ok' : 'bad');
+      lmLoad();
+    } catch (err) {
+      lmStatus(`删不掉：${err.message}`, 'bad');
+    }
+  });
+  $('lmExtract').addEventListener('click', async () => {
+    lmStatus('正在整理还没处理的对话（要调一次模型，几秒）…', 'busy');
+    try {
+      const r = await window.settings.companionMemoryCompact('extract');
+      lmStatus(r.ok
+        ? (r.turns ? `整理了 ${r.turns} 轮，新增 ${r.changed} 条（现在共 ${r.count} 条）。` : '没有还没整理的对话。')
+        : `没整理成：${r.error}`, r.ok ? 'ok' : 'bad');
+      lmLoad();
+    } catch (err) {
+      lmStatus(`整理失败：${err.message}`, 'bad');
+    }
+  });
+  $('lmCompress').addEventListener('click', async () => {
+    lmStatus('正在把最旧的一批并成摘要…', 'busy');
+    try {
+      const r = await window.settings.companionMemoryCompact('compress');
+      lmStatus(r.ok
+        ? (r.changed ? `并成了一条摘要（现在共 ${r.count} 条）。` : '没有可压的（容量还没超，也没旧条目）。')
+        : `没压成：${r.error}`, r.ok ? 'ok' : 'bad');
+      lmLoad();
+    } catch (err) {
+      lmStatus(`压缩失败：${err.message}`, 'bad');
+    }
+  });
+
+  /* ---------- QQ 陪伴模式（2026-10-22） ---------- */
+  /**
+   * 这张卡**不跟上面那张表单一起提交**：它写的是 `config/companion.json` 和
+   * `config/companion-role.md`，上面那张写的是 `config/settings.json`。
+   * 两个按钮、两套状态，互不覆盖 —— 否则保存陪伴设置会把用户的模型 Key 顶掉。
+   */
+  const cStatus = (text, kind) => {
+    const el = $('cStatus');
+    el.textContent = text;
+    el.className = 'status' + (kind ? ' ' + kind : '');
+  };
+  const splitList = (s) => String(s || '').split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean);
+
+  const cForm = () => ({
+    enabled: $('cEnabled').checked,
+    bubbleVoice: $('cBubbleVoice').checked,
+    // ★ 2026-10-27：自主说话（只改这两项，其余参数留在 companion.json 里手调）
+    presence: {
+      enabled: $('cAutoSpeak').checked,
+      frequency: $('cAutoFreq').value === 'high' || $('cAutoFreq').value === 'low' ? $('cAutoFreq').value : 'normal',
+    },
+    adapter: $('cAdapter').value === 'kit-jsonl' ? 'kit-jsonl' : 'builtin',
+    onebot: { wsUrl: $('cWs').value.trim(), httpUrl: $('cHttp').value.trim(), accessToken: $('cToken').value },
+    names: splitList($('cNames').value),
+    ownerIds: splitList($('cOwners').value),
+    // ★ 2026-11-01：群聊策略（以前只能手改 companion.json）
+    wake: {
+      probability: Math.min(20, Math.max(0, Math.round(Number($('cWakeProb').value) || 0))) / 100,
+      groupAtOnly: $('cGroupAtOnly').checked,
+    },
+    kitEventsPath: $('cKitPath').value.trim(),
+    // ★ 2026-11-01：网关那几个字段也归「保存陪伴设置」一起存
+    gateway: {
+      autoStart: $('gAuto').checked,
+      dir: $('gDir').value.trim(),
+      uin: $('gUin').value.trim(),
+    },
+    // 她的声音（QQ 语音）已搬到「音色」窗口，这里不再提交 voice 段
+  });
+
+  /** 表情包状态那一行（本地 / 她自己收藏 / QQ 收藏 / 关键词）；刷新后也用它。 */
+  const stickerLine = (sk = {}) => `本地 ${sk.local || 0} · 收藏 ${(sk.collected || 0) + (sk.mface || 0)} · QQ ${sk.qq || 0} 张`
+    + ((sk.tags || []).length ? `（${sk.tags.slice(0, 6).join('、')}${sk.tags.length > 6 ? '…' : ''}）` : '');
+
+  function fillCompanion(data) {
+    companionState = data;
+    const cfg = data.cfg || {};
+    $('cEnabled').checked = !!cfg.enabled;
+    $('cBubbleVoice').checked = cfg.bubbleVoice !== false;
+    // 老配置没有 presence 段时按默认"开 + 正常"显示（DEFAULTS 会补齐，这里只是兜底）
+    $('cAutoSpeak').checked = cfg.presence ? cfg.presence.enabled !== false : true;
+    $('cAutoFreq').value = ['low', 'high'].includes(cfg.presence?.frequency) ? cfg.presence.frequency : 'normal';
+    $('cAdapter').value = cfg.adapter === 'kit-jsonl' ? 'kit-jsonl' : 'builtin';
+    $('cWs').value = cfg.onebot?.wsUrl || '';
+    $('cHttp').value = cfg.onebot?.httpUrl || '';
+    $('cToken').value = cfg.onebot?.accessToken || '';
+    $('cNames').value = (cfg.names || []).join(', ');
+    $('cOwners').value = (cfg.ownerIds || []).join(', ');
+    // ★ 2026-11-01：群里主动说话的概率（0~20%）+ 群里只认 @
+    $('cWakeProb').value = Math.round(Math.min(0.2, Math.max(0, Number(cfg.wake?.probability) || 0)) * 100);
+    $('cGroupAtOnly').checked = cfg.wake?.groupAtOnly !== false;
+    $('cKitPath').value = cfg.kitEventsPath || '';
+    const gw = cfg.gateway || {};
+    $('gAuto').checked = gw.autoStart !== false;
+    $('gDir').value = gw.dir || '';
+    $('gUin').value = gw.uin || '';
+    $('cRole').value = data.role || '';
+    $('cRolePath').textContent = data.rolePath || '';
+    $('cMemPath').textContent = data.memoryPath || '';
+    $('lmPath').textContent = data.memoryPath || '';
+    const st = data.state || {};
+    renderCalls(st.calls);
+    $('cStickerState').textContent = stickerLine(st.stickers);
+    const model = st.model || {};
+    const head = st.enabled
+      ? `${st.adapter === 'kit-jsonl' ? '只读外部 kit' : '内置 QQ'} · ${st.connected ? '已连上' : (st.adapter === 'kit-jsonl' ? '等事件文件' : '等 OneBot 连上')}`
+      : '已关闭（不连 QQ）';
+    const brain = !st.enabled ? '桌宠大脑（QQ 未连接）'
+      : st.respond === false ? '桌宠大脑（QQ 在线待机）' : 'QQ 拟人聊天';
+    $('cState').textContent = `${st.enabled ? '开' : '关'} · ${head} · ${brain}`
+      + ` · 模型 ${model.model || '（没配）'}${model.mode === 'custom' ? '（单独）' : '（跟桌宠相同）'}${model.ready ? ' ✓' : `（${model.why || '没配好'}）`}`
+      + ` · 记忆 ${st.counts?.people || 0} 人 / ${st.counts?.turns || 0} 轮`
+      + ` · 长期 ${st.memory?.count || 0} 条`
+      + (st.presence
+        ? ` · 自主${st.presence.enabled ? `开（心里 ${st.presence.thoughts || 0} 条${st.presence.lastWhy && st.presence.lastWhy !== 'no-thought' ? ` · ${st.presence.whyText}` : ''}）` : '关'}`
+        : '')
+      + (st.enabled && st.lastError ? ` · 最近错误：${st.lastError}` : '');
+    fillQqModel(cfg, st);
+    updateModelSummary();
+  }
+
+  /* ---------- QQ 网关（2026-10-26）：拉起 NapCat / 扫码登录 / 看状态 ---------- */
+  /**
+   * 以前这一步是"让 AI 跑一条 bat，再打开 WebUI 扫码"。现在：
+   *   · 桌宠启动时自动拉起（勾了「自动拉起」）；
+   *   · 需要登录时，二维码直接出现在这张卡里（NapCat 自己写到 cache\qrcode.png）；
+   *   · 本机记住过的账号可以「一键登录」，连码都不用扫。
+   * 页面只调 `window.settings.gateway(action)`，拿不到 token，也碰不到进程。
+   */
+  const G_PHASE = {
+    off: '未启动',
+    starting: '启动中…',
+    waiting_qrcode: '等你扫码',
+    qrcode_scanned: '已扫码，等确认…',
+    login: 'QQ 已登录，等 OneBot…',
+    ready: '已连接',
+    login_error: '出错了',
+  };
+  let gLastQr = '';
+
+  function renderGateway(st) {
+    if (!st || typeof st !== 'object') return;
+    const who = st.nick
+      ? `${st.nick}${st.selfId ? `（${st.selfId}）` : ''}`
+      : (st.selfId || '');
+    const phase = G_PHASE[st.phase] || st.phase || '未知';
+    const head = (st.phase === 'ready' && who) ? `已连接 · ${who}` : phase;
+    $('gState').textContent = `${st.enabled ? '自动' : '手动'} · ${head}`
+      + (st.onebot ? ' · OneBot 在线' : ' · OneBot 未连')
+      + (st.restarts ? ` · 重启 ${st.restarts} 次` : '');
+    $('gState').className = 'status'
+      + (st.phase === 'ready' ? ' ok' : (st.phase === 'login_error' ? ' bad' : ''));
+    const details = [];
+    if (st.dir) details.push(`目录 ${st.dir}`);
+    if (st.loginPhase) details.push(`登录阶段 ${st.loginPhase}`);
+    if (st.lastError) details.push(`错误：${st.lastError}`);
+    $('gDetail').textContent = details.join(' · ');
+
+    // 二维码：只在真的有时显示；src 只在换了二维码时改，免得每 1.5 秒闪一下
+    const qr = st.qr && st.qr.dataUrl ? st.qr.dataUrl : '';
+    $('gQrWrap').hidden = !qr;
+    if (qr && qr !== gLastQr) { $('gQr').src = qr; gLastQr = qr; }
+    if (!qr) gLastQr = '';
+    /**
+     * ★ 2026-10-31：只要**有码**就说"扫码"，不再看 phase。
+     * 之前登录状态读失败时 phase 会停在 starting/login_error，于是明明有码，
+     * 提示却一直写"等 NapCat 生成二维码…"（用户以为码没出来）。
+     */
+    $('gQrTip').textContent = st.phase === 'qrcode_scanned'
+      ? '已扫码，在手机上点「确认登录」…'
+      : (qr ? '拿手机 QQ 扫一下（二维码约两分钟有效；扫不上就点「刷新二维码」）' : '等 NapCat 生成二维码…');
+
+    // 本机记住的账号：一键快速登录（不扫码）
+    const quick = Array.isArray(st.quickList) ? st.quickList.filter((x) => x && x.uin && !st.isLogin) : [];
+    $('gQuick').hidden = !quick.length;
+    if (quick.length) {
+      $('gQuick').innerHTML = '本机记住的账号：' + quick.map((x) =>
+        `<b>${esc(x.nick || x.uin)}</b> <button class="ghost" data-uin="${esc(x.uin)}">一键登录</button>`).join(' · ');
+    }
+  }
+
+  const gAct = async (action, uin) => {
+    const busy = { start: '正在拉起网关…', stop: '正在停止网关…', restart: '正在重启并重新登录…', refresh: '正在刷新二维码…', quick: '正在快速登录…' };
+    $('gState').textContent = busy[action] || '正在处理…';
+    $('gState').className = 'status busy';
+    try {
+      renderGateway(await window.settings.gateway(action, uin));
+    } catch (err) {
+      $('gState').textContent = `操作失败：${err.message}`;
+      $('gState').className = 'status bad';
+    }
+  };
+
+  $('gStart').addEventListener('click', () => gAct('start'));
+  $('gRestart').addEventListener('click', () => gAct('restart'));
+  $('gStop').addEventListener('click', () => gAct('stop'));
+  $('gRefresh').addEventListener('click', () => gAct('refresh'));
+  $('gQuick').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-uin]');
+    if (btn) gAct('quick', btn.dataset.uin);
+  });
+  // 网关状态每 1.5 秒刷新一次（只在设置页开着时）；窗口一关就停
+  const gTimer = setInterval(() => {
+    if (document.hidden) return;
+    window.settings.gatewayState().then(renderGateway).catch(() => {});
+  }, 1500);
+  window.addEventListener('beforeunload', () => clearInterval(gTimer));
+  window.settings.gatewayState().then(renderGateway).catch(() => {});
+
+  window.settings.companionLoad().then(fillCompanion).catch((err) => cStatus('读陪伴配置失败：' + err.message, 'bad'));
+
+  $('cSave').addEventListener('click', async () => {
+    cStatus('正在保存…', 'busy');
+    try {
+      await window.settings.companionSave({ cfg: cForm(), role: $('cRole').value });
+      fillCompanion(await window.settings.companionLoad());
+      cStatus('已保存。下一句话就生效；只有连接方式变了才需要重连。', 'ok');
+    } catch (err) {
+      cStatus('保存失败：' + err.message, 'bad');
+    }
+  });
+
+  $('cTest').addEventListener('click', async () => {
+    cStatus('正在走一遍角色卡 + 记忆 + 模型…', 'busy');
+    try {
+      const r = await window.settings.companionTest();
+      cStatus(r.ok ? `她说：${r.message}` : `没试成：${r.message}`, r.ok ? 'ok' : 'bad');
+    } catch (err) {
+      cStatus('测试失败：' + err.message, 'bad');
+    }
+  });
+
+  $('cClear').addEventListener('click', async () => {
+    if (!confirm('清空陪伴模式的人物账和聊天记录？\n（QQ 里认识的人、聊过的事都会忘掉；桌宠自己的记忆不受影响）')) return;
+    try {
+      await window.settings.companionClear();
+      fillCompanion(await window.settings.companionLoad());
+      cStatus('陪伴记忆已清空。', 'ok');
+    } catch (err) {
+      cStatus('清空失败：' + err.message, 'bad');
+    }
+  });
+
+  $('cOpenRole').addEventListener('click', () => window.settings.companionOpenRole());
+  $('cOpenMem').addEventListener('click', () => window.settings.companionOpenMemory());
+
+  /** ★ 2026-11-01：只清图片缓存（不删记忆、不动表情包）。 */
+  $('cClearMedia').addEventListener('click', async () => {
+    if (!confirm('清空图片缓存？\n（只删收到过/发出过的图片文件；记忆、人物账、表情包都不动）')) return;
+    cStatus('正在清…', 'busy');
+    try {
+      const r = await window.settings.companionClearMedia();
+      cStatus(r.ok ? `图片缓存已清空（${r.removed} 张 / ${Math.round((r.bytes || 0) / 1024)}KB）。` : `没清成：${r.why || '看日志'}`,
+        r.ok ? 'ok' : 'bad');
+    } catch (err) {
+      cStatus(`清空失败：${err.message}`, 'bad');
+    }
+  });
+
+  // 长期记忆面板：进页面先拉一次
+  lmLoad();
+
+  $('cOpenStickers').addEventListener('click', () => window.settings.openStickers());
+  $('cRefreshStickers').addEventListener('click', async () => {
+    $('cStickerState').textContent = '正在同步 QQ 收藏…';
+    try {
+      const s = await window.settings.refreshStickers();
+      $('cStickerState').textContent = stickerLine(s);
+      cStatus(s.ok ? `表情：同步了 ${s.count ?? 0} 张` : `同步失败：${s.why || '看日志'}`, s.ok ? 'ok' : 'bad');
+    } catch (err) {
+      cStatus('同步失败：' + err.message, 'bad');
+    }
+  });
+</script>
+</body>
+</html>

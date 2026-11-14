@@ -1,0 +1,25 @@
+{
+  "enabled": false,
+  "reply": {
+    "voice": "free"
+  },
+  "qq": {
+    "maxRecords": 2,
+    "maxBytes": 12582912
+  },
+  "mic": {
+    "silenceMs": 700,
+    "prerollMs": 250,
+    "maxSegmentMs": 20000,
+    "threshold": 0.01,
+    "minSpeechMs": 350
+  },
+  "ark": {
+    "endpoint": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+    "apiKey": "",
+    "model": "doubao-seed-2-1-lite-260915",
+    "temperature": 0.1,
+    "timeoutMs": 90000,
+    "thinking": false
+  }
+}

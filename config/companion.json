@@ -1,0 +1,260 @@
+{
+  "enabled": false,
+  "respond": true,
+  "adapter": "builtin",
+  "onebot": {
+    "wsUrl": "ws://127.0.0.1:3001",
+    "httpUrl": "http://127.0.0.1:3000",
+    "accessToken": ""
+  },
+  "names": [
+    "大肥鱼",
+    "肥鱼"
+  ],
+  "keywords": [],
+  "ownerIds": [],
+  "wake": {
+    "probability": 0.05,
+    "groupAtOnly": true,
+    "privateWindowMs": 1500,
+    "groupWindowMs": 6000
+  },
+  "humanize": {
+    "enabled": true,
+    "burstMax": 6,
+    "msPerChar": 85,
+    "minMs": 1200,
+    "maxMs": 6000,
+    "gapRange": [
+      700,
+      2600
+    ],
+    "longGapChance": 0.25,
+    "longGapRange": [
+      3000,
+      9000
+    ]
+  },
+  "model": {
+    "baseUrl": "https://api.deepseek.com",
+    "apiKey": "",
+    "model": "deepseek-chat",
+    "maxTokens": 320,
+    "timeoutMs": 30000,
+    "keepAlive": "",
+    "mode": "custom",
+    "preset": "deepseek"
+  },
+  "memory": {
+    "enabled": true,
+    "extractEveryTurns": 6,
+    "maxEntries": 160,
+    "maxTokens": 12000,
+    "retrievalTopK": 6,
+    "retrievalTokenBudget": 1200,
+    "halfLifeDays": 60,
+    "compressBatch": 16,
+    "deskpetTopK": 3,
+    "deskpetTokenBudget": 400
+  },
+  "presence": {
+    "enabled": true,
+    "frequency": "normal",
+    "activeHours": [
+      8.5,
+      23.5
+    ],
+    "nightMessage": true,
+    "minGapSec": 120,
+    "afterUserMin": 3,
+    "maxUnanswered": 2,
+    "silenceBoostPerMin": 1.02,
+    "maxSilenceBoost": 2.2,
+    "maxPerHour": 2,
+    "maxPerDay": 18,
+    "mindEveryMin": 30
+  },
+  "chats": [],
+  "mirror": "wake",
+  "bubbleReplies": true,
+  "bubbleVoice": false,
+  "maxReplyChars": 600,
+  "kitRoot": "",
+  "kitEventsPath": "",
+  "replayLast": 0,
+  "gateway": {
+    "autoStart": true,
+    "dir": "",
+    "uin": "",
+    "autoQuickLogin": true,
+    "keepAlive": true,
+    "pollMs": 2500,
+    "restartDelayMs": 30000,
+    "maxRestarts": 5
+  },
+  "phone": {
+    "enabled": false,
+    "home": "",
+    "serial": "",
+    "vmindex": 0,
+    "maxSteps": 20,
+    "maxMs": 180000,
+    "maxCalls": 20,
+    "maxStall": 2,
+    "maxQueuedMs": 90000,
+    "rescue": {
+      "enabled": true,
+      "max": 15,
+      "width": 360
+    },
+    "popup": {
+      "enabled": true,
+      "max": 6,
+      "maxSame": 3,
+      "settleMs": 450
+    },
+    "autonomy": {
+      "enabled": true,
+      "mode": "free",
+      "sessionMin": 18,
+      "gapMin": 20,
+      "gapBase": 12,
+      "gapAfterGoodMin": 8,
+      "gapAfterFailMin": 30,
+      "gapAfterStopMin": 45,
+      "quietMin": 3,
+      "everyMin": 90,
+      "maxPerDay": 0,
+      "from": 9,
+      "to": 23.5,
+      "nightLiteFrom": 22.5,
+      "dailyMin": 90,
+      "dailyHardMin": 120,
+      "minTripsPerDay": 2,
+      "minTripCheckFrom": 21
+    },
+    "share": {
+      "maxPerHour": 6,
+      "maxPerDay": 20
+    },
+    "taste": "爱看热闹、爱听人说话；对猫、小动物和吃的东西会多看一眼；嫌麻烦，不爱一步步折腾。",
+    "window": {
+      "width": 430,
+      "height": 900,
+      "margin": 24
+    },
+    "model": {
+      "mode": "custom",
+      "model": "deepseek-flash",
+      "maxTokens": 320
+    },
+    "vision": {
+      "enabled": true,
+      "detail": "low",
+      "always": true,
+      "maxSide": 640
+    },
+    "scroll": {
+      "settleMs": 600,
+      "lookEach": true,
+      "lookMax": 4
+    },
+    "open": {
+      "drawer": {
+        "fromY": 0.72,
+        "toY": 0.18,
+        "ms": 280,
+        "settleMs": 700,
+        "tries": 2
+      },
+      "drawerPages": 4,
+      "locate": {
+        "maxPerTask": 2,
+        "timeoutMs": 8000,
+        "width": 360
+      },
+      "learn": {
+        "enabled": true,
+        "max": 80
+      },
+      "verify": {
+        "timeoutMs": 2500,
+        "intervalMs": 250
+      },
+      "settleMs": 500,
+      "maxTriesPerLabel": 2
+    },
+    "video": {
+      "enabled": true,
+      "maxVideos": 2,
+      "maxCalls": 5,
+      "maxMs": 240000,
+      "perVideoMs": 70000,
+      "frames": 3,
+      "maxFramesPerVideo": 6,
+      "gapMs": 3500,
+      "width": 360,
+      "likeMin": 0.45,
+      "maxChoices": 8,
+      "searchWaitMs": 3500
+    },
+    "diary": {
+      "guard": {
+        "windowMin": 30,
+        "alertAt": 2
+      },
+      "trash": true
+    },
+    "gate": {
+      "enabled": true,
+      "model": false,
+      "maxLen": 60,
+      "audit": true
+    }
+  },
+  "voice": {
+    "enabled": true,
+    "mode": "auto",
+    "allowGroups": false,
+    "tts": {
+      "endpoint": "https://openspeech.bytedance.com/api/v3/tts/unidirectional",
+      "apiKey": "",
+      "timeoutMs": 30000,
+      "uid": "blue-fish-deskpet",
+      "speaker": "custom_mix_bigtts",
+      "resourceId": "seed-tts-1.0",
+      "mix": [
+        {
+          "speaker": "zh_female_peiqi_mars_bigtts",
+          "factor": 40
+        },
+        {
+          "speaker": "zh_female_yuanqinvyou_moon_bigtts",
+          "factor": 20
+        },
+        {
+          "speaker": "zh_female_meilinvyou_moon_bigtts",
+          "factor": 40
+        }
+      ],
+      "format": "mp3",
+      "sampleRate": 24000,
+      "speechRate": -5,
+      "loudnessRate": 0,
+      "pitch": 2,
+      "emotion": "",
+      "emotionScale": 4,
+      "maxChars": 120
+    },
+    "stage": {
+      "nightFrom": 21.5,
+      "nightTo": 2,
+      "minGapMin": 0,
+      "minTextBetween": 0,
+      "chanceNight": 0.3,
+      "chanceCue": 0.35,
+      "chanceNormal": 0.04,
+      "chanceSpontaneous": 0.7
+    }
+  }
+}
